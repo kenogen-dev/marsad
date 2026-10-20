@@ -349,15 +349,15 @@ def write_scan_build(csv_path: Path, sidecar: dict, geom: dict,
     return path
 
 
-def free_port(start: int = 8731, tries: int = 10) -> int | None:
-    """First port in a small range nothing is listening on."""
+VIEWER_PORT = 8731
+
+
+def port_in_use(port: int = VIEWER_PORT) -> bool:
+    """True if something is listening on `port` on this machine."""
     import socket
-    for port in range(start, start + tries):
-        with socket.socket() as sk:
-            sk.settimeout(0.2)
-            if sk.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-    return None
+    with socket.socket() as sk:
+        sk.settimeout(0.2)
+        return sk.connect_ex(("127.0.0.1", port)) == 0
 
 
 def notify(title: str, body: str) -> None:
@@ -424,18 +424,23 @@ def viewer_follows(port: int = 8731) -> bool:
 
 
 def start_live_view(station: Station, idle_min: float = 5.0):
-    """Reuse the viewer on 8731 if it follows the newest CSV, else launch one.
+    """Reuse the viewer on 8731 if it follows the newest CSV, else launch one there.
 
     The viewer switches to this run's CSV the moment rtl_power creates it, so it
     needs no --csv. Non-fatal: a viewer that will not start must never stop a
     survey recording.
     """
-    if viewer_follows():
-        print("  Live view: http://127.0.0.1:8731/   (already running; it follows the newest scan)")
+    # One address, always: http://127.0.0.1:8731/. The viewer follows whatever is
+    # recording, so there is never a reason for a second one on another port, and
+    # hopping ports only ever left the owner guessing which one was current.
+    port = VIEWER_PORT
+    if viewer_follows(port):
+        print(f"  Live view: http://127.0.0.1:{port}/   (already running; it follows the newest scan)")
         return None
-    port = free_port()
-    if port is None:
-        print("  Live view: ports 8731-8740 are all busy, skipping.")
+    if port_in_use(port):
+        print(f"  Live view: port {port} is held by something that is not a Marsad viewer")
+        print("  (an old build, or another program). Close it, then run `marsad live`.")
+        print("  Recording is unaffected.")
         return None
     cmd = host.self_command("live", "--station", str(station.root),
                             "--port", str(port), "--exit-after-idle", str(idle_min))
