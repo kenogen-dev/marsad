@@ -70,7 +70,8 @@ PROBES = {
 # corrected before a run, so what is recorded is what was built.
 PROBE_CHAIN_TAIL = {
     "xtr": (
-        "SMA adapter > SMA DC block > 8 ft coax > LaNA (at the window, powered by the XTR bias-tee through "
+        "SMA adapter > SMA DC block > 8 ft coax > Flamingo+ FM notch > LaNA (at the window, "
+        "powered by the XTR bias-tee through "
         "the coax) > 3 ft RG316 coax > SMA bulkhead > 6 in SMA jumper (S-bend, no ferrite) > "
         "XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable) > "
         "USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC"
@@ -367,7 +368,15 @@ def compose(station: Station, form: dict) -> dict:
         warnings.append(f"only {geom['sweeps']} sweep(s) at -i {integration}: the floor "
                         "percentile and occupancy will be crude")
 
-    held = where or f"near the {target}"
+    # Where the probe was held is part of the measurement: a loop against a PSU
+    # grille and one a hand's width away are different runs. Only the open-air
+    # background has a sensible default.
+    if where:
+        held = where
+    elif target.lower().startswith("background"):
+        held = "in open air"
+    else:
+        raise ValueError("say where the probe is held (for example 'against the PSU fan grille')")
     tag = f"probe-{slug(target)}-{slug(probe['id'], 20)}"
     tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
     chain = f"{probe['desc']}, held {held} > {tail}"

@@ -48,7 +48,7 @@ def test_compose_wide_is_the_preset_at_60_s_with_the_probe_chain():
         assert flag in a
     chain = a[a.index("--chain") + 1]
     assert chain.startswith("large H-field loop probe, held against the PSU fan grille > "
-                            "SMA adapter > SMA DC block > 8 ft coax > LaNA (")
+                            "SMA adapter > SMA DC block > 8 ft coax > Flamingo+ FM notch > LaNA (")
     assert chain.endswith("> USB isolator > PC")
     cond = a[a.index("--conditions") + 1]
     assert "PC power supply" in cond and cond.endswith("; monitors on, printer unplugged")
@@ -113,6 +113,10 @@ def test_compose_refuses_a_bad_form_in_plain_words():
         probe.compose(st, {**FORM, "range": "hunt"})
     with pytest.raises(ValueError, match="minutes"):
         probe.compose(st, {**FORM, "minutes": "0"})
+    with pytest.raises(ValueError, match="where the probe is held"):
+        probe.compose(st, {**FORM, "where": ""})
+    bg = probe.compose(st, {**FORM, "target": "background (probe in open air)", "where": ""})
+    assert bg["held"] == "in open air" and ", held in open air > " in bg["chain"]
     gap = probe.compose(st, {**FORM, "range": "hunt", "centre": "1150"})
     assert any("PLL gap" in w for w in gap["warnings"])
     other = probe.compose(st, {**FORM, "target": "other", "target_other": "Desk Lamp #2"})
