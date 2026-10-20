@@ -47,7 +47,8 @@ def test_compose_wide_is_the_preset_at_60_s_with_the_probe_chain():
     for flag in ("--non-interactive", "--no-live", "--keep-defaults"):
         assert flag in a
     chain = a[a.index("--chain") + 1]
-    assert chain.startswith("large H-field loop probe, held against the PSU fan grille > SMA DC block > ")
+    assert chain.startswith("large H-field loop probe, held against the PSU fan grille > "
+                            "SMA adapter > SMA DC block > 8 ft coax > LaNA (")
     assert chain.endswith("> USB isolator > PC")
     cond = a[a.index("--conditions") + 1]
     assert "PC power supply" in cond and cond.endswith("; monitors on, printer unplugged")

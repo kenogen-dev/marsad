@@ -70,13 +70,13 @@ PROBES = {
 # corrected before a run, so what is recorded is what was built.
 PROBE_CHAIN_TAIL = {
     "xtr": (
-        "SMA DC block > 8 ft coax > LaNA (at the window, powered by the XTR bias-tee through "
+        "SMA adapter > SMA DC block > 8 ft coax > LaNA (at the window, powered by the XTR bias-tee through "
         "the coax) > 3 ft RG316 coax > SMA bulkhead > 6 in SMA jumper (S-bend, no ferrite) > "
         "XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable) > "
         "USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC"
     ),
     "v5": (
-        "SMA DC block > 8 ft coax > cage SMA bulkhead > v5 (in copper cage, no jumper, "
+        "SMA adapter > SMA DC block > 8 ft coax > cage SMA bulkhead > v5 (in copper cage, no jumper, "
         "no LNA: the v5 has no bias-tee to power the LaNA) > 6 in USB extension (white, no "
         "ferrites) > USB bulkhead > USB to PC"
     ),
@@ -136,7 +136,7 @@ def chain_tails(station: Station) -> dict:
     elif isinstance(user, str):
         tails["xtr"] = user
     for rx in station.receivers:
-        tails.setdefault(rx, f"SMA DC block > coax > {rx} > USB > PC")
+        tails.setdefault(rx, f"SMA adapter > SMA DC block > coax > {rx} > USB > PC")
     return tails
 
 
