@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics as st
 import threading
 import time
@@ -29,6 +30,21 @@ from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GA
                        parse_freq_spec)
 
 WEB = Path(__file__).resolve().parent / "web"
+
+
+def _reading(x: str) -> float:
+    """One dB reading, or NaN if it is not a finite number.
+
+    rtl_power emits non-finite values on its strongest bins, and the MSVC build
+    spells them `-nan(ind)`, which float() rejects. A bad bin must not cost the
+    whole hop: the analyser learned this on 2026-10-18, when one unparseable
+    value was discarding all 240 readings on the line and 40% of an FM survey.
+    """
+    try:
+        v = float(x)
+    except (ValueError, TypeError):
+        return math.nan
+    return v if math.isfinite(v) else math.nan
 
 
 class Tailer:
@@ -64,6 +80,8 @@ class Tailer:
         self.last_finish = None
         self.dropped = 0        # sweeps rolled out of the ring buffer
         self.rows = 0
+        self.readings = 0
+        self.nonfinite = 0    # saturation diagnostic: NaNs land on the strongest bins
         self.lock = threading.Lock()
 
     def _sidecar(self) -> dict:
@@ -92,6 +110,8 @@ class Tailer:
         span = max(1e-9, self.hi - self.lo)
         row = [None] * self.cols
         for f, v in pairs:
+            if v != v:            # NaN: a missing reading, never a maximum
+                continue
             c = int((f - self.lo) / span * (self.cols - 1))
             if 0 <= c < self.cols and (row[c] is None or v > row[c]):
                 row[c] = v
@@ -103,10 +123,12 @@ class Tailer:
             return
         try:
             lo = float(parts[2]); hi_hz = float(parts[3]); step = float(parts[4])
-            vals = [float(v) for v in parts[6:] if v.strip()]
+            vals = [_reading(v) for v in parts[6:] if v.strip()]
         except ValueError:
-            return
+            return             # only a broken timestamp or frequency field drops a line
         self.rows += 1
+        self.readings += len(vals)
+        self.nonfinite += sum(1 for v in vals if v != v)
         if self.last_lo is not None and lo <= self.last_lo:
             self._finish(parts[0].strip() + " " + parts[1].strip())
         self.last_lo = lo
@@ -142,7 +164,8 @@ class Tailer:
         self.latest = latest
         self.stamps.append(stamp)
         # Median over the FULL resolution sweep, not the downsampled row.
-        self.medians.append(round(st.median([v for _, v in self.cur]), 3))
+        finite = [v for _, v in self.cur if v == v]
+        self.medians.append(round(st.median(finite), 3) if finite else None)
         if self.t0 is None:
             self.t0 = time.time()
         if self.hops is None and self.cur_rows:
@@ -316,6 +339,7 @@ class Tailer:
                 "expected": int(dur / integ) if (dur and integ) else None,
                 "meta": self.sidecar,
                 "parsed_rows": self.rows,
+                "nonfinite_pct": round(100.0 * self.nonfinite / self.readings, 2) if self.readings else 0.0,
                 "bytes": self.offset,
             }
 

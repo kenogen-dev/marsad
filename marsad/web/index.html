@@ -562,7 +562,10 @@ async function tick(){
       [m.receiver?m.receiver.toUpperCase():null,
        m.gain_db!=null?('g'+m.gain_db):null,
        m.integration_s!=null?('i'+m.integration_s):null,
-       d.expected?('of '+d.expected+' sweeps'):null].filter(Boolean).join('  ');
+       d.expected?('of '+d.expected+' sweeps'):null,
+       // the analyser's saturation diagnostic: non-finite readings land on the strongest bins
+       (d.nonfinite_pct>1)?('⚠ '+d.nonfinite_pct.toFixed(1)+'% readings non-finite: peaks are lower bounds'):null
+      ].filter(Boolean).join('  ');
     total=d.total;
     document.getElementById('n').textContent=total;
     // Only overwrite when a sweep actually completed - otherwise every poll between
