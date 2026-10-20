@@ -54,6 +54,29 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
 .note{font-size:12px;color:var(--dim);margin:0 0 8px}
 .term{color:#e8b14f}
 .lv{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4fcf96}
+/* Probe tab */
+.frm{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.frm label{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim)}
+.frm label[hidden]{display:none}
+.frm input,.frm select,.frm textarea{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font:13px ui-sans-serif,system-ui,sans-serif}
+.frm input[type=number]{width:90px;font-family:ui-monospace,Consolas,monospace}
+.frm input.wide{min-width:320px;flex:1}
+.frm select{min-width:200px}
+.btn{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:6px 14px;font:13px ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.on{border-color:var(--accent);color:var(--accent)}
+.btn.go{background:#1b4a3a;border-color:#4fcf96;color:#dff7ea;font-weight:600;padding:8px 22px}
+.btn.halt{background:#4a2d1b;border-color:#e8b14f;color:#fbe9c8;font-weight:600;padding:8px 22px}
+.btn:disabled{opacity:.4;cursor:default}
+pre.cmd{white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,Consolas,monospace;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;margin:8px 0}
+pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:var(--dim);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;margin:8px 0 0;max-height:220px;overflow:auto}
+.warn{color:#e8b14f;font-size:12.5px}
+.bad{color:#ff8a65;font-size:12.5px}
+.good{color:#4fcf96}
+.state{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.state b{color:var(--accent);font-weight:600}
+#pb-map table td{white-space:normal;text-align:left;font-size:12px}
+#pb-map table th{text-align:left}
 </style></head><body>
 <header>
   <h1><span class="dot" id="dot"></span>SDR station</h1>
@@ -71,6 +94,7 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
   <div class="tab on" data-pane="scan">Scan</div>
   <div class="tab" data-pane="builder">Builder</div>
   <div class="tab" data-pane="archive">Archive</div>
+  <div class="tab" data-pane="probe">Probe</div>
   <div class="tab" data-pane="roadmap">Roadmap</div>
 </div>
 
@@ -125,6 +149,51 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
     <div class="wrap">
       <div class="lab">Frequencies seen in at least two antenna surveys — the persistent set</div>
       <div style="overflow-x:auto"><table id="dbseen"><tbody></tbody></table></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-probe">
+  <main>
+    <div class="wrap">
+      <div class="lab">What is under the probe</div>
+      <p class="note">A probe run is an ordinary <code>marsad run</code>: this page only composes the tag, the chain and the
+        conditions. The probe chain goes through the DC block into the LaNA at the window — never a loop straight onto the XTR's SMA, its bias-tee is always on.</p>
+      <div class="frm">
+        <label>Target <select id="pb-target"></select></label>
+        <label id="pb-other-l" hidden>Other <input id="pb-target-other" placeholder="e.g. desk lamp" size="22"></label>
+        <label>Probe <select id="pb-probe"></select></label>
+        <label style="flex:1">Held <input id="pb-where" class="wide" placeholder="e.g. against the PSU fan grille"></label>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Scan</div>
+      <div class="frm">
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--dim)">Duration
+          <span id="pb-durs"></span>
+          <input id="pb-min" type="number" min="0.5" step="0.5" value="5"> min</span>
+        <label>Range <select id="pb-range"></select></label>
+        <label id="pb-centre-l" hidden>Centre <input id="pb-centre" type="number" step="0.01" placeholder="MHz"> MHz</label>
+        <label title="rtl_power device index: 0 unless two dongles are plugged in">Device <input id="pb-device" type="number" min="0" max="9" value="0" style="width:55px"></label>
+        <label style="flex:1 1 100%">Notes <input id="pb-notes" class="wide" placeholder="what is switched on in the room, anything unusual"></label>
+      </div>
+      <div class="note" id="pb-geom" style="margin-top:10px"></div>
+      <pre class="cmd" id="pb-cmd">…</pre>
+      <div id="pb-warn"></div>
+      <div class="frm" style="margin-top:10px">
+        <button class="btn go" id="pb-start">Start</button>
+        <button class="btn halt" id="pb-stop" disabled>Stop</button>
+        <span class="state" id="pb-state">idle</span>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="lab">This run <span style="float:right;font-weight:normal;opacity:.75"><a href="#" id="pb-toscan" style="color:var(--accent)">watch it on the Scan tab</a></span></div>
+      <div id="pb-run" class="note">Nothing has run yet.</div>
+      <pre class="log" id="pb-log"></pre>
+    </div>
+    <div class="wrap">
+      <div class="lab">Room RF map — <span id="pb-logfile" style="text-transform:none;letter-spacing:0">ROOM_RF.md</span></div>
+      <div id="pb-map" style="overflow-x:auto"><p class="note">No probe runs logged yet.</p></div>
     </div>
   </main>
 </div>
@@ -521,7 +590,127 @@ function showPane(name){
   if(name==='scan')setTimeout(draw,0);        // canvases size to zero while hidden
   if(name==='builder'){const f=document.getElementById('builder');if(!f.src)f.src='/builder';}
   if(name==='archive')loadArchive();
+  if(name==='probe'){probeInit();loadProbeMap();}
   try{localStorage.setItem('sdr-pane',name);}catch(e){}
+}
+
+// ---------------------------------------------------------------- Probe tab
+// The form is sent to the server as-is; Python composes the tag, chain and
+// conditions and the command, so the page never holds a second copy of the rules.
+let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null;
+const PB_KEYS=['target','target-other','probe','where','min','range','centre','device','notes'];
+const pbEl=id=>document.getElementById('pb-'+id);
+function pbForm(){
+  return {target:pbEl('target').value, target_other:pbEl('target-other').value,
+          probe:pbEl('probe').value, where:pbEl('where').value, minutes:pbEl('min').value,
+          range:pbEl('range').value, centre:pbEl('centre').value, device:pbEl('device').value,
+          notes:pbEl('notes').value};
+}
+function pbSave(){try{const o={};for(const k of PB_KEYS)o[k]=pbEl(k).value;localStorage.setItem('sdr-probe',JSON.stringify(o));}catch(e){}}
+function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'{}');
+  for(const k of PB_KEYS)if(o[k]!==undefined&&o[k]!=='')pbEl(k).value=o[k];}catch(e){}}
+function pbShowFields(){
+  pbEl('other-l').hidden=pbEl('target').value!=='other';
+  pbEl('centre-l').hidden=pbEl('range').value!=='hunt';
+  document.querySelectorAll('#pb-durs .btn').forEach(b=>b.classList.toggle('on',b.dataset.m===pbEl('min').value));
+}
+async function probeInit(){
+  if(pbReady)return;pbReady=true;
+  try{
+    const c=await (await fetch('/probe/config')).json();
+    pbEl('target').innerHTML=c.targets.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')
+      +'<option value="other">other…</option>';
+    pbEl('probe').innerHTML=c.probes.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} — ${esc(p.desc)}</option>`).join('');
+    pbEl('range').innerHTML=c.ranges.map(r=>`<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
+    pbEl('durs').innerHTML=c.durations_min.map(m=>`<button class="btn" data-m="${m}">${m} min</button>`).join(' ');
+    pbEl('logfile').textContent=c.log_file;
+    document.querySelectorAll('#pb-durs .btn').forEach(b=>b.onclick=()=>{pbEl('min').value=b.dataset.m;pbChanged();});
+  }catch(e){pbEl('cmd').textContent='could not load /probe/config: '+e;return;}
+  pbRestore();
+  for(const k of PB_KEYS){const el=pbEl(k);el.addEventListener('input',pbChanged);el.addEventListener('change',pbChanged);}
+  pbEl('start').onclick=pbStart;
+  pbEl('stop').onclick=pbStop;
+  pbEl('toscan').onclick=e=>{e.preventDefault();curFile=null;resetView();showPane('scan');};
+  pbShowFields();
+  pbPreview();
+  if(!pbPolling){pbPolling=true;pbPoll();}
+}
+function pbChanged(){pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
+async function pbPreview(){
+  try{
+    const r=await fetch('/probe/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pbForm())});
+    const d=await r.json();
+    if(d.error){pbEl('cmd').textContent='—';pbEl('geom').textContent='';
+      pbEl('warn').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
+    const g=d.geometry;
+    pbEl('cmd').textContent=d.command_line+'\n\n'+d.rtl_power_line;
+    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
+      +`${g.sweeps} sweep${g.sweeps===1?'':'s'} of ${d.integration} s, ${(g.listening_frac*100).toFixed(0)}% listening `
+      +`(${g.retune_s_per_sweep.toFixed(1)} s of every sweep retunes), ${g.listen_per_freq_s.toFixed(1)} s on each frequency, ~${g.csv_mb.toFixed(1)} MB`
+      +(d.hunt?`<br>hop centres at ${d.hunt.hop_centres_mhz.map(x=>x.toFixed(3)).join(', ')} MHz — the target sits ${(d.hunt.clearance_mhz*1000).toFixed(0)} kHz clear of the nearest DC spike`:'');
+    pbEl('warn').innerHTML=d.warnings.map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join('');
+  }catch(e){pbEl('warn').innerHTML=`<span class="bad">preview failed: ${esc(e)}</span>`;}
+}
+async function pbStart(){
+  pbEl('start').disabled=true;
+  try{
+    const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pbForm())});
+    const d=await r.json();
+    if(d.error){pbEl('warn').innerHTML=`<div class="bad">${esc(d.error)}</div>`;pbEl('start').disabled=false;return;}
+    pbRender(d);
+  }catch(e){pbEl('warn').innerHTML=`<div class="bad">start failed: ${esc(e)}</div>`;pbEl('start').disabled=false;}
+}
+async function pbStop(){
+  pbEl('stop').disabled=true;
+  try{
+    const r=await fetch('/probe/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(d.error)pbEl('warn').innerHTML=`<div class="bad">${esc(d.error)}</div>`;else pbRender(d);
+  }catch(e){pbEl('warn').innerHTML=`<div class="bad">stop failed: ${esc(e)}</div>`;}
+}
+const PB_STATE={idle:'idle',starting:'starting — checking the receiver',recording:'recording',stopping:'stopping — asking rtl_power to finish',
+  analysing:'analysing',done:'done',failed:'ended without a report'};
+function pbRender(d){
+  const busy=['starting','recording','stopping','analysing'].includes(d.state);
+  pbEl('start').disabled=busy;
+  pbEl('stop').disabled=d.state!=='recording';
+  let s=`<b>${esc(PB_STATE[d.state]||d.state)}</b>`;
+  if(d.state==='recording')s+=`  ${d.elapsed} elapsed, ${d.remaining} left`;
+  pbEl('state').innerHTML=s;
+  if(d.state==='idle')return;
+  let h=`<b>${esc(d.tag)}</b> — ${esc(d.target)}, ${esc(d.probe)} held ${esc(d.held)}, ${esc(d.range_label)}, started ${esc(String(d.started_local).slice(11,16))}`;
+  if(d.csv)h+=`<br>CSV: surveys/${esc(d.csv)}`;
+  if(d.state==='done'){
+    const su=d.summary||{};const st=su.strongest;
+    h+=`<br><span class="good">Report: <a href="${esc(d.report_url)}" target="_blank" style="color:var(--accent)">reports/${esc(d.stem)}/report.md</a></span>`
+      +` · <a href="/reports/${esc(d.stem)}/combined.png" target="_blank" style="color:var(--accent)">combined.png</a>`
+      +`<br>${su.detections??'?'} detections (${su.untagged??'?'} untagged)`
+      +(st?`, strongest ${st.f.toFixed(4)} MHz at ${st.max_db} dB (${st.snr} dB SNR, ${st.occ}% on)${st.tags?' ['+esc(st.tags)+']':''}`:', none')
+      +(su.families&&Object.keys(su.families).length?`<br>tagged families: ${esc(Object.entries(su.families).map(([k,v])=>k+' ×'+v).join('; '))}`:'')
+      +(d.row?`<br><span class="good">row appended to ROOM_RF.md</span>`:'')
+      +(d.log_error?`<br><span class="bad">${esc(d.log_error)}</span>`:'');
+  }
+  if(d.state==='failed')h+=`<br><span class="bad">${esc(d.message||'')}</span>`;
+  pbEl('run').innerHTML=h;
+  pbEl('log').textContent=d.log_tail||'';
+  if(d.state==='done'&&pbLastState!=='done')loadProbeMap();
+  pbLastState=d.state;
+}
+async function pbPoll(){
+  try{const d=await (await fetch('/probe/status')).json();pbRender(d);}catch(e){}
+  setTimeout(pbPoll,2000);
+}
+async function loadProbeMap(){
+  try{
+    const t=await (await fetch('/probe/log')).text();
+    const rows=t.split('\n').filter(l=>l.startsWith('|')&&!/^\|\s*-/.test(l));
+    const box=pbEl('map');
+    if(rows.length<2){box.innerHTML='<p class="note">No probe runs logged yet. Each completed run adds one row.</p>';return;}
+    const cells=l=>l.slice(1,-1).split(/(?<!\\)\|/).map(c=>c.replace(/\\\|/g,'|').trim());
+    const head=cells(rows[0]);
+    box.innerHTML='<table><thead><tr>'+head.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr></thead><tbody>'
+      +rows.slice(1).reverse().map(r=>'<tr>'+cells(r).map(c=>`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+'</tbody></table>';
+  }catch(e){}
 }
 
 async function tick(){
@@ -592,4 +781,6 @@ tick();
 let startPane='scan';
 try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}
 if(startPane!=='scan')showPane(startPane);
+// A probe run started earlier keeps reporting whichever tab is open.
+fetch('/probe/status').then(r=>r.json()).then(d=>{if(d.state&&d.state!=='idle')probeInit();}).catch(()=>{});
 </script></body></html>

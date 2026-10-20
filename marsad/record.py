@@ -35,7 +35,8 @@ from . import host
 from .config import Station, source_root
 from .rtlpower import (CROP, FIR, RTL_POWER_MAX_MHZ, TUNER_GAINS, TUNER_LABEL,
                        actual_bin_width_khz, find_tool, fingerprint, fmt_hms,
-                       parse_duration, parse_freq_spec, scan_geometry)
+                       parse_duration, parse_freq_spec, rtl_power_max_span_mhz,
+                       scan_geometry)
 
 
 def progress_every(dur_s: float) -> float:
@@ -46,24 +47,52 @@ def progress_every(dur_s: float) -> float:
     return min(300.0, max(30.0, dur_s / 10.0))
 
 
-def run_with_progress(cmd: list, dur_s: float, csv_path: Path, every: float | None = None) -> int:
+def stop_child(proc: subprocess.Popen) -> None:
+    """Ask rtl_power to finish and flush; insist if it does not within 10 s.
+
+    rtl_power flushes its CSV after every interval, so even the insistent path
+    loses nothing already written; the polite path lets it close the device.
+    """
+    try:
+        host.ask_to_stop(proc)
+        proc.wait(timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        proc.terminate()
+
+
+def run_with_progress(cmd: list, dur_s: float, csv_path: Path, every: float | None = None,
+                      stop_file: Path | None = None) -> int:
     """Run rtl_power, printing elapsed/remaining periodically.
 
     rtl_power prints its header and then nothing for the whole run, so a long survey
     looks hung. Each update is its own line rather than a redrawing bar, because
     rtl_power shares this console and its own output would break a \\r-updated line.
+
+    `stop_file` is how the web app's Stop button reaches a run it started: when that
+    file appears, rtl_power is asked to stop and KeyboardInterrupt is raised, so the
+    rest of the run proceeds exactly as after a Ctrl-C. Such a run gets rtl_power in
+    its own process group (that is what makes it addressable), which also means it no
+    longer hears the console's Ctrl-C; the except branch covers that.
     """
     every = progress_every(dur_s) if every is None else every
     t0 = time.time()
     nxt = t0 + every
-    proc = subprocess.Popen(cmd)
+    own_group = stop_file is not None
+    proc = subprocess.Popen(cmd, creationflags=host.popen_group_flags() if own_group else 0)
     try:
         while True:
             try:
-                return proc.wait(timeout=max(0.5, nxt - time.time()))
+                return proc.wait(timeout=0.5 if own_group else max(0.5, nxt - time.time()))
             except subprocess.TimeoutExpired:
                 pass
+            if own_group and stop_file.exists():
+                stop_file.unlink(missing_ok=True)
+                print("\n  Stop requested from the web app; asking rtl_power to finish.")
+                stop_child(proc)
+                raise KeyboardInterrupt
             now = time.time()
+            if now < nxt:
+                continue
             nxt = now + every
             el, left = now - t0, max(0.0, dur_s - (now - t0))
             mb = csv_path.stat().st_size / 1e6 if csv_path.exists() else 0.0
@@ -74,6 +103,9 @@ def run_with_progress(cmd: list, dur_s: float, csv_path: Path, every: float | No
     except KeyboardInterrupt:
         # Ctrl-C reaches the whole console group, so rtl_power is already
         # stopping; wait for it so the CSV is flushed before we report on it.
+        # In its own group it did not hear the Ctrl-C and must be asked.
+        if own_group and proc.poll() is None:
+            stop_child(proc)
         proc.wait()
         raise
 
@@ -233,6 +265,12 @@ def build_parser(station: Station, prog: str = "marsad run") -> argparse.Argumen
                    help="do not open the live view for this run")
     p.add_argument("--no-archive", action="store_true",
                    help="skip folding the finished report into occupancy.db")
+    p.add_argument("--keep-defaults", action="store_true",
+                   help="do not remember this run's chain as the station default "
+                        "(for probe runs and other one-offs)")
+    p.add_argument("--stop-file", type=Path, metavar="PATH",
+                   help="stop early, as Ctrl-C would, when this file appears "
+                        "(the web app's Stop button)")
     return p
 
 
@@ -502,6 +540,12 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
             f"ceiling (2^31 Hz). It would write no file and still report success. "
             f"Use SDR++ or rtl_power_fftw above that.")
     effective_hi = min(hi, RTL_POWER_MAX_MHZ)
+    max_span = rtl_power_max_span_mhz(args.crop)
+    if effective_hi - lo > max_span:
+        raise SystemExit(
+            f"span {effective_hi - lo:g} MHz is wider than rtl_power can plan at -c {args.crop:g} "
+            f"({max_span:.1f} MHz: the span divided by 1-crop must fit in 2^31 Hz). It would "
+            f"plan one hop of 0 Hz and exit with 'Invalid sample rate'. Split it into two runs.")
     # Asking a little past the ceiling is the idiom for "give me everything you
     # can", so only complain when a meaningful slice would go missing.
     if hi > RTL_POWER_MAX_MHZ + 1.0:
@@ -579,7 +623,8 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
             chain["chain_order"] = args.chain
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled at the questions. Nothing was recorded.")
-    station.save_defaults(chain)
+    if not args.keep_defaults:
+        station.save_defaults(chain)
 
     sidecar = {
         "schema": 1,
@@ -626,7 +671,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
     t0 = time.time()
     interrupted = False
     try:
-        rc = run_with_progress(cmd, dur_s, csv_path)
+        rc = run_with_progress(cmd, dur_s, csv_path, stop_file=args.stop_file)
     except KeyboardInterrupt:
         interrupted, rc = True, 130
         print("\n  Interrupted. Keeping the partial CSV.")

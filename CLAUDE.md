@@ -1412,6 +1412,16 @@ resonance from a volume effect, since taping should change the former and not th
   **no file while still exiting 0**. Requesting ~2148M gets the maximum. `run_survey.py`
   refuses a range above it and warns when a top would be clamped. For 2147–2187 MHz use
   SDR++ or rtl_power_fftw, not rtl_power.
+- **rtl_power cannot plan a span wider than 2^31 x (1 - crop) Hz = 1610.6 MHz at `-c 0.25`.**
+  The same 32-bit int: before dividing the span into hops it scales the whole span by
+  1/(1 - crop), and that product overflows. Measured 2026-10-20: `52M:1662.6M` plans 767 hops,
+  `52M:1662.7M` plans "1 hop, 0 Hz bandwidth" and exits with `Invalid sample rate: 0 Hz`; at
+  `-c 0.1` the limit moves to 1932.7 MHz as the formula predicts. **The `wide` preset
+  (52M:1700M, 1648 MHz) could never have run** and is now `52M:1660M:100k`. `marsad run`
+  refuses a wider span. Also measured on the way: wide is **766 hops** (not the 589 a crop-free
+  estimate gives), so its retune floor is 36 s per sweep; at the old `-i 5` it would listen 0% of
+  the time. The preset is now `-i 60` (40% listening). `L` (219 hops, 10.3 s floor) has the same
+  problem at `-i 10` and has not been changed; use `-i 30` or more there.
 
 ---
 
@@ -1421,9 +1431,27 @@ resonance from a volume effect, since taping should change the former and not th
 kenogen-dev/marsad). The code lives in the `marsad/` package; `marsad run LS 1h` is the
 command, and `sdr` is a second entry point for the same thing, kept so every command in the
 notes and RUNSHEET still works. The `tools/*.py` scripts below are thin wrappers over the
-package and keep their original command lines. `py -m pytest` runs 23 regression tests that
-pin the recorded figures; the frozen Windows build is `packaging/marsad.spec` ->
-`dist/marsad/marsad.exe`.
+package and keep their original command lines. `.venv\Scripts\python.exe -m pytest` runs 33
+regression tests that pin the recorded figures; the frozen Windows build is
+`packaging/marsad.spec` -> `dist/marsad/marsad.exe`.
+
+**Probe tab (2026-10-20)** in the web app (`marsad live`, port 8731): near-field probe surveys
+of the room from the browser, one hand on the probe. `marsad/probe.py` holds the catalogue
+(targets, the four H-field loops and two E-field stubs, the two ranges) and composes the
+**tag, chain and conditions only** - the run itself is `marsad run` as a child process with
+`--non-interactive --no-live --keep-defaults --stop-file`, so the sidecar, scan_build.md,
+report and archive entry are identical to a command-line run. Ranges: `wide` (the preset) and
+`hunt`, a 5 MHz tile at 5 kHz bins, `-g 42 -i 1`, shifted so the typed centre sits a quarter
+hop above a hop centre (420 kHz clear of the DC spike). Stop writes a flag file the child polls
+twice a second; the child asks rtl_power to finish, then proceeds exactly as after Ctrl-C
+(partial CSV kept, analysed, archived). Each finished run appends a row to **`ROOM_RF.md`**
+(when, target, probe, where held, range, duration, survey, detections, strongest non-artefact
+line, tagged families) - the human-readable map of the room; the archive holds the data.
+`--keep-defaults` exists so probe runs do not overwrite the antenna chain that a plain
+`marsad run LS` falls back on. Header fields (antenna, whips, LNA, filter) in a probe sidecar
+come from station.json defaults, as for any `--non-interactive` run; `chain_order` is the truth.
+The probe chain goes through the DC block into the LaNA at the window, never a loop straight onto
+the XTR's SMA (bias-tee always on).
 
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 
@@ -1687,7 +1715,7 @@ Ready-made ranges:
 | L | 1241M:1700M:25k, -g 34, -i 10 | L-band detail |
 | milair | 225M:400M:12.5k, -g 29, -i 10 | Military air UHF |
 | 900 | 902M:935M:5k, -g 29, -i 5 | ISM + paging |
-| wide | 52M:1700M:100k, -g 29, -i 5 | Overview; analyse with `--receiver xtr` |
+| wide | 52M:1660M:100k, -g 29, -i 60 | Overview, 766 hops, 36 s retune floor; analyse with `--receiver xtr`. 52M:1700M overflows rtl_power's planner (see tool limits) |
 | burst23 | 1263M:1267M:5k, -g 29, -i 2 | 1265.44 MHz burst hunt; 2 hops, ~95% listening, 2 s resolution, hop centres offset off-target |
 
 ---

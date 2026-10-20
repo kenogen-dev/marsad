@@ -7,6 +7,13 @@
       "runtimeArgs": ["-m", "marsad", "live", "--port", "8740"],
       "port": 8740,
       "autoPort": false
+    },
+    {
+      "name": "live-view-probe",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-m", "marsad", "live", "--port", "8741"],
+      "port": 8741,
+      "autoPort": false
     }
   ]
 }

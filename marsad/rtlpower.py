@@ -20,6 +20,15 @@ from pathlib import Path
 RTL_POWER_MAX_HZ = 2 ** 31
 RTL_POWER_MAX_MHZ = RTL_POWER_MAX_HZ / 1e6  # 2147.483648
 
+# The same 32-bit int bites the span: before dividing it into hops, rtl_power
+# scales the WHOLE span by 1/(1 - crop) to undo the crop, and that product must
+# also fit in 2^31. Measured 2026-10-20 at -c 0.25: 52M:1662.6M plans 767 hops,
+# 52M:1662.7M plans "1 hop, 0 Hz bandwidth" and rtl_power exits with "Invalid
+# sample rate: 0 Hz". At -c 0.1 the limit moves to 1932.7 MHz, as the formula says.
+def rtl_power_max_span_mhz(crop: float) -> float:
+    return RTL_POWER_MAX_MHZ * (1.0 - crop)
+
+
 # rtl_power's ceiling on sample rate before it splits a span into hops.
 RTL_MAX_SAMPLE_HZ = 2.8e6
 

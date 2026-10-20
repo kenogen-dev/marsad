@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics as st
 import threading
 import time
@@ -25,11 +26,40 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import probe
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        parse_freq_spec)
 
 WEB = Path(__file__).resolve().parent / "web"
+
+# What /reports/<survey>/<file> will serve, and as what. Anything else is refused.
+REPORT_TYPES = {".md": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8",
+                ".png": "image/png", ".txt": "text/plain; charset=utf-8"}
+
+
+def report_file(station: Station, url_path: str):
+    """(path, content-type) for a file inside reports/, or None.
+
+    Only plain names are accepted (letters, digits, dot, dash, underscore), and the
+    resolved path must still be inside reports/, so a crafted URL cannot read
+    anything else on the disk.
+    """
+    parts = url_path.strip("/").split("/")
+    if len(parts) != 3 or parts[0] != "reports":
+        return None
+    for p in parts[1:]:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", p) or p.startswith("."):
+            return None
+    path = (station.reports / parts[1] / parts[2]).resolve()
+    try:
+        path.relative_to(station.reports.resolve())
+    except ValueError:
+        return None
+    ctype = REPORT_TYPES.get(path.suffix.lower())
+    if ctype is None or not path.is_file():
+        return None
+    return path, ctype
 
 
 def _reading(x: str) -> float:
@@ -493,10 +523,48 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
         live["tail"] = tail
 
     cfg = builder_config(station)
+    runner = probe.ProbeRunner(station)
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):          # keep the console for the scan
             pass
+
+        def _send(self, body: bytes, ctype: str = "application/json", code: int = 200):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json_body(self) -> dict:
+            n = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(n) if n else b""
+            try:
+                d = json.loads(raw.decode("utf-8") or "{}")
+            except ValueError:
+                d = {}
+            return d if isinstance(d, dict) else {}
+
+        def do_POST(self):
+            """The Probe tab's actions. Each answers with JSON; a refusal is a
+            plain-language `error` with status 400, never a hang."""
+            u = urlparse(self.path)
+            LAST_REQUEST[0] = time.time()
+            form = self._json_body()
+            try:
+                if u.path == "/probe/preview":
+                    out = probe.compose(station, form)
+                elif u.path == "/probe/start":
+                    out = runner.start(form)
+                elif u.path == "/probe/stop":
+                    out = runner.stop()
+                else:
+                    self.send_error(404); return
+            except (ValueError, RuntimeError) as exc:
+                self._send(json.dumps({"error": str(exc)}).encode(), code=400)
+                return
+            self._send(json.dumps(out).encode())
 
         def do_GET(self):
             u = urlparse(self.path)
@@ -532,6 +600,18 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
             elif u.path == "/roadmap":
                 body = roadmap_text(station).encode()
                 ctype = "text/plain; charset=utf-8"
+            elif u.path == "/probe/config":
+                body = json.dumps(probe.catalog(station)).encode()
+            elif u.path == "/probe/status":
+                body = json.dumps(runner.status()).encode()
+            elif u.path == "/probe/log":
+                body = probe.read_log(station).encode("utf-8")
+                ctype = "text/plain; charset=utf-8"
+            elif u.path.startswith("/reports/"):
+                hit = report_file(station, u.path)
+                if hit is None:
+                    self.send_error(404); return
+                body, ctype = hit[0].read_bytes(), hit[1]
             elif u.path == "/builder":
                 body = (WEB / "builder.html").read_text(encoding="utf-8").encode()
                 ctype = "text/html; charset=utf-8"
@@ -540,12 +620,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                 ctype = "text/html; charset=utf-8"
             else:
                 self.send_error(404); return
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            self._send(body, ctype)
 
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), H)
 
@@ -563,7 +638,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
             if tail is not None:
                 tail.poll()
                 quiet = min(time.time() - tail.last_growth, time.time() - LAST_REQUEST[0])
-                if idle and tail.rows and quiet > idle:
+                if idle and tail.rows and quiet > idle and not runner.running():
                     print(f"  no new data for {args.exit_after_idle:g} min - shutting down")
                     srv.shutdown()
                     return
@@ -580,4 +655,6 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        runner.shutdown()      # a probe run started from the page must not outlive the Stop button
     return 0

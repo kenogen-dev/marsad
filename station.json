@@ -109,11 +109,11 @@
       "note": "ISM + paging"
     },
     "wide": {
-      "freq": "52M:1700M:100k",
+      "freq": "52M:1660M:100k",
       "gain": 29.0,
-      "integration": 5,
+      "integration": 60,
       "receiver": "xtr",
-      "note": "Overview; sweeps through the gap, analyser masks it"
+      "note": "Overview (766 hops, 36 s retune floor); sweeps through the gap, analyser masks it"
     },
     "burst23": {
       "freq": "1263M:1267M:5k",
