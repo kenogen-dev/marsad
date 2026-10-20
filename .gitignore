@@ -23,3 +23,6 @@ rtl-sdr/
 # Scratch output from rtl_test
 rtl_devices.txt
 rtl_err.txt
+
+# pip install -e . metadata
+*.egg-info/
