@@ -452,6 +452,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-warmup", type=float, default=0.0, metavar="MIN",
                     help="discard the first MIN minutes when analysing (receiver warm-up drift)")
     p.add_argument("--no-analyze", action="store_true", help="record only, skip the analyser")
+    p.add_argument("--no-notify", action="store_true",
+                   help="skip the beeps and the Windows toast when the scan ends")
     p.add_argument("--no-live", action="store_true",
                    help="do not open the live view for this run")
     p.add_argument("--no-archive", action="store_true",
@@ -567,6 +569,49 @@ def free_port(start: int = 8731, tries: int = 10) -> int | None:
             if sk.connect_ex(("127.0.0.1", port)) != 0:
                 return port
     return None
+
+
+def notify(title: str, body: str) -> None:
+    """Tell the owner a scan is over: three beeps and a Windows toast.
+
+    The scan is watched from the live view or not at all, so a finish needs to
+    reach someone who is studying in another window. Both channels are
+    best-effort: a notification that fails must never make the run look failed.
+
+    The toast goes through classic Windows PowerShell 5.1, because PowerShell 7
+    cannot load the WinRT notification types. It appears in the Action Centre and
+    survives being missed. Nothing is installed; this is the OS's own API.
+    """
+    try:
+        import winsound
+        for _ in range(3):
+            winsound.Beep(880, 180)
+            time.sleep(0.08)
+    except Exception:
+        pass
+    ps = shutil.which("powershell.exe") or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    q = lambda t: str(t).replace("'", "''")      # PowerShell single-quote escaping
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+        "ContentType = WindowsRuntime] | Out-Null\n"
+        "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+        "[Windows.UI.Notifications.ToastTemplateType]::ToastText02)\n"
+        "$n = $t.GetElementsByTagName('text')\n"
+        f"$n.Item(0).AppendChild($t.CreateTextNode('{q(title)}')) | Out-Null\n"
+        f"$n.Item(1).AppendChild($t.CreateTextNode('{q(body)}')) | Out-Null\n"
+        "$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'\n"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show("
+        "[Windows.UI.Notifications.ToastNotification]::new($t))\n"
+    )
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False, encoding="utf-8") as fh:
+            fh.write(script)
+            path = fh.name
+        subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+    except Exception:
+        pass
 
 
 def viewer_follows(port: int = 8731) -> bool:
@@ -861,6 +906,12 @@ def main() -> int:
     print(f"\n  Recorded {csv_path.stat().st_size / 1e6:.1f} MB in {elapsed / 60:.1f} min "
           f"(rtl_power exit {rc}).")
 
+    tag = f" {args.tag}" if args.tag else ""
+    if not args.no_notify:
+        state = "interrupted" if interrupted else ("finished" if rc == 0 else f"ended with exit code {rc}")
+        notify(f"Scan{tag} {state}",
+               f"{csv_path.name}  -  {elapsed/60:.0f} min recorded, analysing now")
+
     if args.no_analyze:
         print("  Build sheet: " + str(write_scan_build(
             csv_path, sidecar, geom, None, REPORTS / csv_path.stem)))
@@ -887,6 +938,9 @@ def main() -> int:
     arc = subprocess.run(analyze).returncode
     build = write_scan_build(csv_path, sidecar, geom, analyze,
                              REPORTS / csv_path.stem)
+    if not args.no_notify:
+        notify(f"Report ready{tag}" if arc == 0 else f"Analysis failed{tag}",
+               f"reports/{csv_path.stem}/report.md" if arc == 0 else f"survey.py exit code {arc}")
     if arc == 0:
         print(f"\n  Done. Report: reports/{csv_path.stem}/report.md\n")
         print(f"        Build:  reports/{csv_path.stem}/{build.name}")

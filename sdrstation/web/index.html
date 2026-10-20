@@ -133,7 +133,7 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 // View: a horizontal zoom shared by the spectrum and the waterfall so they stay aligned,
 // plus a history scroll for the waterfall. Frequencies are handled as fractions of the
 // full span (0..1); fx() maps a fraction to a pixel under the current view.
-let view={z:1,c:0.5,top:0,fit:true};
+let view={z:1,c:0.5,top:0,fit:true,ry:1};
 function vlo(){return Math.max(0,Math.min(1-1/view.z,view.c-0.5/view.z));}
 function vhi(){return vlo()+1/view.z;}
 function fLo(){return lo+vlo()*(hi-lo);}
@@ -195,7 +195,8 @@ function drawSpec(floor,span){
   x.clearRect(0,0,W,H);
   const tk=ticks(fLo(),fHi());
   grid(x,W,H,tk);
-  const y=v=>H-4-((v-floor)/span)*(H-10);
+  const bot=(chartBot===null?floor-1:chartBot);
+  const y=v=>H-4-((v-bot)/(span+(floor-bot)))*(H-10);
   // dB gridlines every 10 dB above the floor
   x.save();x.strokeStyle='rgba(133,153,168,.10)';
   for(let d=0;d<=span;d+=10){x.beginPath();x.moveTo(0,y(floor+d));x.lineTo(W,y(floor+d));x.stroke();
@@ -233,7 +234,7 @@ function drawFall(floor,span){
   for(let ry=0;ry<FH;ry++){
     // fit mode squeezes every sweep in memory into the canvas; history mode is one
     // sweep per pixel row, starting view.top sweeps back from the newest.
-    const idx=view.fit?Math.floor(ry/FH*n):view.top+ry;
+    const idx=view.fit?Math.floor(ry/FH*n):view.top+Math.floor(ry/view.ry);
     const src=idx<rows.length?rows[rows.length-1-idx]:null;
     for(let px=0;px<FW;px++){
       const v=src?src[Math.min(COLS-1,Math.floor((vl+px/FW*vw)*COLS))]:null;
@@ -254,8 +255,8 @@ function overlayFall(){
     if(px<0||px>FW)continue;
     g.beginPath();g.moveTo(px,0);g.lineTo(px,FH);g.stroke();}
   g.restore();
-  const n=view.fit?Math.min(rows.length,FH):Math.max(0,Math.min(FH,rows.length-view.top));
-  const yOf=k=>view.fit?k/n*FH:k;
+  const n=view.fit?Math.min(rows.length,FH):Math.max(0,Math.min(Math.ceil(FH/view.ry),rows.length-view.top));
+  const yOf=k=>view.fit?k/n*FH:k*view.ry;
   // Sweep boundaries. One line per sweep is readable at 15 sweeps and a solid block at
   // 180, so thin them to at most ~16 lines and label a subset of those.
   if(n>1){
@@ -288,8 +289,8 @@ function overlayFall(){
   labels(document.getElementById('xf'),ticks(fLo(),fHi()));
   const vi=document.getElementById('vinfo');
   if(vi)vi.textContent=(view.z>1?`zoom ${view.z.toFixed(1)}×  ${fLo().toFixed(1)}–${fHi().toFixed(1)} MHz  ·  `:'')
-    +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}`)
-    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · double-click: reset';
+    +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}, ${view.ry} px per sweep`)
+    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · ctrl+wheel: sweep height · double-click: reset';
 }
 
 let mh=[];
@@ -298,17 +299,24 @@ function draw(){
   const flat=[].concat(...rows.slice(-40));
   const floor=pct(flat,.2), top=pct(flat,.999);
   if(floor===null)return;
-  const span=Math.max(6,top-floor);
-  document.getElementById('floor').textContent=floor.toFixed(2);
-  document.getElementById('peak').textContent=top.toFixed(2);
   mh=new Array(COLS).fill(null);
   for(const r of rows)for(let i=0;i<COLS;i++)if(r[i]!==null&&(mh[i]===null||r[i]>mh[i]))mh[i]=r[i];
+  let mhTop=-Infinity;for(const v of mh)if(v!==null&&v>mhTop)mhTop=v;
+  // The chart's bottom edge must sit under the lowest point actually drawn, or the
+  // per-hop roll-off dips (1-2 dB under the 20th-percentile floor) run off the canvas
+  // and look like gaps in the trace.
+  let lowest=Infinity;for(const v of rows[rows.length-1])if(v!==null&&v<lowest)lowest=v;
+  if(partial)for(const v of partial)if(v!==null&&v<lowest)lowest=v;
+  chartBot=Math.min(floor-1,(isFinite(lowest)?lowest:floor)-0.5);
+  const span=Math.max(6,Math.max(top,mhTop)+2-floor);
+  document.getElementById('floor').textContent=floor.toFixed(2);
+  document.getElementById('peak').textContent=(isFinite(mhTop)?mhTop:top).toFixed(2);
   lastFloor=floor;lastSpan=span;
   drawSpec(floor,span);drawFall(floor,span);trend();
   readout();
 }
 
-let lastFloor=null,lastSpan=null;
+let lastFloor=null,lastSpan=null,chartBot=null;
 function redrawLight(){
   if(lastFloor===null)return;
   drawSpec(lastFloor,lastSpan);overlayFall();readout();
@@ -345,7 +353,11 @@ function hook(id){
     e.preventDefault();
     const r=c.getBoundingClientRect(),p=(e.clientX-r.left)/r.width;
     const dy=e.deltaY||e.deltaX;            // Chrome turns shift+wheel into deltaX
-    if(e.shiftKey){
+    if(e.ctrlKey){                           // taller or shorter sweeps
+      if(!rows.length)return;
+      view.fit=false;
+      view.ry=dy<0?Math.min(16,view.ry*2):Math.max(1,view.ry/2);
+    }else if(e.shiftKey){
       if(!rows.length)return;
       view.fit=false;
       view.top+=(dy>0?1:-1)*Math.max(1,Math.round(Math.abs(dy)/25));
@@ -356,7 +368,7 @@ function hook(id){
     }
     clampView();redrawView();
   },{passive:false});
-  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true};redrawView();});
+  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true,ry:1};redrawView();});
 }
 
 function trend(){
@@ -383,7 +395,7 @@ function fmt(s){if(s===null||s===undefined)return '—';
   const m=Math.floor(s/60);return m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'m';}
 
 function resetView(){
-  view={z:1,c:0.5,top:0,fit:true};
+  view={z:1,c:0.5,top:0,fit:true,ry:1};
   rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
   fallImg=null;lastFloor=null;mh=[];
   for(const id of ['n','last','floor','peak','cur','eta'])document.getElementById(id).textContent='—';

@@ -10,14 +10,14 @@ have to ask it to compute belongs in a tool.
 
 | Tool | What it does |
 |---|---|
-| `run_survey.py` | Records from a preset, derives the exact rtl_power geometry, writes a sidecar and a build sheet, analyses, archives, and sets the terminated/antenna flag from the chain |
+| `run_survey.py` | Records from a preset, derives the exact rtl_power geometry, writes a sidecar and a build sheet, analyses, archives, and sets the terminated/antenna flag from the chain. Beeps and raises a Windows toast when the recording ends and again when the report is ready (`--no-notify` to silence) |
 | `survey.py` | Parses the CSV, builds the time x frequency grid, finds signals, tags spurs, plots |
 | `spur_stats.py` | The pre-registered statistic: harmonic family mean above the whole-band median, paired difference with a real error bar |
 | `compare_runs.py` | **The whole A/B analysis in one command**: fingerprint check, whole-band median, floor block by block against the measured detection floor, the family statistic with error bars and a verdict, periodicity. Validated against the recorded A1/A2 control |
 | `adsb_check.py` | 1090 MHz positive control. Pass/fail on whether the chain hears anything at all |
 | `archive.py` | `occupancy.db` — every survey, with fingerprints, signals and pooled bands |
 | `drift.py` | Per-sweep whole-band median: warm-up, settling point, and a pass/fail on thermal drift. Validated against both recorded figures |
-| `live_view.py` | Watches a running scan: spectrum, waterfall, per-sweep median trend, hop cursor, hover readout. Also browses finished surveys. One viewer on port 8731 **follows the newest CSV** (since 2026-10-19), so a tab left open shows the next run; `run_survey.py` reuses it instead of starting another. `--pin` stays on one file |
+| `live_view.py` | Watches a running scan: spectrum, waterfall, per-sweep median trend, hop cursor, hover readout. Also browses finished surveys. One viewer on port 8731 **follows the newest CSV** (since 2026-10-19), so a tab left open shows the next run; `run_survey.py` reuses it instead of starting another. `--pin` stays on one file. Wheel zooms the spectrum and waterfall together, drag pans, shift+wheel scrolls waterfall history one sweep per pixel, double-click resets; the header says when the scan finished |
 | `scan_builder.html` | Composes a scan. Published as an Artifact; works offline |
 
 **Live view tabs**

@@ -492,6 +492,42 @@ test signal for the cage.
 A persistent state change in the room or the PC, still unidentified. It did not move the aggregate
 statistics, which is why the A1/A2 control still passed.
 
+### 1633.47 MHz deep tile (2026-10-19, 22:29): one bin, never moves, never off
+
+`deep-1600-1633hunt`, `1600M:1701M:25k -g 29 -i 30`, 1 h, 120 sweeps, 21.5 kHz bins, 68 s of
+listening per frequency. Hop 16 centre is at 1634.010, 25 bins away, so the DC spike is not
+involved.
+
+| Question | Answer |
+|---|---|
+| Width | **one bin**, 21.5 kHz. Neighbouring bins sit 15 dB down, symmetric: the FFT skirt, not sidebands |
+| Family | **none** - no other line within 1600-1701 except the known clock harmonics at 1612.80, 1670.41, 1699.20 |
+| Frequency drift | **zero**: the peak bin was 1633.4734 in all 120 of 120 sweeps |
+| Occupancy | **100%** at 30 s resolution; no gaps at all |
+| Level | wanders -17.2 to -23.5 dB over the hour, down ~5 dB from 22:30 to 23:00 then partly back |
+| SNR | 18.1 dB median over the tile's -39.4 floor |
+
+So it is an **unmodulated carrier that is crystal-locked in frequency but not steady in
+amplitude**. Two readings fit, and they can be told apart with the attenuator kit:
+
+1. **A nearby device leaking a fixed tone.** Nothing clean falls out of dividing 1633.4734 by
+   small integers (not 24, 25, 26, 27, 19.2, 16.369, 14.4 or 12 MHz times anything), and this
+   file's rule is that a matching number would not be evidence anyway.
+2. **A third-order intermodulation product made in our own LaNA.** 2 x 1799.98 - 1966.49 =
+   1633.47, and 1966.49 is inside the PCS downlink (1930-1995 MHz), which is strong and always
+   on. An amplifier fed two strong signals makes 2f1-f2 and 2f2-f1 at low level. It would be
+   absent on a terminated run, exactly as observed, and its amplitude would wander as the
+   parents do, which also fits. It first appeared on 2026-10-15, after the chain was rebuilt
+   with the notch ahead of the LaNA, and the g42 run raised it 4 dB, the same as a linear
+   signal, which argues it is not made in the tuner. Whether it is made in the LaNA is open.
+
+**The discriminating test, pre-registered:** a 10 dB pad at the LaNA's input, antenna on, 10
+min, against the same 10 min with no pad. A real external carrier drops **10 dB**. An IMD3
+product generated in the LaNA drops **30 dB**, because a third-order product falls three times
+as fast as its parents. Tile `1600M:1701M:25k -g 29 -i 30` both times. If it is IMD, the LaNA
+is being driven too hard by the downlink bands and the fix is a pad or a filter ahead of it,
+and every other weak line in the L/S surveys needs the same suspicion.
+
 ### XTR cascade step 5 (2026-10-19): antenna on, at g29 and g42 - the chain is 3.5 dB better, the gain ladder was overstated
 
 `xtr-casc5-antenna-g29` (18:47) and `xtr-casc5-antenna-g42` (19:48), back-to-back, antenna

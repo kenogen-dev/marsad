@@ -250,9 +250,11 @@ either gain. **L/S surveys stay at g29.** Full numbers in CLAUDE.md "XTR cascade
 Standing config for antenna surveys is now: antenna > notch > LaNA > 3 ft coax > bulkhead >
 jumper > XTR in the aluminium enclosure, direct on the USB bulkhead. station.json carries it.
 
-**Open items from the step:** 1633.47 MHz (steady, external, unidentified, present since
-2026-10-15) and 1405.93 MHz (weak, in the passive band). A `deep` tile over 1600-1700 is the
-next thing to run for the first.
+**Open items from the step:** 1633.47 MHz - the deep tile (2026-10-19 22:29) shows one
+21.5 kHz bin, frequency fixed in 120 of 120 sweeps, 100% on, amplitude wandering 6 dB. Either a
+device's leaked tone or an IMD3 product of 1799.98 and the PCS downlink made in the LaNA.
+**Pre-registered test:** 10 dB pad at the LaNA input, same tile, 10 min each way: a real
+carrier drops 10 dB, LaNA IMD drops 30 dB. And 1405.93 MHz (weak, in the passive band).
 
 ---
 

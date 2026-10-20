@@ -163,6 +163,11 @@ class Tailer:
                     self._row(ln)
 
     def payload(self, since: int) -> dict:
+        # run_survey writes finished_local into the sidecar when rtl_power exits. Re-read
+        # it, at most every 10 s, until it appears, so the page can say the scan is over.
+        if "finished_local" not in self.sidecar and time.time() - getattr(self, "_sc_at", 0) > 10:
+            self._sc_at = time.time()
+            self.sidecar = self._sidecar()
         with self.lock:
             first = self.dropped
             start = max(0, since - first)
@@ -264,6 +269,7 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
   <div class="s">peak <b id="peak">—</b> dB</div>
   <div class="s" title="estimated from the clock: rtl_power walks the span once per interval">tuned <b id="cur">—</b></div>
   <div class="s">left <b id="eta">—</b></div>
+  <div class="s" id="fin"></div>
   <div class="s" id="meta">—</div>
 </header>
 <div class="tabs">
@@ -289,7 +295,7 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
     </div>
     <canvas id="spec"></canvas><div class="xs" id="xs"></div>
     <div class="ro" id="readout">&nbsp;</div></div>
-  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number</div>
+  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
     <canvas id="fall"></canvas><div class="xs" id="xf"></div></div>
   <div class="wrap"><div class="lab">Whole-sweep median — the cage statistic, per sweep</div>
     <canvas id="trend"></canvas>
@@ -315,6 +321,24 @@ const COLS=1200;
 let rows=[], meds=[], lo=null, hi=null, total=0, have=0, lastBytes=0, stale=0;
 let partial=null, cursorPct=null, hoverPct=null;
 let liveFile=null, curFile=null, surveys=[];
+
+// View: a horizontal zoom shared by the spectrum and the waterfall so they stay aligned,
+// plus a history scroll for the waterfall. Frequencies are handled as fractions of the
+// full span (0..1); fx() maps a fraction to a pixel under the current view.
+let view={z:1,c:0.5,top:0,fit:true,ry:1};
+function vlo(){return Math.max(0,Math.min(1-1/view.z,view.c-0.5/view.z));}
+function vhi(){return vlo()+1/view.z;}
+function fLo(){return lo+vlo()*(hi-lo);}
+function fHi(){return lo+vhi()*(hi-lo);}
+function fx(frac,W){return (frac-vlo())/(vhi()-vlo())*W;}
+function fracAt(p){return vlo()+p*(vhi()-vlo());}
+function clampView(){
+  if(view.z<=1.0001){view.z=1;view.c=0.5;}
+  view.c=Math.max(0.5/view.z,Math.min(1-0.5/view.z,view.c));
+  if(view.top<0)view.top=0;
+  if(rows.length&&view.top>rows.length-1)view.top=rows.length-1;
+}
+function redrawView(){if(lastFloor===null)return;drawSpec(lastFloor,lastSpan);drawFall(lastFloor,lastSpan);readout();}
 
 // magma-ish ramp: dark blue -> magenta -> amber -> white
 const STOPS=[[0,[8,6,22]],[.25,[70,20,90]],[.5,[150,40,100]],[.72,[225,95,70]],[.88,[250,175,90]],[1,[255,245,220]]];
@@ -343,7 +367,8 @@ function grid(x,W,H,tk){
   x.save();x.strokeStyle='rgba(133,153,168,.14)';x.lineWidth=1;
   x.fillStyle='rgba(133,153,168,.75)';x.font='10px ui-monospace,Consolas,monospace';
   for(const v of tk.vals){
-    const px=Math.round((v-lo)/(hi-lo)*W)+.5;
+    const px=Math.round(fx((v-lo)/(hi-lo),W))+.5;
+    if(px<0||px>W)continue;
     x.beginPath();x.moveTo(px,0);x.lineTo(px,H);x.stroke();
   }
   x.restore();
@@ -351,7 +376,8 @@ function grid(x,W,H,tk){
 
 function labels(el,tk){
   el.innerHTML=tk.vals.map(v=>{
-    const pct=(v-lo)/(hi-lo)*100;
+    const pct=fx((v-lo)/(hi-lo),100);
+    if(pct<-1||pct>101)return '';
     return `<span style="position:absolute;left:${pct}%;transform:translateX(-50%)">${v}</span>`;
   }).join('');
 }
@@ -359,9 +385,10 @@ function labels(el,tk){
 function drawSpec(floor,span){
   const c=document.getElementById('spec'),x=fit(c),W=c.width,H=c.height;
   x.clearRect(0,0,W,H);
-  const tk=ticks(lo,hi);
+  const tk=ticks(fLo(),fHi());
   grid(x,W,H,tk);
-  const y=v=>H-4-((v-floor)/span)*(H-10);
+  const bot=(chartBot===null?floor-1:chartBot);
+  const y=v=>H-4-((v-bot)/(span+(floor-bot)))*(H-10);
   // dB gridlines every 10 dB above the floor
   x.save();x.strokeStyle='rgba(133,153,168,.10)';
   for(let d=0;d<=span;d+=10){x.beginPath();x.moveTo(0,y(floor+d));x.lineTo(W,y(floor+d));x.stroke();
@@ -372,15 +399,17 @@ function drawSpec(floor,span){
     if(!arr)continue;
     x.beginPath();x.lineWidth=w;x.strokeStyle=col;let on=false;
     for(let i=0;i<COLS;i++){const v=arr[i];if(v===null||v===undefined){on=false;continue;}
-      const px=i/(COLS-1)*W,py=y(v);if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
     x.stroke();}
   if(partial){x.beginPath();x.lineWidth=1;x.strokeStyle='rgba(79,211,232,.45)';let on=false;
     for(let i=0;i<COLS;i++){const v=partial[i];if(v===null){on=false;continue;}
-      const px=i/(COLS-1)*W,py=y(v);if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
     x.stroke();}
   x.strokeStyle='rgba(133,153,168,.35)';x.setLineDash([3,4]);x.beginPath();
   x.moveTo(0,y(floor));x.lineTo(W,y(floor));x.stroke();x.setLineDash([]);
-  if(cursorPct!==null){const cx=cursorPct*W;
+  if(cursorPct!==null){const cx=fx(cursorPct,W);
     x.strokeStyle='#e8b14f';x.lineWidth=1.5;x.beginPath();x.moveTo(cx,0);x.lineTo(cx,H);x.stroke();
     x.fillStyle='#e8b14f';x.beginPath();x.moveTo(cx,0);x.lineTo(cx-5,8);x.lineTo(cx+5,8);x.fill();}
   if(hoverPct!==null){const hx=hoverPct*W;
@@ -393,10 +422,14 @@ function drawFall(floor,span){
   const f=document.getElementById('fall'),g=fit(f),FW=f.width,FH=f.height;
   const img=g.createImageData(FW,FH);
   const n=Math.min(rows.length,FH);
+  const vl=vlo(),vw=vhi()-vl;
   for(let ry=0;ry<FH;ry++){
-    const src=rows[rows.length-1-Math.floor(ry/FH*n)];
+    // fit mode squeezes every sweep in memory into the canvas; history mode is one
+    // sweep per pixel row, starting view.top sweeps back from the newest.
+    const idx=view.fit?Math.floor(ry/FH*n):view.top+Math.floor(ry/view.ry);
+    const src=idx<rows.length?rows[rows.length-1-idx]:null;
     for(let px=0;px<FW;px++){
-      const v=src?src[Math.floor(px/FW*COLS)]:null;
+      const v=src?src[Math.min(COLS-1,Math.floor((vl+px/FW*vw)*COLS))]:null;
       const o=(ry*FW+px)*4;
       const rgb=(v===null||v===undefined)?[18,26,34]:cmap((v-floor)/span);
       img.data[o]=rgb[0];img.data[o+1]=rgb[1];img.data[o+2]=rgb[2];img.data[o+3]=255;}}
@@ -408,12 +441,14 @@ function overlayFall(){
   const f=document.getElementById('fall'),g=f.getContext('2d'),FW=f.width,FH=f.height;
   if(!fallImg)return;
   g.putImageData(fallImg,0,0);
-  const tk=ticks(lo,hi);
+  const tk=ticks(fLo(),fHi());
   g.save();g.strokeStyle='rgba(221,230,238,.13)';g.lineWidth=1;
-  for(const v of tk.vals){const px=Math.round((v-lo)/(hi-lo)*FW)+.5;
+  for(const v of tk.vals){const px=Math.round(fx((v-lo)/(hi-lo),FW))+.5;
+    if(px<0||px>FW)continue;
     g.beginPath();g.moveTo(px,0);g.lineTo(px,FH);g.stroke();}
   g.restore();
-  const n=Math.min(rows.length,FH);
+  const n=view.fit?Math.min(rows.length,FH):Math.max(0,Math.min(Math.ceil(FH/view.ry),rows.length-view.top));
+  const yOf=k=>view.fit?k/n*FH:k*view.ry;
   // Sweep boundaries. One line per sweep is readable at 15 sweeps and a solid block at
   // 180, so thin them to at most ~16 lines and label a subset of those.
   if(n>1){
@@ -423,10 +458,10 @@ function overlayFall(){
     g.font='9px ui-monospace,Consolas,monospace';
     g.textBaseline='top';
     for(let k=0;k<=n;k+=step){
-      const y=Math.round(k/n*FH)+.5;
+      const y=Math.round(yOf(k))+.5;
       g.strokeStyle='rgba(221,230,238,.18)';g.lineWidth=1;
       g.beginPath();g.moveTo(0,y);g.lineTo(FW,y);g.stroke();
-      const sweep=total-k;
+      const sweep=total-(view.fit?0:view.top)-k;
       if(sweep<1||k%labelEvery)continue;
       const txt='#'+sweep;
       const w=g.measureText(txt).width;
@@ -437,13 +472,17 @@ function overlayFall(){
     }
     g.restore();
   }
-  if(cursorPct!==null){const cx=cursorPct*FW;
+  if(cursorPct!==null&&(view.fit||view.top===0)){const cx=fx(cursorPct,FW);
     g.strokeStyle='rgba(232,177,79,.85)';g.lineWidth=1.5;
-    g.beginPath();g.moveTo(cx,0);g.lineTo(cx,Math.min(FH,FH/Math.max(1,n)));g.stroke();}
+    g.beginPath();g.moveTo(cx,0);g.lineTo(cx,Math.max(1,yOf(1)));g.stroke();}
   if(hoverPct!==null){const hx=hoverPct*FW;
     g.strokeStyle='rgba(221,230,238,.55)';g.lineWidth=1;
     g.beginPath();g.moveTo(hx,0);g.lineTo(hx,FH);g.stroke();}
-  labels(document.getElementById('xf'),ticks(lo,hi));
+  labels(document.getElementById('xf'),ticks(fLo(),fHi()));
+  const vi=document.getElementById('vinfo');
+  if(vi)vi.textContent=(view.z>1?`zoom ${view.z.toFixed(1)}×  ${fLo().toFixed(1)}–${fHi().toFixed(1)} MHz  ·  `:'')
+    +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}, ${view.ry} px per sweep`)
+    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · ctrl+wheel: sweep height · double-click: reset';
 }
 
 let mh=[];
@@ -452,17 +491,24 @@ function draw(){
   const flat=[].concat(...rows.slice(-40));
   const floor=pct(flat,.2), top=pct(flat,.999);
   if(floor===null)return;
-  const span=Math.max(6,top-floor);
-  document.getElementById('floor').textContent=floor.toFixed(2);
-  document.getElementById('peak').textContent=top.toFixed(2);
   mh=new Array(COLS).fill(null);
   for(const r of rows)for(let i=0;i<COLS;i++)if(r[i]!==null&&(mh[i]===null||r[i]>mh[i]))mh[i]=r[i];
+  let mhTop=-Infinity;for(const v of mh)if(v!==null&&v>mhTop)mhTop=v;
+  // The chart's bottom edge must sit under the lowest point actually drawn, or the
+  // per-hop roll-off dips (1-2 dB under the 20th-percentile floor) run off the canvas
+  // and look like gaps in the trace.
+  let lowest=Infinity;for(const v of rows[rows.length-1])if(v!==null&&v<lowest)lowest=v;
+  if(partial)for(const v of partial)if(v!==null&&v<lowest)lowest=v;
+  chartBot=Math.min(floor-1,(isFinite(lowest)?lowest:floor)-0.5);
+  const span=Math.max(6,Math.max(top,mhTop)+2-floor);
+  document.getElementById('floor').textContent=floor.toFixed(2);
+  document.getElementById('peak').textContent=(isFinite(mhTop)?mhTop:top).toFixed(2);
   lastFloor=floor;lastSpan=span;
   drawSpec(floor,span);drawFall(floor,span);trend();
   readout();
 }
 
-let lastFloor=null,lastSpan=null;
+let lastFloor=null,lastSpan=null,chartBot=null;
 function redrawLight(){
   if(lastFloor===null)return;
   drawSpec(lastFloor,lastSpan);overlayFall();readout();
@@ -471,8 +517,9 @@ function redrawLight(){
 function readout(){
   const el=document.getElementById('readout');
   if(hoverPct===null||!rows.length){el.innerHTML='&nbsp;';return;}
-  const f=lo+hoverPct*(hi-lo);
-  const i=Math.round(hoverPct*(COLS-1));
+  const hf=fracAt(hoverPct);
+  const f=lo+hf*(hi-lo);
+  const i=Math.round(hf*(COLS-1));
   const cur=rows[rows.length-1][i], hold=mh[i];
   const near=[14.4,28.8,24,25,100].map(k=>({k,n:Math.round(f/k),d:Math.abs(f-Math.round(f/k)*k)}))
     .filter(o=>o.d<0.12&&o.n>0).sort((a,b)=>a.d-b.d)[0];
@@ -485,9 +532,35 @@ function readout(){
 
 function hook(id){
   const c=document.getElementById(id);
+  let drag=null;
   c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
-    hoverPct=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));redrawLight();});
-  c.addEventListener('mouseleave',()=>{hoverPct=null;redrawLight();});
+    const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    if(drag!==null&&view.z>1){view.c-=(p-drag)/view.z;drag=p;clampView();hoverPct=p;redrawView();return;}
+    hoverPct=p;redrawLight();});
+  c.addEventListener('mouseleave',()=>{hoverPct=null;drag=null;redrawLight();});
+  c.addEventListener('mousedown',e=>{if(e.button!==0)return;const r=c.getBoundingClientRect();
+    drag=(e.clientX-r.left)/r.width;e.preventDefault();});
+  addEventListener('mouseup',()=>{drag=null;});
+  c.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const r=c.getBoundingClientRect(),p=(e.clientX-r.left)/r.width;
+    const dy=e.deltaY||e.deltaX;            // Chrome turns shift+wheel into deltaX
+    if(e.ctrlKey){                           // taller or shorter sweeps
+      if(!rows.length)return;
+      view.fit=false;
+      view.ry=dy<0?Math.min(16,view.ry*2):Math.max(1,view.ry/2);
+    }else if(e.shiftKey){
+      if(!rows.length)return;
+      view.fit=false;
+      view.top+=(dy>0?1:-1)*Math.max(1,Math.round(Math.abs(dy)/25));
+    }else{
+      const f=fracAt(p);                    // keep the frequency under the mouse still
+      const nz=Math.max(1,Math.min(64,view.z*(dy<0?1.25:1/1.25)));
+      view.z=nz;view.c=f-(p-0.5)/nz;
+    }
+    clampView();redrawView();
+  },{passive:false});
+  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true,ry:1};redrawView();});
 }
 
 function trend(){
@@ -514,6 +587,7 @@ function fmt(s){if(s===null||s===undefined)return '—';
   const m=Math.floor(s/60);return m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'m';}
 
 function resetView(){
+  view={z:1,c:0.5,top:0,fit:true,ry:1};
   rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
   fallImg=null;lastFloor=null;mh=[];
   for(const id of ['n','last','floor','peak','cur','eta'])document.getElementById(id).textContent='—';
@@ -570,6 +644,9 @@ async function tick(){
     document.getElementById('cur').textContent=d.cursor?('~'+d.cursor.toFixed(0)+' MHz'):'—';
     document.getElementById('eta').textContent=fmt(d.eta_s);
     const m=d.meta||{};
+    const fin=m.finished_local;
+    document.getElementById('fin').textContent=fin?('finished '+String(fin).slice(11,16)):'';
+    document.title=(fin?'done · ':'')+'live scan';
     document.getElementById('islive').textContent=(curFile===liveFile)?'live':'';
     document.getElementById('meta').textContent=
       [m.receiver?m.receiver.toUpperCase():null,
