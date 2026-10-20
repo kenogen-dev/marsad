@@ -42,6 +42,7 @@ def test_compose_wide_is_the_preset_at_60_s_with_the_probe_chain():
     assert d["tag"] == "probe-pc-power-supply-large-loop"
     assert a[a.index("--tag") + 1] == d["tag"]
     assert a[a.index("--integration") + 1] == "60"
+    assert a[a.index("--receiver") + 1] == "xtr"
     assert "--freq" not in a and "--gain" not in a and "--device" not in a
     for flag in ("--non-interactive", "--no-live", "--keep-defaults"):
         assert flag in a
@@ -70,6 +71,37 @@ def test_compose_hunt_builds_the_offset_tile():
     assert a[a.index("--device") + 1] == "1"
     assert d["hunt"]["clearance_mhz"] >= 0.4
     assert d["warnings"] == []
+
+
+def test_compose_on_the_v5_snaps_gain_and_uses_its_chain():
+    st = Station.load(ROOT)
+    d = probe.compose(st, {**FORM, "receiver": "v5", "device": "1"})
+    a = d["args"]
+    assert a[a.index("--receiver") + 1] == "v5"
+    assert a[a.index("--gain") + 1] == "29.7"          # 29 is an E4000 step, not an R820T one
+    assert a[a.index("--device") + 1] == "1"
+    assert any("29.7" in w for w in d["warnings"])
+    chain = a[a.index("--chain") + 1]
+    assert "> v5 (" in chain and "LaNA (at the window" not in chain
+    # an edited tail from the page is recorded verbatim
+    e = probe.compose(st, {**FORM, "chain_tail": "SMA DC block > 1 ft coax > XTR > PC"})
+    assert e["chain"].endswith("> SMA DC block > 1 ft coax > XTR > PC")
+    with pytest.raises(ValueError, match="receiver"):
+        probe.compose(st, {**FORM, "receiver": "hackrf"})
+
+
+def test_receiver_detection_parses_rtl_eeprom():
+    st = Station.load(ROOT)
+    xtr = ("Found 1 device(s):\n  0:  Generic RTL2832U OEM\n\nUsing device 0: Generic RTL2832U OEM\n"
+           "Found Elonics E4000 tuner\n\nCurrent configuration:\n__________\nVendor ID:\t\t0x0bda\n"
+           "Manufacturer:\t\tNooelec\nProduct:\t\tSMArTee XTR v5ee\nSerial number:\t\t08701076\n")
+    p = probe.parse_eeprom(xtr)
+    assert (p["count"], p["product"], p["serial"], p["tuner"]) == (1, "SMArTee XTR v5ee", "08701076", "Elonics E4000")
+    assert probe.match_receiver(st, p["product"], p["tuner"]) == "xtr"
+    assert probe.match_receiver(st, "SMArt v5", "Rafael Micro R820T") == "v5"
+    assert probe.parse_eeprom("Found 1 device(s):\n  0:  Generic\n\nUsing device 1: \n"
+                              "Failed to open rtlsdr device #1.\n")["error"]
+    assert probe.parse_eeprom("No supported devices found.\n")["error"]
 
 
 def test_compose_refuses_a_bad_form_in_plain_words():

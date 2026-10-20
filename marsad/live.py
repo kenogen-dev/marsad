@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import probe
+from . import host, probe
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        parse_freq_spec)
@@ -602,6 +602,13 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                 ctype = "text/plain; charset=utf-8"
             elif u.path == "/probe/config":
                 body = json.dumps(probe.catalog(station)).encode()
+            elif u.path == "/probe/receivers":
+                # Opens each dongle briefly, so never while a recording holds one.
+                if runner.running() or host.running_sdr_programs():
+                    body = json.dumps({"found": [], "error": "the SDR is in use; cannot look "
+                                       "for receivers until the recording ends"}).encode()
+                else:
+                    body = json.dumps(probe.detect_receivers(station)).encode()
             elif u.path == "/probe/status":
                 body = json.dumps(runner.status()).encode()
             elif u.path == "/probe/log":

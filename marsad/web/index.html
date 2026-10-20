@@ -174,8 +174,12 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
           <input id="pb-min" type="number" min="0.5" step="0.5" value="5"> min</span>
         <label>Range <select id="pb-range"></select></label>
         <label id="pb-centre-l" hidden>Centre <input id="pb-centre" type="number" step="0.01" placeholder="MHz"> MHz</label>
-        <label title="rtl_power device index: 0 unless two dongles are plugged in">Device <input id="pb-device" type="number" min="0" max="9" value="0" style="width:55px"></label>
+        <label>Receiver <select id="pb-receiver"></select></label>
+        <label title="rtl_power's device index for that receiver. Found by asking each plugged-in dongle what it is; the number changes when a dongle is unplugged.">device <input id="pb-device" type="number" min="0" max="9" value="0" style="width:55px"></label>
+        <button class="btn" id="pb-detect" title="Opens each dongle for a second and reads its name">Find receivers</button>
+        <span class="note" id="pb-rxnote" style="margin:0"></span>
         <label style="flex:1 1 100%">Notes <input id="pb-notes" class="wide" placeholder="what is switched on in the room, anything unusual"></label>
+        <label style="flex:1 1 100%;align-items:flex-start">Chain after the probe <textarea id="pb-chain" rows="3" style="flex:1;font-size:12px"></textarea></label>
       </div>
       <div class="note" id="pb-geom" style="margin-top:10px"></div>
       <pre class="cmd" id="pb-cmd">…</pre>
@@ -597,14 +601,48 @@ function showPane(name){
 // ---------------------------------------------------------------- Probe tab
 // The form is sent to the server as-is; Python composes the tag, chain and
 // conditions and the command, so the page never holds a second copy of the rules.
-let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null;
-const PB_KEYS=['target','target-other','probe','where','min','range','centre','device','notes'];
+let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null, pbCfg=null, pbFound=[];
+const PB_KEYS=['target','target-other','probe','where','min','range','centre','receiver','device','notes','chain'];
 const pbEl=id=>document.getElementById('pb-'+id);
 function pbForm(){
   return {target:pbEl('target').value, target_other:pbEl('target-other').value,
           probe:pbEl('probe').value, where:pbEl('where').value, minutes:pbEl('min').value,
-          range:pbEl('range').value, centre:pbEl('centre').value, device:pbEl('device').value,
-          notes:pbEl('notes').value};
+          range:pbEl('range').value, centre:pbEl('centre').value, receiver:pbEl('receiver').value,
+          device:pbEl('device').value, notes:pbEl('notes').value, chain_tail:pbEl('chain').value};
+}
+// Receiver -> device index. The index comes from what is actually plugged in when
+// "Find receivers" has run, else from station.json's guess; either way it stays editable.
+function pbRxDefault(id){const f=pbFound.find(x=>x.receiver===id);if(f)return f.device;
+  const r=(pbCfg.receivers||[]).find(x=>x.id===id);return r?r.device:0;}
+function pbRxLabels(){
+  pbEl('receiver').innerHTML=(pbCfg.receivers||[]).map(r=>{
+    const f=pbFound.find(x=>x.receiver===r.id);
+    const tail=f?` — plugged in as device ${f.device} (${f.product})`:(pbFound.length?' — not found':'');
+    return `<option value="${esc(r.id)}">${esc(r.id.toUpperCase())}: ${esc(r.label)}${esc(tail)}</option>`;}).join('');
+}
+function pbRxChanged(resetChain){
+  const id=pbEl('receiver').value;
+  pbEl('device').value=pbRxDefault(id);
+  const r=(pbCfg.receivers||[]).find(x=>x.id===id);
+  if(resetChain&&r)pbEl('chain').value=r.chain_tail;
+}
+async function pbDetect(){
+  pbEl('detect').disabled=true;pbEl('rxnote').textContent='asking each dongle what it is…';
+  try{
+    const d=await (await fetch('/probe/receivers')).json();
+    pbFound=d.found||[];
+    const sel=pbEl('receiver').value;pbRxLabels();pbEl('receiver').value=sel;
+    const unk=pbFound.filter(f=>!f.receiver);
+    pbEl('rxnote').innerHTML=d.error?`<span class="warn">${esc(d.error)}</span>`
+      :`found ${pbFound.length}: `+pbFound.map(f=>`device ${f.device} = ${esc(f.product)} (${esc(f.tuner)})`).join(', ')
+       +(unk.length?` — <span class="warn">${unk.length} not matched to a station.json receiver</span>`:'');
+    if(!d.error){const mine=pbFound.find(f=>f.receiver===sel);
+      if(!mine&&pbFound.length&&pbFound[0].receiver){pbEl('receiver').value=pbFound[0].receiver;
+        pbEl('rxnote').innerHTML+=` — switched to the ${pbFound[0].receiver.toUpperCase()}, the only one plugged in`;pbRxChanged(true);}
+      else pbRxChanged(false);}
+    pbSave();pbPreview();
+  }catch(e){pbEl('rxnote').innerHTML=`<span class="bad">detection failed: ${esc(e)}</span>`;}
+  pbEl('detect').disabled=false;
 }
 function pbSave(){try{const o={};for(const k of PB_KEYS)o[k]=pbEl(k).value;localStorage.setItem('sdr-probe',JSON.stringify(o));}catch(e){}}
 function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'{}');
@@ -617,7 +655,8 @@ function pbShowFields(){
 async function probeInit(){
   if(pbReady)return;pbReady=true;
   try{
-    const c=await (await fetch('/probe/config')).json();
+    const c=await (await fetch('/probe/config')).json();pbCfg=c;
+    pbRxLabels();
     pbEl('target').innerHTML=c.targets.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')
       +'<option value="other">other…</option>';
     pbEl('probe').innerHTML=c.probes.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} — ${esc(p.desc)}</option>`).join('');
@@ -627,13 +666,18 @@ async function probeInit(){
     document.querySelectorAll('#pb-durs .btn').forEach(b=>b.onclick=()=>{pbEl('min').value=b.dataset.m;pbChanged();});
   }catch(e){pbEl('cmd').textContent='could not load /probe/config: '+e;return;}
   pbRestore();
+  if(!pbEl('receiver').value)pbEl('receiver').value=(c.receivers[0]||{}).id||'';
+  if(!pbEl('chain').value)pbRxChanged(true);
   for(const k of PB_KEYS){const el=pbEl(k);el.addEventListener('input',pbChanged);el.addEventListener('change',pbChanged);}
+  pbEl('receiver').addEventListener('change',()=>pbRxChanged(true));
+  pbEl('detect').onclick=pbDetect;
   pbEl('start').onclick=pbStart;
   pbEl('stop').onclick=pbStop;
   pbEl('toscan').onclick=e=>{e.preventDefault();curFile=null;resetView();showPane('scan');};
   pbShowFields();
   pbPreview();
   if(!pbPolling){pbPolling=true;pbPoll();}
+  pbDetect();          // a read-only look at what is plugged in; skipped by the server if the SDR is busy
 }
 function pbChanged(){pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
 async function pbPreview(){
@@ -644,7 +688,7 @@ async function pbPreview(){
       pbEl('warn').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
     const g=d.geometry;
     pbEl('cmd').textContent=d.command_line+'\n\n'+d.rtl_power_line;
-    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
+    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${esc(d.receiver.toUpperCase())} device ${d.device}, g${d.gain} · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
       +`${g.sweeps} sweep${g.sweeps===1?'':'s'} of ${d.integration} s, ${(g.listening_frac*100).toFixed(0)}% listening `
       +`(${g.retune_s_per_sweep.toFixed(1)} s of every sweep retunes), ${g.listen_per_freq_s.toFixed(1)} s on each frequency, ~${g.csv_mb.toFixed(1)} MB`
       +(d.hunt?`<br>hop centres at ${d.hunt.hop_centres_mhz.map(x=>x.toFixed(3)).join(', ')} MHz — the target sits ${(d.hunt.clearance_mhz*1000).toFixed(0)} kHz clear of the nearest DC spike`:'');

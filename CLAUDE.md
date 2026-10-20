@@ -1447,6 +1447,9 @@ twice a second; the child asks rtl_power to finish, then proceeds exactly as aft
 (partial CSV kept, analysed, archived). Each finished run appends a row to **`ROOM_RF.md`**
 (when, target, probe, where held, range, duration, survey, detections, strongest non-artefact
 line, tagged families) - the human-readable map of the room; the archive holds the data.
+The Receiver picker (XTR / v5) asks each plugged-in dongle what it is with `rtl_eeprom`
+and fills the device index from that, because USB numbering moves when a dongle is unplugged;
+the chain after the probe follows the receiver and can be edited on the page before a run.
 `--keep-defaults` exists so probe runs do not overwrite the antenna chain that a plain
 `marsad run LS` falls back on. Header fields (antenna, whips, LNA, filter) in a probe sidecar
 come from station.json defaults, as for any `--non-interactive` run; `chain_order` is the truth.

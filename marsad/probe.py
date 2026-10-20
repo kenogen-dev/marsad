@@ -26,7 +26,8 @@ from pathlib import Path
 
 from . import host
 from .config import Station, source_root
-from .rtlpower import CROP, FIR, fmt_hms, parse_freq_spec, scan_geometry
+from .rtlpower import (CROP, FIR, TUNER_GAINS, find_tool, fmt_hms, parse_freq_spec,
+                       scan_geometry)
 
 # ---------------------------------------------------------------- the catalogue
 # Everything the page offers is listed here. station.json can override any of
@@ -62,14 +63,24 @@ PROBES = {
     "stub-b": ("stub B", "E-field stub probe B"),
 }
 
-# The probe chain after the probe itself. The DC block is not optional: the XTR's
-# bias-tee is always on and a shorted loop straight onto its SMA would short it.
-PROBE_CHAIN_TAIL = (
-    "SMA DC block > 8 ft coax > LaNA (at the window, powered by the XTR bias-tee through "
-    "the coax) > 3 ft RG316 coax > SMA bulkhead > 6 in SMA jumper (S-bend, no ferrite) > "
-    "XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable) > "
-    "USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC"
-)
+# The probe chain after the probe itself, per receiver. The DC block is not optional
+# on the XTR: its bias-tee is always on and a shorted loop straight onto its SMA
+# would short it. The v5 has no bias-tee, so it cannot power the LaNA and the probe
+# goes to the cage without an amplifier. The page shows the tail and lets it be
+# corrected before a run, so what is recorded is what was built.
+PROBE_CHAIN_TAIL = {
+    "xtr": (
+        "SMA DC block > 8 ft coax > LaNA (at the window, powered by the XTR bias-tee through "
+        "the coax) > 3 ft RG316 coax > SMA bulkhead > 6 in SMA jumper (S-bend, no ferrite) > "
+        "XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable) > "
+        "USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC"
+    ),
+    "v5": (
+        "SMA DC block > 8 ft coax > cage SMA bulkhead > v5 (in copper cage, no jumper, "
+        "no LNA: the v5 has no bias-tee to power the LaNA) > 6 in USB extension (white, no "
+        "ferrites) > USB bulkhead > USB to PC"
+    ),
+}
 
 # Range choices. "wide" is the station's overview preset; "hunt" is a 5 MHz tile
 # around one typed frequency, for walking the probe around while watching one line.
@@ -115,18 +126,116 @@ spacing between neighbouring lines should be measured before it is believed.
 """
 
 
+def chain_tails(station: Station) -> dict:
+    """Chain after the probe, by receiver id. station.json's probe.chain_tail wins."""
+    over = station.data.get("probe", {}) if isinstance(station.data.get("probe"), dict) else {}
+    tails = dict(PROBE_CHAIN_TAIL)
+    user = over.get("chain_tail")
+    if isinstance(user, dict):
+        tails.update(user)
+    elif isinstance(user, str):
+        tails["xtr"] = user
+    for rx in station.receivers:
+        tails.setdefault(rx, f"SMA DC block > coax > {rx} > USB > PC")
+    return tails
+
+
 def catalog(station: Station) -> dict:
     """The catalogue as the page sees it, with station.json's `probe` overrides applied."""
     over = station.data.get("probe", {}) if isinstance(station.data.get("probe"), dict) else {}
     probes = over.get("probes") or {k: list(v) for k, v in PROBES.items()}
+    tails = chain_tails(station)
+    receivers = [{"id": rx, "label": r.get("label", rx), "tuner": (r.get("tuner") or "").lower(),
+                  "device": int(r.get("device", 0)), "chain_tail": tails[rx]}
+                 for rx, r in station.receivers.items()]
     return {
         "targets": list(over.get("targets") or TARGETS),
         "probes": [{"id": k, "label": v[0], "desc": v[1]} for k, v in probes.items()],
         "ranges": [{"id": k, "label": v["label"]} for k, v in RANGES.items()],
+        "receivers": receivers,
         "durations_min": list(over.get("durations_min") or DURATIONS_MIN),
-        "chain_tail": over.get("chain_tail") or PROBE_CHAIN_TAIL,
+        "chain_tail": tails,
         "log_file": str(station.root / LOG_NAME),
     }
+
+
+# ---------------------------------------------------------------- which dongle is where
+# rtl_test / rtl_power number the dongles by USB enumeration order, which changes when
+# one is unplugged (station.json says the XTR is device 1, but with the v5 unplugged it
+# is device 0). So the page asks each index what it is instead of trusting a number.
+TUNER_WORDS = {"e4000": "E4000", "r820t": "R820T", "r860": "R860"}
+
+
+def parse_eeprom(text: str) -> dict:
+    """The useful fields of one `rtl_eeprom -d N` report, or an `error`."""
+    out = {"product": "", "serial": "", "tuner": "", "count": 0, "error": None}
+    m = re.search(r"Found (\d+) device", text)
+    if m:
+        out["count"] = int(m.group(1))
+    if "No supported devices found" in text:
+        out["error"] = "no RTL-SDR devices found"
+        return out
+    if "Failed to open" in text or "usb_open error" in text:
+        out["error"] = "could not open (no device at that index, or another program holds it)"
+        return out
+    for line in text.splitlines():
+        if line.startswith("Product:"):
+            out["product"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Serial number:"):
+            out["serial"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Found") and "tuner" in line:
+            t = line.replace("Found", "").replace("tuner", "").strip()
+            out["tuner"] = t
+    return out
+
+
+def match_receiver(station: Station, product: str, tuner_text: str) -> str | None:
+    """Which station receiver a dongle is, from its tuner chip and product name."""
+    tuner_text = tuner_text.upper()
+    by_tuner = [rx for rx, r in station.receivers.items()
+                if TUNER_WORDS.get((r.get("tuner") or "").lower(), "").upper() in tuner_text
+                and tuner_text]
+    if len(by_tuner) == 1:
+        return by_tuner[0]
+    cands = by_tuner or list(station.receivers)
+    p = product.lower()
+    for rx in cands:
+        label = (station.receivers[rx].get("label") or "").lower()
+        if rx.lower() in p or any(w in p for w in label.split() if len(w) > 2 and w in p):
+            return rx
+    return None
+
+
+def detect_receivers(station: Station, max_index: int = 4) -> dict:
+    """Ask each USB index what dongle it holds. Read-only; ~1.5 s per device.
+
+    Must not run while a recording holds the SDR: the open would fail and be
+    reported as "no device", which is the wrong answer.
+    """
+    eeprom = find_tool("rtl_eeprom", station.tool_dirs())
+    if eeprom is None:
+        return {"found": [], "error": "rtl_eeprom not found in rtl-sdr/ or on PATH"}
+    found = []
+    count = None
+    for d in range(max_index):
+        if count is not None and d >= count:
+            break
+        try:
+            r = subprocess.run([str(eeprom), "-d", str(d)], capture_output=True, text=True,
+                               timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"found": found, "error": f"could not run rtl_eeprom: {exc}"}
+        info = parse_eeprom((r.stdout or "") + (r.stderr or ""))
+        if count is None:
+            count = info["count"]
+        if info["error"]:
+            if d == 0 and count == 0:
+                return {"found": [], "error": info["error"]}
+            continue
+        found.append({"device": d, "product": info["product"], "serial": info["serial"],
+                      "tuner": info["tuner"],
+                      "receiver": match_receiver(station, info["product"], info["tuner"])})
+    return {"found": found, "error": None if found else "no RTL-SDR devices found"}
 
 
 def slug(text: str, max_len: int = 40) -> str:
@@ -198,11 +307,24 @@ def compose(station: Station, form: dict) -> dict:
     preset = station.presets.get(rng["preset"])
     if preset is None:
         raise ValueError(f"station.json has no {rng['preset']!r} preset")
-    receiver = preset["receiver"]
+    receiver = str(form.get("receiver") or preset["receiver"])
+    if receiver not in station.receivers:
+        raise ValueError(f"unknown receiver {receiver!r}; station.json knows "
+                         + ", ".join(station.receivers))
     gain = float(rng.get("gain", preset["gain"]))
     integration = int(rng.get("integration", preset["integration"]))
     warnings: list[str] = []
-    extra: list[str] = []
+    extra: list[str] = ["--receiver", receiver]
+    # The ranges are written for the XTR's E4000 ladder; on another tuner snap the
+    # gain to its nearest real step, which is what librtlsdr would do silently.
+    valid = TUNER_GAINS.get(station.tuner_of(receiver) or "")
+    if valid and gain not in valid:
+        nearest = min(valid, key=lambda g: abs(g - gain))
+        warnings.append(f"gain {gain:g} dB is not a step on the {receiver}'s tuner; "
+                        f"using the nearest, {nearest:g} dB")
+        gain = nearest
+    if gain != float(preset["gain"]) and rng_id != "hunt":
+        extra += ["--gain", f"{gain:g}"]
     hunt = None
     if rng_id == "hunt":
         try:
@@ -247,7 +369,8 @@ def compose(station: Station, form: dict) -> dict:
 
     held = where or f"near the {target}"
     tag = f"probe-{slug(target)}-{slug(probe['id'], 20)}"
-    chain = f"{probe['desc']}, held {held} > {cat['chain_tail']}"
+    tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
+    chain = f"{probe['desc']}, held {held} > {tail}"
     conditions = (f"near-field probe survey: {target}, {probe['desc']} held {held}, "
                   f"{range_label}, {dur_text}")
     if notes:
