@@ -492,6 +492,45 @@ test signal for the cage.
 A persistent state change in the room or the PC, still unidentified. It did not move the aggregate
 statistics, which is why the A1/A2 control still passed.
 
+### 2 GHz positive control (2026-10-19, 23:52): the XTR hears the cellular downlink at 2.1 GHz, weakly
+
+`deep-2049-awscontrol-g42`, `2049M:2148M:25k -g 42 -i 30`, 1 h, 100 sweeps analysed, 21.8 kHz
+bins, 71 s of listening per frequency, antenna on, night. **0% non-finite, max over band
+-29.1 dB**: no clipping at g42 even with the downlink in the span.
+
+**Pre-registered:** the 2110-2147 MHz cellular downlink shows as a plateau **at least 10 dB**
+above the tile's own floor if the tuner has real sensitivity up there; **under 3 dB** means the
+XTR is nearly deaf at 2.1 GHz and a 2 GHz antenna would be wasted.
+
+| Block | 20th-pct floor | median | max-hold | median over the 2049-2100 reference |
+|---|---|---|---|---|
+| 2049-2109 (empty) | -41.6 to -41.75 | -41.1 to -41.75 | -31.5 to -33.2 | within 0.4 dB, flat |
+| 2109-2114 | -40.24 | -40.08 | -32.57 | +1.42 |
+| 2114-2119 | -39.17 | -38.74 | -31.14 | +2.76 |
+| **2119-2134** | **-36.2 to -36.9** | **-35.7 to -36.1** | **-29.1 to -29.8** | **+5.4 to +5.8** |
+| 2134-2144 | -37.9 to -38.4 | -37.4 to -38.2 | -30.3 to -30.6 | +3.4 to +4.1 |
+| 2144-2147 | -36.97 | -36.16 | -29.41 | +5.34 |
+
+**Result: between the two thresholds, nearer the good one.** The downlink is unmistakably there:
+a 5-6 dB plateau in the median, 12 dB in max-hold, starting exactly at the 2110 MHz band edge
+with the empty 2049-2109 MHz flat to 0.4 dB beside it. So the XTR is **not deaf at 2.1 GHz**.
+But 5-6 dB for an always-on multi-carrier base-station band is weak; the PCS downlink at
+1.95 GHz gave +4 dB over terminated in step 5 at g29, so 2.1 GHz is behaving like 1.95 GHz,
+not falling off a cliff.
+
+**What this does not separate: the tuner from the antenna.** The 60 mm whips, 120 mm tip to
+tip, are 0.84 wavelengths at 2.1 GHz, past the half-wave resonance and toward the anti-resonance
+where the 100 mm whips lost 7.8 dB at 1.8 GHz. A poor antenna match at 2.1 GHz would produce
+exactly this picture. **The noise generator settles it**: source direct into the XTR, then through
+the chain, gives the receiver's own response at 2.1 GHz with no antenna in the question. If the
+receiver is flat up there, the antenna is the limit and a 2 GHz element is the right next build.
+
+Reconciles with step 5: the 2041-2141 block "did not move with the antenna on" because the empty
+2041-2109 MHz dominates a 100 MHz block; the downlink occupies only 2110-2155, and step 5's
+2141-2147 block did rise +2.3 dB.
+
+Incidental: 2091.82 MHz, a single-sweep 764 kHz burst at 1% occupancy. Nothing else in the tile.
+
 ### 1633.47 MHz deep tile (2026-10-19, 22:29): one bin, never moves, never off
 
 `deep-1600-1633hunt`, `1600M:1701M:25k -g 29 -i 30`, 1 h, 120 sweeps, 21.5 kHz bins, 68 s of

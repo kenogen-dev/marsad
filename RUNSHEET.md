@@ -256,6 +256,11 @@ device's leaked tone or an IMD3 product of 1799.98 and the PCS downlink made in 
 **Pre-registered test:** 10 dB pad at the LaNA input, same tile, 10 min each way: a real
 carrier drops 10 dB, LaNA IMD drops 30 dB. And 1405.93 MHz (weak, in the passive band).
 
+**2 GHz control done (2026-10-19 23:52):** the XTR hears the 2110-2147 MHz cellular downlink
+at 2.1 GHz as a 5-6 dB plateau, 12 dB in max-hold, no clipping at g42. Not deaf, but weak, and
+the 60 mm whips are 0.84 wavelengths there. Whether the tuner or the antenna is the limit is
+for the noise generator to settle before any 2 GHz antenna is built. See CLAUDE.md.
+
 ---
 
 ## Rules that apply to every run
