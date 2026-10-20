@@ -1,7 +1,7 @@
 """The station's local web app: Scan, Builder, Archive, Roadmap.
 
-    sdr live                 # serve on http://127.0.0.1:8731/
-    sdr                      # the same, and open it in the browser
+    marsad live                 # serve on http://127.0.0.1:8731/
+    marsad                      # the same, and open it in the browser
 
 Read-only on the radio: the Scan tab tails whichever CSV rtl_power is writing
 and never touches the SDR, so it is safe alongside a recording. rtl_power
@@ -239,7 +239,7 @@ def builder_config(station: Station) -> dict:
         "chain_off": station.data.get("chain_off_by_receiver", {}),
         "enc_default": station.data.get("enclosure_default", {}),
         "readout_families": station.data.get("readout_families_mhz", [14.4, 28.8, 24, 25, 100]),
-        "cmd_prefix": "sdr run",
+        "cmd_prefix": "marsad run",
         "station_root": str(station.root),
     }
 
@@ -308,7 +308,7 @@ def get_tailer(station: Station, name: str, cols: int, keep: int):
         return t
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr live") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad live") -> int:
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description="The station's local web app")
     ap.add_argument("--csv", help="path to the CSV (default: newest in surveys/)")
@@ -321,7 +321,7 @@ def main(argv=None, station: Station | None = None, prog: str = "sdr live") -> i
     ap.add_argument("--open", action="store_true", help="open the page in your browser")
     ap.add_argument("--exit-after-idle", type=float, default=0, metavar="MIN",
                     help="shut down this many minutes after the CSV stops growing "
-                         "(0 = run until Ctrl-C). Lets `sdr run` start a viewer "
+                         "(0 = run until Ctrl-C). Lets `marsad run` start a viewer "
                          "that cleans itself up once the scan is over.")
     args = ap.parse_args(argv)
 

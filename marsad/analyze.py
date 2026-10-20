@@ -1,7 +1,7 @@
 """Analyse rtl_power survey CSVs.
 
-  sdr analyze  survey.csv [--threshold 10] [--out reports] [--mask 1095-1240]
-  sdr compare  before.csv after.csv [--threshold 10] [--out reports]
+  marsad analyze  survey.csv [--threshold 10] [--out reports] [--mask 1095-1240]
+  marsad compare  before.csv after.csv [--threshold 10] [--out reports]
 
 What it produces (in <out>/<survey name>/):
   heatmap.png      waterfall: frequency across, time down, colour = power
@@ -851,7 +851,7 @@ def run_one(csv, args, base_out: Path):
     return s, a, sc
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr"):
+def main(argv=None, station: Station | None = None, prog: str = "marsad"):
     station = station or Station.load()
     configure(station)
     p = argparse.ArgumentParser(prog=prog, description="Analyze rtl_power survey CSVs.")

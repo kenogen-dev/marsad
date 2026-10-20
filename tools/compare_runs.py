@@ -2,7 +2,7 @@
 
     py tools/compare_runs.py <before> <after> [--family 14.4] [--handling untouched]
 
-The same as `sdr compare-runs`. The code lives in sdrstation/stats.py.
+The same as `marsad compare-runs`. The code lives in marsad/stats.py.
 """
 import sys
 from pathlib import Path
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.config import Station        # noqa: E402
-from sdrstation.stats import (autocorr_peaks, bin_width, compare_runs_main,  # noqa: E402,F401
+from marsad.config import Station        # noqa: E402
+from marsad.stats import (autocorr_peaks, bin_width, compare_runs_main,  # noqa: E402,F401
                               family_levels, load_bins, paired)
 
 

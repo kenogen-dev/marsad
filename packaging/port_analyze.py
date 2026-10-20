@@ -1,4 +1,4 @@
-"""Generate sdrstation/analyze.py from tools/survey.py.
+"""Generate marsad/analyze.py from tools/survey.py.
 
 Only the module header and main() change; every function body between the
 Loading section and the CLI is copied verbatim so the numbers cannot move.
@@ -14,8 +14,8 @@ body = src[start:end]
 cli = src[end:src.index('if __name__ == "__main__":')]
 head = '''"""Analyse rtl_power survey CSVs.
 
-  sdr analyze  survey.csv [--threshold 10] [--out reports] [--mask 1095-1240]
-  sdr compare  before.csv after.csv [--threshold 10] [--out reports]
+  marsad analyze  survey.csv [--threshold 10] [--out reports] [--mask 1095-1240]
+  marsad compare  before.csv after.csv [--threshold 10] [--out reports]
 
 What it produces (in <out>/<survey name>/):
   heatmap.png      waterfall: frequency across, time down, colour = power
@@ -73,7 +73,7 @@ def configure(station: Station) -> None:
 '''
 cli = cli.replace(
     "def main(argv=None):",
-    'def main(argv=None, station: Station | None = None, prog: str = "sdr"):\n'
+    'def main(argv=None, station: Station | None = None, prog: str = "marsad"):\n'
     "    station = station or Station.load()\n"
     "    configure(station)")
 cli = cli.replace(
@@ -81,5 +81,5 @@ cli = cli.replace(
     'p = argparse.ArgumentParser(prog=prog, description="Analyze rtl_power survey CSVs.")')
 assert "configure(station)" in cli and "prog=prog" in cli
 out = head + body + cli
-(root / "sdrstation" / "analyze.py").write_text(out, encoding="utf-8")
+(root / "marsad" / "analyze.py").write_text(out, encoding="utf-8")
 print(len(out.splitlines()), "lines written")

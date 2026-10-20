@@ -6,8 +6,8 @@
                          [--skip-warmup MIN] [--dry-run] [--no-analyze] [--no-notify]
                          [--non-interactive] [--list]
 
-The same as `sdr run`. The recorder lives in sdrstation/record.py and the scan
-geometry in sdrstation/rtlpower.py; the presets and the measured retune time come
+The same as `marsad run`. The recorder lives in marsad/record.py and the scan
+geometry in marsad/rtlpower.py; the presets and the measured retune time come
 from station.json. This file stays so the commands in RUNSHEET.md keep working,
 and so the regression tests can still
 `from run_survey import scan_geometry, fingerprint, RTL_POWER_MAX_MHZ`.
@@ -20,10 +20,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.config import Station                              # noqa: E402
-from sdrstation import rtlpower as _rtl                            # noqa: E402
-from sdrstation.rtlpower import RTL_POWER_MAX_MHZ, fingerprint     # noqa: E402,F401
-from sdrstation.record import main as _main                        # noqa: E402
+from marsad.config import Station                              # noqa: E402
+from marsad import rtlpower as _rtl                            # noqa: E402
+from marsad.rtlpower import RTL_POWER_MAX_MHZ, fingerprint     # noqa: E402,F401
+from marsad.record import main as _main                        # noqa: E402
 
 STATION = Station.load(ROOT)
 PRESETS = STATION.presets

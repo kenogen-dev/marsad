@@ -108,7 +108,7 @@ def scan_geometry(lo_mhz, hi_mhz, bin_khz, integration_s, duration_s, crop=CROP,
          so the real bin width is sample_rate / FFT.
 
     The retune cost per hop is the one station-specific input: it depends on
-    the USB stack and should be measured (`sdr calibrate-retune`), not assumed.
+    the USB stack and should be measured (`marsad calibrate-retune`), not assumed.
     The 47 ms default is what one Windows PC measured in 2026.
 
     Verified against three runs. LS: span 906.484 MHz -> 432 hops -> 2797789 Hz

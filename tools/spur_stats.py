@@ -3,7 +3,7 @@
     py tools/spur_stats.py reports/<run>/bins.csv
     py tools/spur_stats.py reports/<before>/bins.csv reports/<after>/bins.csv
 
-The same as `sdr spur-stats`. The code lives in sdrstation/stats.py.
+The same as `marsad spur-stats`. The code lives in marsad/stats.py.
 """
 import sys
 from pathlib import Path
@@ -11,8 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.stats import family_levels_pairs as family_levels, load_bins_pairs as load_bins  # noqa: E402,F401
-from sdrstation.stats import spur_stats_main  # noqa: E402
+from marsad.stats import family_levels_pairs as family_levels, load_bins_pairs as load_bins  # noqa: E402,F401
+from marsad.stats import spur_stats_main  # noqa: E402
 
 
 def main():

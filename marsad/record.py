@@ -1,9 +1,9 @@
 """Record an rtl_power survey from a named preset, then analyse it.
 
-  sdr run LS 6h
-  sdr run milair 30m --conditions "clear, heating off"
-  sdr run --list
-  sdr run LS 6h --dry-run
+  marsad run LS 6h
+  marsad run milair 30m --conditions "clear, heating off"
+  marsad run --list
+  marsad run LS 6h --dry-run
 
 Does, in order:
   1. refuses to start if another program is holding the SDR (SDR++ etc.)
@@ -194,7 +194,7 @@ def ask_conditions(args, defaults: dict) -> dict:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-def build_parser(station: Station, prog: str = "sdr run") -> argparse.ArgumentParser:
+def build_parser(station: Station, prog: str = "marsad run") -> argparse.ArgumentParser:
     presets = station.presets
     p = argparse.ArgumentParser(
         prog=prog, description="Record an rtl_power survey from a preset, then analyse it.")
@@ -439,7 +439,7 @@ def archive_run(station: Station, stem: str, chain_order: str | None) -> None:
     """
     from . import archive as arch
     report_dir = station.reports / stem
-    print(f"\n  Archiving:\n    sdr archive add {report_dir}")
+    print(f"\n  Archiving:\n    marsad archive add {report_dir}")
     try:
         con = arch.connect(station)
         print(arch.add_report(station, con, report_dir))
@@ -450,17 +450,17 @@ def archive_run(station: Station, stem: str, chain_order: str | None) -> None:
     load = source_is_load(chain_order)
     if load is None:
         print("  Source flag not set: the chain does not name an antenna or a 50 ohm load.\n"
-              f"  Set it by hand:  sdr archive mark {stem} --terminated|--antenna")
+              f"  Set it by hand:  marsad archive mark {stem} --terminated|--antenna")
         return
     flag = "--terminated" if load else "--antenna"
-    print(f"    sdr archive mark {stem} {flag}")
+    print(f"    marsad archive mark {stem} {flag}")
     try:
         arch.mark(con, stem, load)
     except Exception as exc:  # noqa: BLE001
         print(f"  Archive mark failed ({exc}); set it by hand.")
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr run") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad run") -> int:
     station = station or Station.load()
     parser = build_parser(station, prog)
     args = parser.parse_args(argv)
@@ -681,7 +681,7 @@ def main(argv=None, station: Station | None = None, prog: str = "sdr run") -> in
         print("  Build sheet: " + str(write_scan_build(
             csv_path, sidecar, geom, None, station.reports / csv_path.stem, retune_ms)))
         print("  Skipping analysis. Run it later with:\n"
-              f"    sdr analyze surveys/{csv_path.name} --receiver {receiver}\n")
+              f"    marsad analyze surveys/{csv_path.name} --receiver {receiver}\n")
         return 0
 
     analyze = host.self_command("analyze", "--station", str(station.root), str(csv_path),
@@ -701,7 +701,7 @@ def main(argv=None, station: Station | None = None, prog: str = "sdr run") -> in
         if skip:
             analyze += ["--skip-sweeps", str(skip)]
     print("\n  Analysing:\n    " + subprocess.list2cmdline(analyze) + "\n")
-    # From source, `-m sdrstation` must be importable: run from the checkout.
+    # From source, `-m marsad` must be importable: run from the checkout.
     arc = subprocess.run(analyze, cwd=source_root() or None).returncode
     build = write_scan_build(csv_path, sidecar, geom, analyze,
                              station.reports / csv_path.stem, retune_ms)

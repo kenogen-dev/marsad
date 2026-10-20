@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller recipe for the single-folder Windows build.
 
-    .venv\\Scripts\\pyinstaller.exe --noconfirm packaging\\sdr.spec
+    .venv\\Scripts\\pyinstaller.exe --noconfirm packaging\\marsad.spec
 
-Produces dist\\sdr\\sdr.exe plus its support files. One folder, not one file:
+Produces dist\\marsad\\marsad.exe plus its support files. One folder, not one file:
 a one-file build unpacks 300 MB to a temp folder on every launch, which is slow
 and sets off some antivirus products; a folder starts instantly.
 
@@ -15,17 +15,17 @@ the venv, so it ships the same libraries.
 from pathlib import Path
 
 ROOT = Path(SPECPATH).resolve().parent
-PKG = ROOT / "sdrstation"
+PKG = ROOT / "marsad"
 
 a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
-        (str(PKG / "web" / "index.html"), "sdrstation/web"),
-        (str(PKG / "web" / "builder.html"), "sdrstation/web"),
-        (str(PKG / "web" / "ROADMAP.md"), "sdrstation/web"),
-        (str(PKG / "station.default.json"), "sdrstation"),
+        (str(PKG / "web" / "index.html"), "marsad/web"),
+        (str(PKG / "web" / "builder.html"), "marsad/web"),
+        (str(PKG / "web" / "ROADMAP.md"), "marsad/web"),
+        (str(PKG / "station.default.json"), "marsad"),
         (str(ROOT / "README.md"), "."),
     ],
     hiddenimports=[
@@ -52,7 +52,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="sdr",
+    name="marsad",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -65,5 +65,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="sdr",
+    name="marsad",
 )

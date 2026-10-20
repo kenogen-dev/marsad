@@ -73,4 +73,4 @@ def self_command(*args: str, prefer_venv: Path | None = None) -> list[str]:
     py = sys.executable
     if prefer_venv and Path(prefer_venv).exists():
         py = str(prefer_venv)
-    return [py, "-m", "sdrstation", *args]
+    return [py, "-m", "marsad", *args]

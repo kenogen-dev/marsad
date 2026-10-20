@@ -90,7 +90,7 @@ def describe(name, levels, band_median, bw, fund, verbose=False):
     return mean, sd, se, n
 
 
-def spur_stats_main(argv=None, station: Station | None = None, prog: str = "sdr spur-stats") -> int:
+def spur_stats_main(argv=None, station: Station | None = None, prog: str = "marsad spur-stats") -> int:
     ap = argparse.ArgumentParser(prog=prog, description="Harmonic-family spur statistic")
     ap.add_argument("bins", nargs="+", help="one or two bins.csv paths")
     ap.add_argument("--family", type=float, default=28.8,
@@ -287,7 +287,7 @@ def autocorr_peaks(freqs, levels, win_mhz, max_lag_mhz, hop_mhz, top=5):
 
 
 def compare_runs_main(argv=None, station: Station | None = None,
-                      prog: str = "sdr compare-runs") -> int:
+                      prog: str = "marsad compare-runs") -> int:
     station = station or Station.load()
     floors = station.detection_floors or {"handled": 0.5, "untouched": 0.05}
 

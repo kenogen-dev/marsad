@@ -2,7 +2,7 @@
 
 One file, station.json, in the station folder. It holds the facts that differ
 from one station to the next (receivers, spur families, presets, the measured
-retune time) and a `defaults` section that `sdr run` rewrites with the last
+retune time) and a `defaults` section that `marsad run` rewrites with the last
 chain and antenna answers. Everything else in the file is preserved exactly.
 
 The station folder is found in this order:
@@ -13,7 +13,7 @@ The station folder is found in this order:
   5. the current directory, with built-in defaults
 
 Built-in defaults come from station.default.json beside this module, which
-describes the station the program was first written for. `sdr init` copies it
+describes the station the program was first written for. `marsad init` copies it
 out so a new station has something to edit.
 """
 from __future__ import annotations
@@ -225,7 +225,7 @@ class Station:
         self.data[key] = value
 
     def write_full(self, overwrite: bool = False) -> Path:
-        """`sdr init`: put a complete, commented station.json in the folder."""
+        """`marsad init`: put a complete, commented station.json in the folder."""
         if self.file.exists() and not overwrite:
             raise SystemExit(f"{self.file} already exists (use --force to replace it)")
         self.file.write_text(DEFAULT_FILE.read_text(encoding="utf-8"), encoding="utf-8")

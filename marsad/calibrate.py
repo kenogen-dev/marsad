@@ -10,8 +10,8 @@ sweep then lasts hops x retune, and the timestamps rtl_power writes give the
 sweep period directly. Over a minute that resolves the per-hop cost to about
 a millisecond.
 
-    sdr calibrate-retune                 # measure and report
-    sdr calibrate-retune --save          # also write retune_ms_per_hop to station.json
+    marsad calibrate-retune                 # measure and report
+    marsad calibrate-retune --save          # also write retune_ms_per_hop to station.json
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def retune_from_csv(csv_path: Path) -> dict:
     }
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr calibrate-retune") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad calibrate-retune") -> int:
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description=__doc__.split("\n")[0])
     ap.add_argument("--seconds", type=int, default=90, help="how long to run (default 90)")

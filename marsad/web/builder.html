@@ -226,7 +226,7 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
   <section class="panel">
     <div class="ph"><h2>Recording settings</h2><span class="badge lock">Locks comparability</span></div>
     <p class="sub">Change any of these and this run can only be compared with other runs that
-    share the same values. <code>sdr compare</code> refuses to treat them as equivalent.</p>
+    share the same values. <code>marsad compare</code> refuses to treat them as equivalent.</p>
     <div class="row">
       <div class="f"><label for="bin">Bin kHz</label><input type="number" id="bin" step="0.1" min="0.1"></div>
       <div class="f"><label for="gain">Gain dB</label><select id="gain"></select></div>
@@ -343,7 +343,7 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
   Identical settings are what makes them comparable, so only the <em>tag</em> and the
   <em>chain</em> change between them — <code>casc-3-jumper</code>, <code>cage-off-1</code> and
   so on. If two runs came from the same profile on the same receiver, their fingerprints match
-  and <code>sdr compare-runs</code> will pair them.</p>
+  and <code>marsad compare-runs</code> will pair them.</p>
   <p class="hint">Run from the station folder (the one holding station.json). Each run writes
   <code>reports/&lt;name&gt;/scan_build.md</code> with the geometry and the fingerprint, then
   archives itself into <code>occupancy.db</code> and sets the terminated/antenna flag from the
@@ -375,7 +375,7 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
 // Everything station-specific arrives from /config (built from station.json) and is
 // assigned in boot(). Different tuners have different gain ladders, and librtlsdr
 // silently snaps to the nearest step, so the dropdown only ever offers real ones.
-let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "sdr run";
+let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "marsad run";
 let GAINS = {}, LIMITS = {}, DEVICES = {}, GAPS = {}, RXLABEL = {};
 let PRESETS = {}, PRESET_ORDER = [], KNOWN = [], CHAIN_BASE = [], SDR_BASE = {}, CHAIN_OFF = {}, ENC_DEFAULT = {};
 const DUR_DEFAULT = { LS: [16, "h"], deep: [2, "h"], custom: [2, "h"] };
@@ -392,7 +392,7 @@ let CANON = {};
 function freshChain(rx) {
   return CHAIN_BASE.map(m => {
     const c = { ...m, on: (CHAIN_OFF[rx] || []).includes(m.id) ? false : m.on };
-    if (m.id === "sdr") { c.base = SDR_BASE[rx]; c.enc = ENC_DEFAULT[rx]; c.name = `${c.base} (${c.enc})`; }
+    if (m.id === "marsad") { c.base = SDR_BASE[rx]; c.enc = ENC_DEFAULT[rx]; c.name = `${c.base} (${c.enc})`; }
     return c;
   });
 }
@@ -401,7 +401,7 @@ let SRC_ANT = "Antenna", SRC_LOAD = "50 ohm load";
 // tests - so it rides on the SDR module and lands in --chain, where survey.py compares
 // it as a station change rather than a settings mismatch.
 const ENCLOSURES = ["open bench", "in cage", "in cage, seam taped"];
-const sdrMod = () => chain.find(m => m.id === "sdr");
+const sdrMod = () => chain.find(m => m.id === "marsad");
 function setEnclosure(e) {
   const m = sdrMod();
   if (!m) return;
@@ -432,11 +432,11 @@ function normaliseEnc(list, rx) {
       if (idx >= 0) { at = idx + 1; break; }
     }
     const add = { ...base, on: false };
-    if (base.id === "sdr") { add.on = true; add.base = SDR_BASE[rx]; add.enc = ENC_DEFAULT[rx]; }
+    if (base.id === "marsad") { add.on = true; add.base = SDR_BASE[rx]; add.enc = ENC_DEFAULT[rx]; }
     list.splice(at, 0, add);
     have.add(base.id);
   }
-  const m = list.find(x => x.id === "sdr");
+  const m = list.find(x => x.id === "marsad");
   if (m) {
     if (!m.enc) m.enc = /cage/i.test(m.name || "") ? "in cage" : (ENC_DEFAULT[rx] || "open bench");
     m.base = SDR_BASE[rx] || m.base || "SDR";
@@ -704,7 +704,7 @@ function flags(g, s) {
   if (enc === ENCLOSURES[0] && /cage-?on/i.test(s.tag))
     out.push(["warn", "Enclosure", "The tag says the cage is on but the chain records the SDR on the open bench."]);
   if (!chainText())
-    out.push(["bad", "Chain", "Nothing is connected, so no --chain is emitted and sdr run falls back to whatever station.json last remembered. That is exactly how two runs were mislabelled. Check at least the source, the SDR and the PC."]);
+    out.push(["bad", "Chain", "Nothing is connected, so no --chain is emitted and marsad run falls back to whatever station.json last remembered. That is exactly how two runs were mislabelled. Check at least the source, the SDR and the PC."]);
   if (s.device !== "" && +s.device !== DEVICES[s.rx])
     out.push(["warn", "Device", `--device ${s.device}, but station.json says the ${s.rx.toUpperCase()} enumerates as index ${DEVICES[s.rx]}. Fine if USB order has since changed — but confirm with rtl_test first, because a wrong index silently records one dongle's data under the other's name.`]);
   if (s.preset === "gap-probe" && s.rx !== "v5")
@@ -717,7 +717,7 @@ function flags(g, s) {
   if (s.rx === "v5" && !isLoad() && !/notch|flamingo|fm filter/i.test(chainText()))
     out.push(["bad", "FM overload", "The v5 has no FM notch in this chain. Measured 2026-10-16: broadcast FM drove it to +3.8 dB, essentially ADC full scale, and it decoded zero ADS-B frames at any gain while the XTR pulled 1856/min. A v5 run without a notch measures the chain, not the band."]);
   if (isLoad())
-    out.push(["ok", "Terminated", "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with sdr adsb-check for the sensitivity half, or the characterisation is incomplete."]);
+    out.push(["ok", "Terminated", "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with marsad adsb-check for the sensitivity half, or the characterisation is incomplete."]);
   if (isLoad() && !/term/i.test(s.tag))
     out.push(["warn", "Tag", "The source is a 50 ohm load but the tag does not say so. archive.py reads the tag to flag terminated runs, and a mislabelled one pollutes every later comparison."]);
   if (!isLoad() && /term/i.test(s.tag))
@@ -750,9 +750,9 @@ function command(g, s) {
   const line = parts.join(" ");
   const after = [];
   if (!isLoad())
-    after.push("sdr adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));
+    after.push("marsad adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));
   after.push("# archived and flagged " + (isLoad() ? "--terminated" : "--antenna") + " automatically from the chain above");
-  after.push("# compare: sdr compare-runs <before-tag> <after-tag>");
+  after.push("# compare: marsad compare-runs <before-tag> <after-tag>");
   return (s.dryfirst ? line + " --dry-run\n" : "") + line + "\n" + after.join("\n");
 }
 
@@ -829,7 +829,7 @@ async function boot() {
   let cfg = null;
   try { cfg = await (await fetch("/config")).json(); } catch (e) {}
   if (!cfg) { document.body.insertAdjacentHTML("afterbegin", '<p style="color:var(--bad);padding:12px">Could not load /config from the station server.</p>'); return; }
-  RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "sdr run";
+  RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "marsad run";
   $("retunems").textContent = cfg.retune_ms;
   for (const [rx, r] of Object.entries(cfg.receivers)) {
     GAINS[rx] = r.gains; LIMITS[rx] = r.range; DEVICES[rx] = r.device; GAPS[rx] = r.gaps; RXLABEL[rx] = r.label;

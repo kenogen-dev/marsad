@@ -6,7 +6,7 @@ path works, plus a message rate that can be compared across antennas.
 Comparisons are only valid at identical gain, quality and duration, so those
 are recorded in the sidecar and should be held constant across a sweep.
 
-    sdr adsb-check --seconds 600 --gain 40.2 --label "v5 46mm"
+    marsad adsb-check --seconds 600 --gain 40.2 --label "v5 46mm"
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def verdict(stats, seconds):
     return "fail", "no frames at all - check device index, gain, and that the antenna is connected"
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr adsb-check") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad adsb-check") -> int:
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description="ADS-B receive check at 1090 MHz")
     ap.add_argument("--seconds", type=int, default=600, help="capture duration (default 600)")

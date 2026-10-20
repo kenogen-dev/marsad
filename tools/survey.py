@@ -4,7 +4,7 @@
   python survey.py analyze  survey.csv [--threshold 10] [--out reports] [--mask 1095-1240]
   python survey.py compare  before.csv after.csv [--threshold 10] [--out reports]
 
-The same as `sdr analyze` / `sdr compare`. The code lives in sdrstation/analyze.py;
+The same as `marsad analyze` / `marsad compare`. The code lives in marsad/analyze.py;
 this file stays so the recorded analysis commands keep working, and so
 `from survey import load_rtl_power` still works.
 """
@@ -16,9 +16,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.config import Station          # noqa: E402
-from sdrstation import analyze as _analyze     # noqa: E402
-from sdrstation.analyze import *               # noqa: E402,F401,F403
+from marsad.config import Station          # noqa: E402
+from marsad import analyze as _analyze     # noqa: E402
+from marsad.analyze import *               # noqa: E402,F401,F403
 
 STATION = Station.load(ROOT)
 _analyze.configure(STATION)

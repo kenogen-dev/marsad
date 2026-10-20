@@ -1,22 +1,22 @@
-"""The `sdr` command.
+"""The `marsad` command.
 
-    sdr                       open the web app (scan, builder, archive, roadmap)
-    sdr run LS 1h             record a survey from a preset, then analyse it
-    sdr analyze surveys/x.csv --receiver xtr
-    sdr compare a.csv b.csv   the analyser's two-survey comparison
-    sdr compare-runs A B      the pre-registered A/B statistics
-    sdr spur-stats a/bins.csv b/bins.csv
-    sdr drift <tag>           per-sweep whole-band median
-    sdr adsb-check            1090 MHz positive control
-    sdr archive list|add|new|trend|band|seen|mark
-    sdr live                  the web app, without opening a browser
-    sdr calibrate-retune      measure this machine's retune cost per hop
-    sdr init                  write a station.json to edit
-    sdr config                show what station.json was loaded, from where
+    marsad                       open the web app (scan, builder, archive, roadmap)
+    marsad run LS 1h             record a survey from a preset, then analyse it
+    marsad analyze surveys/x.csv --receiver xtr
+    marsad compare a.csv b.csv   the analyser's two-survey comparison
+    marsad compare-runs A B      the pre-registered A/B statistics
+    marsad spur-stats a/bins.csv b/bins.csv
+    marsad drift <tag>           per-sweep whole-band median
+    marsad adsb-check            1090 MHz positive control
+    marsad archive list|add|new|trend|band|seen|mark
+    marsad live                  the web app, without opening a browser
+    marsad calibrate-retune      measure this machine's retune cost per hop
+    marsad init                  write a station.json to edit
+    marsad config                show what station.json was loaded, from where
 
-    sdr --station C:\\SDR run LS 1h    use another station folder (or set SDR_STATION)
+    marsad --station C:\\SDR run LS 1h    use another station folder (or set SDR_STATION)
 
-Each command is a thin wrapper around one module; `sdr <command> --help` shows
+Each command is a thin wrapper around one module; `marsad <command> --help` shows
 that command's own options.
 """
 from __future__ import annotations
@@ -45,13 +45,13 @@ COMMANDS = {
 
 def usage() -> str:
     width = max(len(c) for c in COMMANDS)
-    lines = [f"sdr {__version__} - rtl_power survey station", "",
-             "usage: sdr [--station FOLDER] <command> [options]", "",
+    lines = [f"marsad {__version__} - rtl_power survey station", "",
+             "usage: marsad [--station FOLDER] <command> [options]", "",
              "commands:"]
     for name, text in COMMANDS.items():
         lines.append(f"  {name:<{width}}  {text}")
     lines += ["", "With no command, opens the web app in your browser.",
-              "`sdr <command> --help` lists that command's options."]
+              "`marsad <command> --help` lists that command's options."]
     return "\n".join(lines)
 
 
@@ -89,17 +89,17 @@ def main(argv=None) -> int:
         print(__version__)
         return 0
     if cmd not in COMMANDS:
-        print(f"sdr: unknown command {cmd!r}\n\n{usage()}", file=sys.stderr)
+        print(f"marsad: unknown command {cmd!r}\n\n{usage()}", file=sys.stderr)
         return 2
 
     station = Station.load(root)
-    prog = f"sdr {cmd}"
+    prog = f"marsad {cmd}"
     if cmd == "run":
         from . import record
         return record.main(args, station, prog)
     if cmd in ("analyze", "compare"):
         from . import analyze
-        return analyze.main([cmd, *args], station, "sdr") or 0
+        return analyze.main([cmd, *args], station, "marsad") or 0
     if cmd == "compare-runs":
         from . import stats
         return stats.compare_runs_main(args, station, prog)
@@ -124,7 +124,7 @@ def main(argv=None) -> int:
     if cmd == "init":
         force = "--force" in args
         path = station.write_full(overwrite=force)
-        print(f"  wrote {path}\n  Edit it to describe your receiver, then `sdr run --list`.")
+        print(f"  wrote {path}\n  Edit it to describe your receiver, then `marsad run --list`.")
         return 0
     if cmd == "config":
         import json

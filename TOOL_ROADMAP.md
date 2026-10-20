@@ -1,4 +1,4 @@
-# SDR station tooling — where it has been, where it is, where it goes
+# Marsad tooling — where it has been, where it is, where it goes
 
 The guiding aim: **run the station without Claude in the loop.** Claude is for designing
 experiments and arguing about results, not for routine operation. Anything you would otherwise

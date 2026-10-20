@@ -1317,6 +1317,14 @@ resonance from a volume effect, since taping should change the former and not th
 
 ## Existing code
 
+**Packaged as `marsad` since 2026-10-20** (المرصد, al-marsad: the observatory; GitHub
+kenogen-dev/marsad). The code lives in the `marsad/` package; `marsad run LS 1h` is the
+command, and `sdr` is a second entry point for the same thing, kept so every command in the
+notes and RUNSHEET still works. The `tools/*.py` scripts below are thin wrappers over the
+package and keep their original command lines. `py -m pytest` runs 23 regression tests that
+pin the recorded figures; the frozen Windows build is `packaging/marsad.spec` ->
+`dist/marsad/marsad.exe`.
+
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 
 ```

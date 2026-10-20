@@ -1,7 +1,7 @@
-"""The packaged `sdr` command gives the same answers as the tools/ scripts.
+"""The packaged `marsad` command gives the same answers as the tools/ scripts.
 
 Same figures as test_statistics.py and test_analyze_golden.py, reached through
-`python -m sdrstation ...` instead of `py tools/<script>.py`. Also covers the
+`python -m marsad ...` instead of `py tools/<script>.py`. Also covers the
 pieces that only exist in the package: station.json loading and migration,
 the retune calibration parser, and the command-line front end.
 """
@@ -14,7 +14,7 @@ import pytest
 
 from conftest import PY, ROOT, run, report_dir, survey_csv
 
-SDR = [PY, "-m", "sdrstation"]
+SDR = [PY, "-m", "marsad"]
 sys.path.insert(0, str(ROOT))
 
 
@@ -68,7 +68,7 @@ def test_analyze_matches_archived_report(tmp_path):
 
 
 def test_station_defaults_match_the_original_tables():
-    from sdrstation.config import Station
+    from marsad.config import Station
     st = Station.load(ROOT)
     assert st.receiver_gaps() == {"xtr": [(1095.0, 1240.0)], "v5": []}
     assert [f for f, _ in st.spur_families] == [28.8, 0.6, 480.0, 24.0, 25.0, 100.0]
@@ -79,7 +79,7 @@ def test_station_defaults_match_the_original_tables():
 
 
 def test_legacy_station_json_is_read_as_defaults(tmp_path):
-    from sdrstation.config import Station
+    from marsad.config import Station
     legacy = {"antenna_shape": "90 L", "whip_length_mm": 60, "lna": "x", "filter": "y",
               "chain_order": "antenna > PC"}
     (tmp_path / "station.json").write_text(json.dumps(legacy), encoding="utf-8")
@@ -93,7 +93,7 @@ def test_legacy_station_json_is_read_as_defaults(tmp_path):
 
 
 def test_user_edits_to_station_json_survive_a_run(tmp_path):
-    from sdrstation.config import Station
+    from marsad.config import Station
     (tmp_path / "station.json").write_text(json.dumps(
         {"retune_ms_per_hop": 52.5, "presets": {"mine": {"freq": "100M:110M:10k", "gain": 29.0,
                                                          "integration": 5, "receiver": "xtr",
@@ -108,7 +108,7 @@ def test_user_edits_to_station_json_survive_a_run(tmp_path):
 
 def test_retune_calibration_parser(tmp_path):
     """A synthetic fast run: 100 hops, one sweep every 4.7 s -> 47.0 ms per hop."""
-    from sdrstation.calibrate import retune_from_csv
+    from marsad.calibrate import retune_from_csv
     import datetime as dt
     lines = []
     t0 = dt.datetime(2026, 10, 19, 12, 0, 0)
@@ -126,7 +126,7 @@ def test_retune_calibration_parser(tmp_path):
 
 
 def test_scan_geometry_same_through_package():
-    from sdrstation.rtlpower import scan_geometry
+    from marsad.rtlpower import scan_geometry
     g = scan_geometry(1241.0, 2147.483648, 50.0, 120, 3600, retune_ms_per_hop=47.0)
     assert g["hops"] == 432 and g["bins"] == 20736
     assert g["hop_centres_mhz"][0] == pytest.approx(1242.049171, abs=1e-6)

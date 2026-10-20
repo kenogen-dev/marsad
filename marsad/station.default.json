@@ -4,14 +4,14 @@
     "Edit this file. Keys starting with an underscore are notes and are ignored.",
     "The values shipped here describe the station this program was built on:",
     "a Nooelec NESDR SMArTee XTR (E4000) and a NESDR SMArt v5 (R820T) on Windows.",
-    "Run `sdr config` to see what is loaded and from where."
+    "Run `marsad config` to see what is loaded and from where."
   ],
 
   "rtl_sdr_dir": "rtl-sdr",
   "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
 
   "retune_ms_per_hop": 47.0,
-  "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. Measured 2026-10-13 on one USB stack; run `sdr calibrate-retune` to measure yours.",
+  "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. Measured 2026-10-13 on one USB stack; run `marsad calibrate-retune` to measure yours.",
 
   "receivers": {
     "xtr": {
@@ -67,7 +67,7 @@
     "custom": {"freq": "1241M:2148M:50k", "gain": 29.0, "integration": 120, "receiver": "xtr",
                "note": "custom build; --freq sets the range"}
   },
-  "_presets": "Named ranges for `sdr run <preset> <duration>`. Keep `custom` so a hand-built range is recorded as custom rather than masquerading as a preset.",
+  "_presets": "Named ranges for `marsad run <preset> <duration>`. Keep `custom` so a hand-built range is recorded as custom rather than masquerading as a preset.",
 
   "builder_profiles": {
     "baseline": {"lo": 700, "hi": 1700, "bin": 50, "gain": 29, "integ": 120, "dur": [1, "h"], "fw": 0, "as": "custom",
@@ -129,5 +129,5 @@
     "filter": "Nooelec Flamingo+ FM v2 notch (88-108 MHz)",
     "chain_order": "antenna > Flamingo+ FM notch > Nooelec LaNA > 8 ft coax > SMA bulkhead > SDR (caged) > USB extension > USB bulkhead > 16 ft USB > PC"
   },
-  "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
+  "_defaults": "Last-used answers to the sidecar questions. `marsad run` rewrites this section after every run; everything else in this file is left alone."
 }

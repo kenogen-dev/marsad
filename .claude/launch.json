@@ -4,7 +4,7 @@
     {
       "name": "live-view",
       "runtimeExecutable": "py",
-      "runtimeArgs": ["-m", "sdrstation", "live", "--port", "8740"],
+      "runtimeArgs": ["-m", "marsad", "live", "--port", "8740"],
       "port": 8740,
       "autoPort": false
     }

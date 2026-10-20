@@ -1,4 +1,4 @@
-"""`py -m sdrstation ...` is the same as `sdr ...`."""
+"""`py -m marsad ...` is the same as `marsad ...` (and `sdr ...`, the short alias)."""
 import sys
 
 from .cli import main

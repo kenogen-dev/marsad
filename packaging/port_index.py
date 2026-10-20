@@ -1,4 +1,4 @@
-"""Generate sdrstation/web/index.html from the PAGE string in tools/live_view.py.
+"""Generate marsad/web/index.html from the PAGE string in tools/live_view.py.
 
 live_view.py is still being edited by hand (zoom, pan, history scroll, the
 finished marker), so the package page is derived from it rather than copied
@@ -75,7 +75,7 @@ rep("""function showPane(name){
   try{
     const d=await (await fetch('/archive')).json();
     const note=document.getElementById('dbnote');
-    if(!d.db){note.textContent='No occupancy.db yet. It is created by `sdr archive add --all` or automatically after each `sdr run`.';}
+    if(!d.db){note.textContent='No occupancy.db yet. It is created by `marsad archive add --all` or automatically after each `marsad run`.';}
     else note.textContent=d.surveys.length+' archived survey(s) in '+d.db+(d.error?'  ('+d.error+')':'');
     document.getElementById('dbsurveys').innerHTML=
       '<thead><tr><th>Survey</th><th>Started</th><th>Sweeps</th><th>Signals</th><th>Floor dB</th><th>Fingerprint</th></tr></thead><tbody>'
@@ -114,6 +114,6 @@ try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}
 if(startPane!=='scan')showPane(startPane);
 </script></body></html>""")
 
-out = root / "sdrstation" / "web" / "index.html"
+out = root / "marsad" / "web" / "index.html"
 out.write_text(src + "\n", encoding="utf-8")
 print(len(src.splitlines()), "lines ->", out)

@@ -1,10 +1,10 @@
-"""Turn tools/scan_builder.html into sdrstation/web/builder.html.
+"""Turn tools/scan_builder.html into marsad/web/builder.html.
 
 The page keeps all of its layout and logic. What changes:
   - the station constants (gains, limits, gaps, devices, presets, known
     facts, chain modules, retune time, ceiling) are loaded from /config
     instead of being written into the page;
-  - the command it emits starts with `sdr run` (the packaged command);
+  - the command it emits starts with `marsad run` (the packaged command);
   - the Google Fonts link goes, so the page works offline;
   - the page is forced to the dark theme to match the app it sits inside;
   - "Reset all" referenced a CHAIN_DEFAULT that never existed; it now
@@ -49,7 +49,7 @@ rep('const RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648;\n'
     '// Everything station-specific arrives from /config (built from station.json) and is\n'
     '// assigned in boot(). Different tuners have different gain ladders, and librtlsdr\n'
     '// silently snaps to the nearest step, so the dropdown only ever offers real ones.\n'
-    'let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "sdr run";\n'
+    'let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "marsad run";\n'
     'let GAINS = {}, LIMITS = {}, DEVICES = {}, GAPS = {}, RXLABEL = {};\n'
     'let PRESETS = {}, PRESET_ORDER = [], KNOWN = [], CHAIN_BASE = [], SDR_BASE = {}, CHAIN_OFF = {}, ENC_DEFAULT = {};\n'
     'const DUR_DEFAULT = { LS: [16, "h"], deep: [2, "h"], custom: [2, "h"] };\n')
@@ -103,18 +103,18 @@ rep("""    <p class="hint">Device follows the receiver — v5 is index 0 and the
 rep('const parts = ["py tools/run_survey.py", cliPreset, dur];',
     'const parts = [CMD, cliPreset, dur];')
 rep('after.push("py tools/adsb_check.py --seconds 60 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));',
-    'after.push("sdr adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));')
+    'after.push("marsad adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));')
 rep('after.push("# compare: py tools/spur_stats.py reports/<before>/bins.csv reports/<after>/bins.csv");',
-    'after.push("# compare: sdr compare-runs <before-tag> <after-tag>");')
+    'after.push("# compare: marsad compare-runs <before-tag> <after-tag>");')
 rep('<p class="hint">Run from <code>C:\\SDR</code>. Each run writes',
     '<p class="hint">Run from the station folder (the one holding station.json). Each run writes')
-rep("and <code>spur_stats.py</code> will pair them.", "and <code>sdr compare-runs</code> will pair them.")
+rep("and <code>spur_stats.py</code> will pair them.", "and <code>marsad compare-runs</code> will pair them.")
 rep("<code>survey.py compare</code> refuses to treat them as equivalent.",
-    "<code>sdr compare</code> refuses to treat them as equivalent.")
+    "<code>marsad compare</code> refuses to treat them as equivalent.")
 rep("Pair it with tools/adsb_check.py for the sensitivity half",
-    "Pair it with sdr adsb-check for the sensitivity half")
+    "Pair it with marsad adsb-check for the sensitivity half")
 rep("and run_survey.py falls back to whatever station.json last remembered.",
-    "and sdr run falls back to whatever station.json last remembered.")
+    "and marsad run falls back to whatever station.json last remembered.")
 rep("Minutes carry\n// decimals because run_survey.py's duration parser accepts them",
     "Minutes carry\n// decimals because the duration parser accepts them")
 rep("Retuning costs 47 ms per hop whatever the integration",
@@ -158,7 +158,7 @@ boot = '''async function boot() {
   let cfg = null;
   try { cfg = await (await fetch("/config")).json(); } catch (e) {}
   if (!cfg) { document.body.insertAdjacentHTML("afterbegin", '<p style="color:var(--bad);padding:12px">Could not load /config from the station server.</p>'); return; }
-  RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "sdr run";
+  RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "marsad run";
   $("retunems").textContent = cfg.retune_ms;
   for (const [rx, r] of Object.entries(cfg.receivers)) {
     GAINS[rx] = r.gains; LIMITS[rx] = r.range; DEVICES[rx] = r.device; GAPS[rx] = r.gaps; RXLABEL[rx] = r.label;
@@ -181,6 +181,6 @@ boot = '''async function boot() {
 '''
 src = src[:boot_start] + boot + boot_body + 'update();\n}\nboot();\n</script>' + src[boot_end + len('update();\n</script>'):]
 
-out = root / "sdrstation" / "web" / "builder.html"
+out = root / "marsad" / "web" / "builder.html"
 out.write_text(src, encoding="utf-8")
 print(len(src.splitlines()), "lines ->", out)

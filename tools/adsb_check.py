@@ -2,7 +2,7 @@
 
     py tools/adsb_check.py --seconds 600 --gain 40.2 --label "v5 46mm"
 
-The same as `sdr adsb-check`. The code lives in sdrstation/adsb.py.
+The same as `marsad adsb-check`. The code lives in marsad/adsb.py.
 """
 import sys
 from pathlib import Path
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.config import Station                    # noqa: E402
-from sdrstation.adsb import main as _main, parse_frames, verdict  # noqa: E402,F401
+from marsad.config import Station                    # noqa: E402
+from marsad.adsb import main as _main, parse_frames, verdict  # noqa: E402,F401
 
 
 def main():

@@ -21,13 +21,13 @@ pooled into 1 MHz buckets that any survey can be compared on.
 
 Stdlib only.
 
-    sdr archive add reports/<name>          add one report
-    sdr archive add --all                   add every report not yet in
-    sdr archive list                        what is archived
-    sdr archive new                         signals in the newest survey only
-    sdr archive trend 1265.44               one frequency through time
-    sdr archive band 1920 1930              one band through time
-    sdr archive seen --min 3                the persistent set
+    marsad archive add reports/<name>          add one report
+    marsad archive add --all                   add every report not yet in
+    marsad archive list                        what is archived
+    marsad archive new                         signals in the newest survey only
+    marsad archive trend 1265.44               one frequency through time
+    marsad archive band 1920 1930              one band through time
+    marsad archive seen --min 3                the persistent set
 """
 from __future__ import annotations
 
@@ -264,7 +264,7 @@ def cmd_list(station, args) -> int:
         "SELECT s.*, (SELECT COUNT(*) FROM signals g WHERE g.survey_id=s.id) n"
         " FROM surveys s ORDER BY started_epoch").fetchall()
     if not rows:
-        print("  nothing archived yet; run: sdr archive add --all")
+        print("  nothing archived yet; run: marsad archive add --all")
         return 0
     print(f"\n  {'started':<17}{'name':<44}{'sweeps':>7}{'sigs':>6}{'floor':>8}  fingerprint")
     for r in rows:
@@ -396,7 +396,7 @@ def cmd_mark(station, args) -> int:
     return 0 if n else 1
 
 
-def build_parser(prog: str = "sdr archive") -> argparse.ArgumentParser:
+def build_parser(prog: str = "marsad archive") -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog=prog, description="Long-term occupancy archive")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -443,7 +443,7 @@ def build_parser(prog: str = "sdr archive") -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr archive") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad archive") -> int:
     station = station or Station.load()
     args = build_parser(prog).parse_args(argv)
     return args.func(station, args)

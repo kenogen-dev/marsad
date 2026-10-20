@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sdrstation"
+name = "marsad"
 version = "0.1.0"
-description = "Record, analyse and compare rtl_power spectrum surveys with a comparability fingerprint on every run"
+description = "Marsad (المرصد, the observatory): an RTL-SDR spectrum monitoring station with a comparability fingerprint for every survey, pre-registered A/B statistics, thermal drift and spur-family tools, an occupancy archive, and a live waterfall. Built around rtl_power on Windows."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -20,10 +20,11 @@ dependencies = [
 dev = ["pytest", "pyinstaller"]
 
 [project.scripts]
-sdr = "sdrstation.cli:main"
+marsad = "marsad.cli:main"
+sdr = "marsad.cli:main"      # short alias; the station notes and RUNSHEET use it
 
 [tool.setuptools]
-packages = ["sdrstation"]
+packages = ["marsad"]
 
 [tool.setuptools.package-data]
-sdrstation = ["station.default.json", "web/*.html", "web/*.md"]
+marsad = ["station.default.json", "web/*.html", "web/*.md"]

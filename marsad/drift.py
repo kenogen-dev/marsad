@@ -6,8 +6,8 @@ thermal gain shift moves the whole floor together - which is exactly what a
 median across every bin in one sweep detects. This station's whole-band median
 repeats to 0.03-0.05 dB, so it is the most sensitive instrument available here.
 
-    sdr drift <tag-or-csv-or-report>
-    sdr drift xtr-alu-baseline --threshold 0.1 --plot-text
+    marsad drift <tag-or-csv-or-report>
+    marsad drift xtr-alu-baseline --threshold 0.1 --plot-text
 
 IMPORTANT: this reads the RAW CSV and never skips warm-up sweeps. `--skip-warmup`
 exists to keep drift OUT of a comparison; this tool exists to look straight at it,
@@ -60,7 +60,7 @@ def settle_index(series, budget):
     return n - 2
 
 
-def main(argv=None, station: Station | None = None, prog: str = "sdr drift") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad drift") -> int:
     import numpy as np
     from .analyze import load_rtl_power   # reuses the tested sweep grouping
 

@@ -428,7 +428,7 @@ async function loadArchive(){
   try{
     const d=await (await fetch('/archive')).json();
     const note=document.getElementById('dbnote');
-    if(!d.db){note.textContent='No occupancy.db yet. It is created by `sdr archive add --all` or automatically after each `sdr run`.';}
+    if(!d.db){note.textContent='No occupancy.db yet. It is created by `marsad archive add --all` or automatically after each `marsad run`.';}
     else note.textContent=d.surveys.length+' archived survey(s) in '+d.db+(d.error?'  ('+d.error+')':'');
     document.getElementById('dbsurveys').innerHTML=
       '<thead><tr><th>Survey</th><th>Started</th><th>Sweeps</th><th>Signals</th><th>Floor dB</th><th>Fingerprint</th></tr></thead><tbody>'

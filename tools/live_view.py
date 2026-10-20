@@ -5,8 +5,8 @@ Archive and Roadmap tabs.
     py tools/live_view.py [--csv FILE] [--port 8731] [--pin] [--open]
                           [--exit-after-idle MIN]
 
-The same as `sdr live`. The server lives in sdrstation/live.py and the page in
-sdrstation/web/index.html (edit the page there now; this file no longer holds it).
+The same as `marsad live`. The server lives in marsad/live.py and the page in
+marsad/web/index.html (edit the page there now; this file no longer holds it).
 """
 import sys
 from pathlib import Path
@@ -14,8 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdrstation.config import Station          # noqa: E402
-from sdrstation.live import main as _main      # noqa: E402
+from marsad.config import Station          # noqa: E402
+from marsad.live import main as _main      # noqa: E402
 
 
 def main(argv=None):
