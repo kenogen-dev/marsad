@@ -55,6 +55,11 @@ class Tailer:
         self.last_growth = time.time()    # for --exit-after-idle
         self.hops = None      # rows per sweep; the sidecar fills this in
         self.cur_rows = 0
+        self.step_hz = None
+        self.hop_centres: set = set()   # Hz, from each row's low/high: where zero-IF DC spikes sit
+        self.maxhold: dict = {}         # kHz -> highest dB ever seen, at full resolution
+        self.latest: dict = {}          # kHz -> dB in the latest complete sweep
+        self._peaks = (None, [])        # (sweep count it was computed at, detections)
         self.sidecar = self._sidecar()    # must come AFTER hops, which it sets
         self.last_finish = None
         self.dropped = 0        # sweeps rolled out of the ring buffer
@@ -77,6 +82,7 @@ class Tailer:
             self.lo = float(rp["freq_low_mhz"])
             self.hi = float(rp.get("freq_high_mhz_effective") or rp.get("freq_high_mhz"))
         return {"duration_s": d.get("duration_requested_s"),
+                "preset": d.get("preset"),
                 "integration_s": rp.get("integration_s"),
                 "gain_db": rp.get("gain_db"),
                 "receiver": d.get("receiver"),
@@ -96,7 +102,7 @@ class Tailer:
         if len(parts) < 7:
             return
         try:
-            lo = float(parts[2]); step = float(parts[4])
+            lo = float(parts[2]); hi_hz = float(parts[3]); step = float(parts[4])
             vals = [float(v) for v in parts[6:] if v.strip()]
         except ValueError:
             return
@@ -105,6 +111,9 @@ class Tailer:
             self._finish(parts[0].strip() + " " + parts[1].strip())
         self.last_lo = lo
         self.cur_rows += 1
+        self.step_hz = step
+        if self.hops is None or len(self.hop_centres) < self.hops:
+            self.hop_centres.add(round((lo + hi_hz) / 2.0))   # the analyser's definition
         base = lo / 1e6
         step_mhz = step / 1e6
         for i, v in enumerate(vals):
@@ -123,6 +132,14 @@ class Tailer:
         # Max within each display column, not mean: a single narrow spur must
         # survive 22,896 bins being squeezed into ~1,200 pixels.
         self.sweeps.append(self._downsample(self.cur))
+        latest = {}
+        mh = self.maxhold
+        for f, v in self.cur:
+            k = int(round(f * 1e3))
+            latest[k] = v
+            if v > mh.get(k, -1e9):      # false for NaN, which is what we want
+                mh[k] = v
+        self.latest = latest
         self.stamps.append(stamp)
         # Median over the FULL resolution sweep, not the downsampled row.
         self.medians.append(round(st.median([v for _, v in self.cur]), 3))
@@ -157,6 +174,102 @@ class Tailer:
             for ln in lines:
                 if ln.strip():
                     self._row(ln)
+
+    def peaks(self, threshold_db: float, floor_window_mhz: float, families, readout) -> list:
+        """Detections on the full-resolution max-hold: the analyser's method in miniature.
+
+        Floor: the latest complete sweep, as block medians a quarter of the floor
+        window wide, then the median of the five blocks around each point, so a
+        narrow line cannot lift the floor under itself. Detection: max-hold at
+        least threshold_db above that floor, contiguous bins grouped into one peak,
+        width measured 6 dB down. Tags: the station's spur families and the hop
+        centres at the analyser's tolerance (1.5 bins, at least 10 kHz), plus the
+        hover readout's families as a weaker "near" tag. Recomputed once per sweep.
+        The report is the authority; this is its live preview.
+        """
+        n = self.dropped + len(self.sweeps)
+        if self._peaks[0] == n:
+            return self._peaks[1]
+        with self.lock:
+            latest = self.latest                 # replaced whole, never mutated
+            mh = dict(self.maxhold)
+            step = self.step_hz
+            hc = sorted(self.hop_centres)
+        if not latest or not step:
+            return []
+        keys = sorted(latest)
+        lo_k = keys[0]
+        bw = max(1, int(round(floor_window_mhz * 1e3 / 4)))     # block width, kHz
+        blocks: dict = {}
+        for k in keys:
+            v = latest[k]
+            if v == v:                                           # skip NaN
+                blocks.setdefault((k - lo_k) // bw, []).append(v)
+        bmed = {b: st.median(vs) for b, vs in blocks.items()}
+        floor = {}
+        for b in bmed:
+            vs = [bmed[j] for j in range(b - 2, b + 3) if j in bmed]
+            floor[b] = st.median(vs)
+        step_k = step / 1e3
+        tol_k = max(step * 1.5, 10e3) / 1e3
+        hc_k = [h / 1e3 for h in hc]
+        hop_k = st.median([b - a for a, b in zip(hc_k, hc_k[1:])]) if len(hc_k) > 1 else 0.0
+        snr = []
+        for k in keys:
+            f = floor.get((k - lo_k) // bw)
+            v = mh.get(k)
+            snr.append(None if (f is None or v is None or v != v) else v - f)
+        out = []
+        N = len(keys)
+        i = 0
+        while i < N:
+            if snr[i] is None or snr[i] < threshold_db:
+                i += 1
+                continue
+            j = i
+            while (j + 1 < N and snr[j + 1] is not None and snr[j + 1] >= threshold_db
+                   and keys[j + 1] - keys[j] <= 2 * step_k):
+                j += 1
+            p = max(range(i, j + 1), key=lambda t: snr[t])
+            thr = mh[keys[p]] - 6
+            a = p
+            while a > 0 and mh.get(keys[a - 1], -1e9) >= thr and keys[a] - keys[a - 1] <= 2 * step_k:
+                a -= 1
+            b = p
+            while b < N - 1 and mh.get(keys[b + 1], -1e9) >= thr and keys[b + 1] - keys[b] <= 2 * step_k:
+                b += 1
+            width_k = (b - a + 1) * step_k
+            f_mhz = keys[p] / 1e3
+            tags = []
+            for base, label in families:
+                m = round(f_mhz / base)
+                if m >= 1 and abs(f_mhz - m * base) * 1e3 <= tol_k:
+                    tags.append(f"{label} (x{m})")
+            # A lone sub-MHz comb match is weak evidence (7% of arbitrary lines land on
+            # the 600 kHz comb by chance), so it keeps its tag but not the spur colour.
+            kind = "spur" if any(base >= 1.0 and round(f_mhz / base) >= 1
+                                 and abs(f_mhz - round(f_mhz / base) * base) * 1e3 <= tol_k
+                                 for base, _ in families) else "signal"
+            if not tags:
+                for base in readout:
+                    m = round(f_mhz / base)
+                    if m >= 1 and abs(f_mhz - m * base) * 1e3 <= tol_k:
+                        tags.append(f"near {base} MHz x {m} (readout family, weak evidence)")
+                        kind = "spur"
+                        break
+            if hc_k and min(abs(h - keys[p]) for h in hc_k) <= tol_k:
+                tags.append("hop centre: zero-IF DC artefact, likely not real")
+                if kind == "signal":
+                    kind = "artefact"
+            if hop_k and width_k >= 0.8 * hop_k:
+                tags.insert(0, f"hop-wide ({width_k / hop_k:.1f} hops): impulse, not a signal")
+                kind = "artefact"
+            out.append({"f": round(f_mhz, 4), "db": round(mh[keys[p]], 1),
+                        "snr": round(snr[p], 1), "w": round(width_k, 1),
+                        "kind": kind, "tags": "; ".join(tags)})
+            i = j + 1
+        self._peaks = (n, out)
+        return out
 
     def payload(self, since: int) -> dict:
         # The recorder writes finished_local into the sidecar when rtl_power exits.
@@ -197,6 +310,8 @@ class Tailer:
                 "partial": self._downsample(self.cur) if (self.cur and self.lo is not None) else None,
                 "cursor": cur_hi, "cursor_pct": pct, "cursor_est": True,
                 "hops": self.hops,
+                "hop_centres_mhz": [h / 1e6 for h in sorted(self.hop_centres)] if since == 0 else None,
+                "step_khz": self.step_hz / 1e3 if self.step_hz else None,
                 "eta_s": eta,
                 "expected": int(dur / integ) if (dur and integ) else None,
                 "meta": self.sidecar,
@@ -239,6 +354,9 @@ def builder_config(station: Station) -> dict:
         "chain_off": station.data.get("chain_off_by_receiver", {}),
         "enc_default": station.data.get("enclosure_default", {}),
         "readout_families": station.data.get("readout_families_mhz", [14.4, 28.8, 24, 25, 100]),
+        "spur_families": [list(f) for f in station.spur_families],
+        "peak_threshold_db": float(station.data.get("peak_threshold_db", 10.0)),
+        "floor_window_mhz": float(station.data.get("floor_window_mhz", 2.0)),
         "cmd_prefix": "marsad run",
         "station_root": str(station.root),
     }
@@ -371,7 +489,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                     self.send_error(404); return
                 if t is not cur:
                     t.poll()        # archived files are not polled in the background
-                body = json.dumps({**t.payload(since), "live": live_name}).encode()
+                pr = station.presets.get(t.sidecar.get("preset") or "", {})
+                fw = float(pr.get("floor_window") or cfg["floor_window_mhz"])
+                pk = t.peaks(cfg["peak_threshold_db"], fw, cfg["spur_families"], cfg["readout_families"])
+                body = json.dumps({**t.payload(since), "peaks": pk, "live": live_name}).encode()
             elif u.path == "/surveys":
                 body = json.dumps({"live": live["path"].name if live["path"] else None,
                                    "follow": follow,
