@@ -1,0 +1,133 @@
+{
+  "_comment": [
+    "Station facts: everything about YOUR receiver, rig and measured limits.",
+    "Edit this file. Keys starting with an underscore are notes and are ignored.",
+    "The values shipped here describe the station this program was built on:",
+    "a Nooelec NESDR SMArTee XTR (E4000) and a NESDR SMArt v5 (R820T) on Windows.",
+    "Run `sdr config` to see what is loaded and from where."
+  ],
+
+  "rtl_sdr_dir": "rtl-sdr",
+  "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
+
+  "retune_ms_per_hop": 47.0,
+  "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. Measured 2026-10-13 on one USB stack; run `sdr calibrate-retune` to measure yours.",
+
+  "receivers": {
+    "xtr": {
+      "label": "Nooelec NESDR SMArTee XTR (E4000, zero-IF)",
+      "tuner": "e4000",
+      "range_mhz": [52, 2187],
+      "gaps_mhz": [[1095.0, 1240.0]],
+      "device": 1,
+      "_gaps_mhz": "E4000 PLL lock gap, measured on SN 08701076 with rtl_test -t. Re-measure per unit."
+    },
+    "v5": {
+      "label": "Nooelec NESDR SMArt v5 (R820T, low-IF)",
+      "tuner": "r820t",
+      "range_mhz": [24, 1766],
+      "gaps_mhz": [],
+      "device": 0
+    }
+  },
+  "_receivers": "device = USB index as rtl_test lists them. Not guaranteed across replugs; check rtl_test before a long run.",
+
+  "spur_families_mhz": [
+    [28.8, "28.8 MHz SDR clock harmonic"],
+    [0.6, "600 kHz comb (switching converter?)"],
+    [480.0, "USB 2.0 (480 Mb/s) harmonic"],
+    [24.0, "24 MHz crystal harmonic"],
+    [25.0, "25 MHz clock harmonic"],
+    [100.0, "100 MHz PCIe clock harmonic"]
+  ],
+  "_spur_families_mhz": "Harmonic families the analyser tags automatically. Order matters: tags are written in this order. Changing the list changes every peaks.csv, so do it between comparison sets, not inside one.",
+
+  "readout_families_mhz": [14.4, 28.8, 24, 25, 100],
+  "_readout_families_mhz": "Families the live view names when you hover a line. 14.4 is the real RTL2832U fundamental (measured 2026-10-16).",
+
+  "detection_floor_db": {"handled": 0.5, "untouched": 0.05},
+  "_detection_floor_db": "Smallest change compare-runs believes, by whether the hardware was touched between runs (measured 2026-10-17).",
+
+  "presets": {
+    "LS": {"freq": "1241M:2148M:50k", "gain": 29.0, "integration": 30, "receiver": "xtr",
+           "note": "PLL gap to rtl_power's 2147.48 MHz ceiling"},
+    "L": {"freq": "1241M:1700M:25k", "gain": 34.0, "integration": 10, "receiver": "xtr",
+          "note": "L-band detail"},
+    "milair": {"freq": "225M:400M:12.5k", "gain": 29.0, "integration": 10, "receiver": "xtr",
+               "note": "Military air UHF"},
+    "900": {"freq": "902M:935M:5k", "gain": 29.0, "integration": 5, "receiver": "xtr",
+            "note": "ISM + paging"},
+    "wide": {"freq": "52M:1700M:100k", "gain": 29.0, "integration": 5, "receiver": "xtr",
+             "note": "Overview; sweeps through the gap, analyser masks it"},
+    "burst23": {"freq": "1263M:1267M:5k", "gain": 29.0, "integration": 2, "receiver": "xtr",
+                "floor_window": 0.3,
+                "note": "1265.44 MHz burst hunt; 2 hops, ~95% listening, hop centres offset"},
+    "deep": {"freq": "1241M:1342M:25k", "gain": 29.0, "integration": 30, "receiver": "xtr",
+             "note": "100 MHz deep tile; --freq picks which"},
+    "custom": {"freq": "1241M:2148M:50k", "gain": 29.0, "integration": 120, "receiver": "xtr",
+               "note": "custom build; --freq sets the range"}
+  },
+  "_presets": "Named ranges for `sdr run <preset> <duration>`. Keep `custom` so a hand-built range is recorded as custom rather than masquerading as a preset.",
+
+  "builder_profiles": {
+    "baseline": {"lo": 700, "hi": 1700, "bin": 50, "gain": 29, "integ": 120, "dur": [1, "h"], "fw": 0, "as": "custom",
+                 "note": "chain baseline - one settings profile for terminated, cage A/B and every cascade step"},
+    "gap-probe": {"lo": 1095, "hi": 1240, "bin": 25, "gain": 29.7, "integ": 30, "rx": "v5", "dur": [1, "h"], "fw": 0, "as": "custom",
+                  "note": "the XTR's blind spot - v5 only, fingerprint of the retracted survey"}
+  },
+  "_builder_profiles": "Extra named profiles the scan builder offers; they emit `custom` to the CLI.",
+
+  "known_mhz": [
+    {"a": 1090, "b": 1090, "t": "ADS-B transponders (use the v5; 1095 is the XTR's gap edge)"},
+    {"a": 1095, "b": 1240, "t": "E4000 PLL lock gap, measured on this unit", "k": "bad"},
+    {"a": 1185, "b": 1232, "t": "broadband pedestal seen on the v5 2026-10-16, ~8 dB, steady; suspected front-end compression", "k": "bad"},
+    {"a": 1190, "b": 1210, "t": "604.2 kHz comb (NOT the 600 kHz family), r=0.885; internal vs external unresolved", "k": "bad"},
+    {"a": 1227.6, "b": 1227.6, "t": "GPS L2"},
+    {"a": 1240, "b": 1300, "t": "23 cm amateur, secondary to radiolocation"},
+    {"a": 1265.44, "b": 1265.44, "t": "ARSR radar: 12.000 s rotation, 113.8 us chirp, staggered PRF"},
+    {"a": 1267.18, "b": 1267.18, "t": "28.8 MHz x44 - ours, on-PCB", "k": "spur"},
+    {"a": 1382.41, "b": 1382.41, "t": "28.8 MHz x48 - ours, on-PCB", "k": "spur"},
+    {"a": 1420.4, "b": 1420.4, "t": "hydrogen line (needs rtl_power_fftw)"},
+    {"a": 1439.99, "b": 1439.99, "t": "28.8 MHz x50 - ours, on-PCB", "k": "spur"},
+    {"a": 1468.80, "b": 1468.80, "t": "28.8 MHz x51 - ours, strongest of the family", "k": "spur"},
+    {"a": 1525, "b": 1559, "t": "Inmarsat / MSS downlink"},
+    {"a": 1575.42, "b": 1575.42, "t": "GPS L1"},
+    {"a": 1612.79, "b": 1612.79, "t": "28.8 MHz x56 - ours, on-PCB", "k": "spur"},
+    {"a": 1626.5, "b": 1660.5, "t": "MSS uplink - 1633.47 found here at 39% occupancy, unexplained"},
+    {"a": 1755, "b": 1780, "t": "AWS-3 uplink - strongest daytime signals, absent all night"},
+    {"a": 1756.79, "b": 1756.79, "t": "28.8 MHz x61 - ours, on-PCB", "k": "spur"},
+    {"a": 1785.60, "b": 1785.60, "t": "28.8 MHz x62 - ours, on-PCB", "k": "spur"},
+    {"a": 1799.98, "b": 1799.98, "t": "strongest external line, ~100% occupancy, not ours"},
+    {"a": 1850, "b": 1910, "t": "PCS uplink - daytime weighted"},
+    {"a": 1920, "b": 1930, "t": "DECT 6.0 - always on, strongest 01:00-02:00"},
+    {"a": 2147.484, "b": 2147.484, "t": "rtl_power's 2^31 Hz ceiling", "k": "bad"}
+  ],
+  "_known_mhz": "What this station already knows is in the band. Shown by the scan builder for whatever range is selected. k = bad | spur | (plain).",
+
+  "chain_modules": [
+    {"id": "src", "name": "Antenna (90 deg L, 60 mm)", "on": true, "fixed": true},
+    {"id": "notch", "name": "Flamingo+ FM notch", "on": true},
+    {"id": "lna", "name": "Nooelec LaNA", "on": true},
+    {"id": "coax", "name": "3 ft RG316 coax", "on": true},
+    {"id": "bhsma", "name": "SMA bulkhead", "on": true},
+    {"id": "sdr", "name": "", "on": true, "fixed": true},
+    {"id": "usbext", "name": "6 in USB extension", "on": false},
+    {"id": "bhusb", "name": "USB bulkhead", "on": true},
+    {"id": "usb1ft", "name": "1 ft USB3 M:M", "on": true},
+    {"id": "usb16", "name": "16 ft USB3", "on": true},
+    {"id": "iso", "name": "USB isolator", "on": true},
+    {"id": "pc", "name": "PC", "on": true, "fixed": true}
+  ],
+  "chain_off_by_receiver": {"xtr": [], "v5": ["notch", "lna"]},
+  "enclosure_default": {"xtr": "in cage", "v5": "open bench"},
+  "_chain_modules": "The physical rig, in signal order, for the scan builder. The source and the SDR are always present; the rest can be unchecked.",
+
+  "defaults": {
+    "antenna_shape": "90 L",
+    "whip_length_mm": 60,
+    "lna": "Nooelec LaNA, bias-tee powered, at the antenna pigtail",
+    "filter": "Nooelec Flamingo+ FM v2 notch (88-108 MHz)",
+    "chain_order": "antenna > Flamingo+ FM notch > Nooelec LaNA > 8 ft coax > SMA bulkhead > SDR (caged) > USB extension > USB bulkhead > 16 ft USB > PC"
+  },
+  "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
+}

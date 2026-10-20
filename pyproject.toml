@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdrstation"
+version = "0.1.0"
+description = "Record, analyse and compare rtl_power spectrum surveys with a comparability fingerprint on every run"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pyinstaller"]
+
+[project.scripts]
+sdr = "sdrstation.cli:main"
+
+[tool.setuptools]
+packages = ["sdrstation"]
+
+[tool.setuptools.package-data]
+sdrstation = ["station.default.json", "web/*.html", "web/*.md"]

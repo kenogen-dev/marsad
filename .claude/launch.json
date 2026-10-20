@@ -4,8 +4,9 @@
     {
       "name": "live-view",
       "runtimeExecutable": "py",
-      "runtimeArgs": ["tools/live_view.py"],
-      "port": 8731
+      "runtimeArgs": ["-m", "sdrstation", "live", "--port", "8740"],
+      "port": 8740,
+      "autoPort": false
     }
   ]
 }

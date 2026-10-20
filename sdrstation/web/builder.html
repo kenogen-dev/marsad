@@ -1,0 +1,940 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan builder</title>
+
+<style>
+/* Instrument panel. Range and its map first, then settings split by whether they
+   lock comparability, then the consequences, then the rig, then the command.
+   Palette taken from the station's own spectrum display: cyan trace, amber hop
+   markers, violet waterfall, blue-biased near-black ground. */
+:root {
+  --ground: #eef2f5; --panel: #ffffff; --sunk: #e3e9ee; --line: #c8d3dc;
+  --ink: #141c24; --dim: #5a6b79;
+  --accent: #0b6f80; --accent-soft: #d3eaef; --trace: #0b6f80;
+  --warn: #8a5a00; --warn-soft: #fbeccd;
+  --bad: #9b1f4f; --bad-soft: #fadbe6;
+  --ok: #1e6b4a; --ok-soft: #d8efe3;
+  --shadow: 0 1px 2px rgba(20,28,36,.07), 0 6px 18px rgba(20,28,36,.06);
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #0a0e13; --panel: #121a22; --sunk: #0d141b; --line: #253442;
+  --ink: #dde6ee; --dim: #8599a8;
+  --accent: #4fd3e8; --accent-soft: #10303a; --trace: #4fd3e8;
+  --warn: #e8b14f; --warn-soft: #30260f;
+  --bad: #ef6f9f; --bad-soft: #35121f;
+  --ok: #4fcf96; --ok-soft: #0f2b20;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 8px 24px rgba(0,0,0,.35);
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --ground: #0a0e13; --panel: #121a22; --sunk: #0d141b; --line: #253442;
+  --ink: #dde6ee; --dim: #8599a8;
+  --accent: #4fd3e8; --accent-soft: #10303a; --trace: #4fd3e8;
+  --warn: #e8b14f; --warn-soft: #30260f;
+  --bad: #ef6f9f; --bad-soft: #35121f;
+  --ok: #4fcf96; --ok-soft: #0f2b20;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 8px 24px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground); color: var(--ink); font-family: var(--sans);
+  font-size: 15px; line-height: 1.5; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+h1 { font-family: var(--cond); font-weight: 700; font-size: clamp(25px, 4.5vw, 36px);
+     letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+.lede { color: var(--dim); margin: 6px 0 0; max-width: 64ch; }
+header { border-bottom: 2px solid var(--line); padding-bottom: 16px; margin-bottom: 18px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+         box-shadow: var(--shadow); padding: 17px; margin-bottom: 18px; }
+.ph { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 13px; }
+h2 { font-family: var(--cond); font-size: 12px; font-weight: 700; letter-spacing: .14em;
+     text-transform: uppercase; color: var(--dim); margin: 0; }
+.badge { font-family: var(--cond); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+         padding: 2px 7px; border-radius: 3px; border: 1px solid; }
+.badge.lock { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.badge.free { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+.sub { color: var(--dim); font-size: 12.5px; margin: -6px 0 12px; }
+
+.cols2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; align-items: start; }
+@media (max-width: 880px) { .cols2 { grid-template-columns: minmax(0,1fr); } }
+
+.row { display: grid; gap: 10px 12px; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); }
+.f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.f > label { font-family: var(--cond); font-size: 11px; letter-spacing: .09em;
+             text-transform: uppercase; color: var(--dim); }
+input[type=text], input[type=number], select, textarea {
+  font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums;
+  background: var(--sunk); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 4px; padding: 7px 8px; width: 100%; min-width: 0;
+}
+select, textarea { font-family: var(--sans); }
+textarea { resize: vertical; min-height: 54px; }
+input:focus-visible, select:focus-visible, button:focus-visible, textarea:focus-visible,
+[role=slider]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hint { font-size: 12px; color: var(--dim); margin: 9px 0 0; }
+code { font-family: var(--mono); font-size: .92em; background: var(--sunk); padding: 1px 4px; border-radius: 3px; }
+
+.chk { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; }
+.chk input { margin-top: 3px; accent-color: var(--accent); flex: none; }
+.chk span { font-size: 13.5px; }
+.chk small { display: block; color: var(--dim); font-size: 12px; }
+
+/* dual-thumb range, sitting directly on the map's top axis */
+.dual { position: relative; height: 30px; padding: 0 10px; }
+.dual .track { position: absolute; left: 10px; right: 10px; top: 13px; height: 4px;
+               border-radius: 2px; background: var(--line); }
+/* inside .track, so its percentages are of the rail the thumbs actually travel */
+.dual .sel { position: absolute; top: 0; height: 4px; border-radius: 2px; background: var(--accent); }
+.dual input[type=range] {
+  position: absolute; left: 10px; right: 10px; top: 0; width: calc(100% - 20px);
+  height: 30px; margin: 0; padding: 0; background: none; pointer-events: none;
+  -webkit-appearance: none; appearance: none;
+}
+.dual input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 30px; }
+.dual input[type=range]::-moz-range-track { background: transparent; height: 30px; }
+.dual input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; width: 17px; height: 17px; margin-top: 7px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); cursor: grab;
+}
+.dual input[type=range]::-moz-range-thumb {
+  pointer-events: auto; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel); cursor: grab;
+}
+figure.map { margin: 2px 0 0; }
+figure.map svg { display: block; width: 100%; height: 178px; }
+#map text { font-family: var(--mono); font-size: 10px; fill: var(--dim); }
+#map text.k { fill: var(--trace); font-weight: 600; }
+#map text.w { fill: var(--warn); }
+figcaption { font-size: 12px; color: var(--dim); margin-top: 8px; }
+
+.facts { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+.fact { display: flex; gap: 9px; font-size: 13px; align-items: baseline; }
+.fact b { font-family: var(--mono); font-size: 12px; min-width: 11ch; flex: none; text-align: right; }
+.fact.spur b, .fact.spur span { color: var(--warn); }
+.fact.bad b, .fact.bad span { color: var(--bad); }
+
+.read { display: grid; grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
+        gap: 1px; background: var(--line); border: 1px solid var(--line);
+        border-radius: 5px; overflow: hidden; }
+.cell { background: var(--panel); padding: 9px 11px; min-width: 0; }
+.cell dt { font-family: var(--cond); font-size: 10.5px; letter-spacing: .09em;
+           text-transform: uppercase; color: var(--dim); }
+.cell dd { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 16px;
+           font-weight: 500; margin: 2px 0 0; overflow-wrap: anywhere; }
+.cell dd u { text-decoration: none; font-size: 11px; color: var(--dim); font-weight: 400; }
+.cell.key dd { color: var(--trace); font-weight: 600; }
+.bar { display: flex; height: 25px; border-radius: 4px; overflow: hidden;
+       border: 1px solid var(--line); margin-top: 6px; }
+.bar i { font-style: normal; font-family: var(--mono); font-size: 11px; display: flex;
+         align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; }
+.bar .listen { background: var(--accent-soft); color: var(--accent); }
+.bar .tune { background: var(--sunk); color: var(--dim); }
+
+.flags { margin-top: 13px; display: flex; flex-direction: column; gap: 8px; }
+.flag { display: flex; gap: 9px; padding: 9px 11px; border-radius: 5px; font-size: 13.5px; border: 1px solid; }
+.flag b { font-family: var(--cond); letter-spacing: .07em; text-transform: uppercase;
+          font-size: 11px; flex: none; padding-top: 2px; }
+.flag.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.flag.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.flag.ok { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.flag span { color: var(--ink); }
+
+/* signal chain */
+.chain { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+.link { font-family: var(--mono); color: var(--dim); align-self: center; }
+.mod { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+       border-radius: 5px; padding: 5px 7px; background: var(--sunk); min-width: 0; }
+.mod.off { opacity: .42; }
+.mod.off .name { text-decoration: line-through; }
+.mod.src { border-color: var(--accent); background: var(--accent-soft); }
+.mod.src.load { border-color: var(--bad); background: var(--bad-soft); }
+.mod input[type=checkbox] { accent-color: var(--accent); flex: none; }
+.mod .name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30ch; }
+.mod button { font-size: 11px; padding: 1px 5px; line-height: 1.5; min-width: 0; }
+.chainline { font-family: var(--mono); font-size: 12.5px; background: var(--sunk);
+             border: 1px solid var(--line); border-radius: 5px; padding: 10px;
+             margin-top: 12px; overflow-wrap: anywhere; color: var(--trace); }
+
+pre { font-family: var(--mono); font-size: 13px; line-height: 1.6; background: var(--sunk);
+      border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 0;
+      overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+button { font-family: var(--cond); font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase;
+         background: var(--accent); color: var(--panel); border: 1px solid var(--accent);
+         border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:hover { filter: brightness(1.08); }
+.fp { font-family: var(--mono); font-size: 12px; background: var(--sunk); border: 1px solid var(--line);
+      border-radius: 5px; padding: 9px 10px; margin-top: 12px; overflow-wrap: anywhere; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: right; padding: 7px 9px; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+th { font-family: var(--cond); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+     color: var(--dim); font-weight: 600; }
+td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--sunk); }
+tbody tr.now { background: var(--accent-soft); }
+tbody tr.now td { color: var(--trace); font-weight: 600; }
+.scroll { overflow-x: auto; }
+footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style></head><body>
+<div class="wrap">
+<header>
+  <h1>rtl_power Scan Builder</h1>
+  <p class="lede">Build a scan, watch what rtl_power will actually do with it, describe the rig
+  and the conditions, and copy a command that records all of it. Settings are split by whether
+  they change what this run can be compared against.</p>
+</header>
+
+<section class="panel">
+  <div class="ph"><h2>Range</h2><span class="badge lock">Locks comparability</span>
+    <span style="margin-left:auto"><select id="preset" style="width:auto"></select></span></div>
+
+  <div class="dual" id="dual">
+    <div class="track"><div class="sel" id="dsel"></div></div>
+    <input type="range" id="loS" aria-label="Scan start frequency">
+    <input type="range" id="hiS" aria-label="Scan stop frequency">
+  </div>
+
+  <figure class="map">
+    <svg id="map" role="img" aria-label="Scan range and bin width at three zoom levels"></svg>
+    <figcaption id="mapcap"></figcaption>
+  </figure>
+
+  <div class="row" style="margin-top:14px">
+    <div class="f"><label for="lo">Start MHz</label><input type="number" id="lo" step="0.001"></div>
+    <div class="f"><label for="hi">Stop MHz</label><input type="number" id="hi" step="0.001"></div>
+    <div class="f"><label for="receiver">Receiver</label>
+      <select id="receiver"></select></div>
+    <div class="f"><label for="target">Target MHz</label><input type="number" id="target" step="0.001" placeholder="optional"></div>
+  </div>
+  <div class="facts" id="facts"></div>
+</section>
+
+<div class="cols2">
+  <section class="panel">
+    <div class="ph"><h2>Recording settings</h2><span class="badge lock">Locks comparability</span></div>
+    <p class="sub">Change any of these and this run can only be compared with other runs that
+    share the same values. <code>sdr compare</code> refuses to treat them as equivalent.</p>
+    <div class="row">
+      <div class="f"><label for="bin">Bin kHz</label><input type="number" id="bin" step="0.1" min="0.1"></div>
+      <div class="f"><label for="gain">Gain dB</label><select id="gain"></select></div>
+      <div class="f"><label for="integ">Integration s</label><input type="number" id="integ" min="1" step="1"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="f"><label for="crop">Crop</label><input type="number" id="crop" step="0.05" min="0" max="0.45"></div>
+      <div class="f"><label for="fir">FIR</label><input type="number" id="fir" step="1" min="0" max="9"></div>
+    </div>
+    <p class="hint">Crop and FIR are 0.25 and 9 by station convention. Every archived survey uses
+    them; changing either orphans this run.</p>
+    <div class="fp"><span style="color:var(--dim)">fingerprint</span><br><span id="fp"></span></div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><h2>Run settings</h2><span class="badge free">Free to change</span></div>
+    <p class="sub">None of these alter the frequency grid or the measured levels, so a run is
+    still comparable across different durations, tags and analysis options.</p>
+    <div class="row">
+      <div class="f"><label for="durval">Duration</label>
+        <div style="display:flex;gap:6px;min-width:0">
+          <input type="number" id="durval" min="0.1" step="any" style="flex:1 1 0">
+          <select id="durunit" style="flex:0 0 84px"><option value="m">min</option><option value="h">hours</option></select>
+        </div></div>
+      <div class="f"><label for="sweepsIn">…or sweeps</label><input type="number" id="sweepsIn" min="1" step="1"></div>
+      <div class="f"><label for="tag">Tag</label><input type="text" id="tag" placeholder="overnight"></div>
+      <div class="f"><label for="device">Device</label><input type="number" id="device" min="0" step="1"></div>
+    </div>
+    <p class="hint">Duration and sweeps are the same knob — sweeps = duration ÷ integration,
+    exactly. Set whichever you think in; the other follows. Sweeps is usually the one that
+    matters, because it is what occupancy resolution and the floor percentile depend on.</p>
+    <p class="hint">Device follows the receiver, using the index recorded in station.json. That order is <em>not</em> guaranteed across replugs, so run
+    <code>rtl_test</code> and read its device list before a long run. Override the
+    number here if the order has changed.</p>
+
+    <div class="ph" style="margin-top:16px;padding-top:13px;border-top:1px solid var(--line)"><h2>Analysis</h2></div>
+    <label class="chk"><input type="checkbox" id="analyze">
+      <span>Analyse when recording finishes
+      <small>report.md, the three plots, combined.png, peaks.csv, bins.csv</small></span></label>
+    <label class="chk"><input type="checkbox" id="useskip">
+      <span>Discard warm-up sweeps
+      <small>The floor settles over roughly the first 16 minutes</small></span></label>
+    <div class="row" style="margin-top:6px">
+      <div class="f"><label for="skipmin">Warm-up min</label><input type="number" id="skipmin" min="0" step="1"></div>
+      <div class="f"><label for="thresh">Threshold dB</label><input type="number" id="thresh" step="0.5"></div>
+      <div class="f"><label for="floorwin">Floor MHz</label><input type="number" id="floorwin" step="0.1" min="0" placeholder="auto"></div>
+    </div>
+
+    <div class="ph" style="margin-top:16px;padding-top:13px;border-top:1px solid var(--line)"><h2>Run options</h2></div>
+    <label class="chk"><input type="checkbox" id="dryfirst">
+      <span>Add a <code>--dry-run</code> line first
+      <small>Parses for real, prints the geometry and filename, exits before touching the SDR.
+      Safe while another survey is recording.</small></span></label>
+    <label class="chk"><input type="checkbox" id="noninteractive">
+      <span>Non-interactive
+      <small>Asks nothing. Safe when only the settings above changed; if anything physical moved,
+      build the chain below so it is recorded rather than inherited.</small></span></label>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="ph"><h2>What rtl_power will do</h2><span class="badge free">Derived</span></div>
+  <dl class="read" id="read"></dl>
+  <div style="margin-top:13px">
+    <div style="font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)">One sweep</div>
+    <div class="bar"><i class="listen" id="barL"></i><i class="tune" id="barT"></i></div>
+  </div>
+  <div class="flags" id="flags"></div>
+</section>
+
+<section class="panel">
+  <div class="ph"><h2>Signal chain</h2><span class="badge free">Recorded, not measured</span>
+    <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="ghost" id="srcAnt">Antenna</button><button class="ghost" id="srcLoad">50 Ω load</button>
+      <span style="width:1px;background:var(--line);align-self:stretch"></span>
+      <button class="ghost" id="encBench">Open bench</button><button class="ghost" id="encCage">In cage</button><button class="ghost" id="encTaped">Seam taped</button>
+      <button class="ghost" id="chainReset">Reset chain</button>
+    </span></div>
+  <p class="sub">Uncheck what is not connected, reorder with the arrows, add anything you are
+  testing. This goes into the sidecar as <code>--chain</code>, so a run describes its own rig
+  instead of inheriting whatever <code>station.json</code> last remembered.</p>
+  <div class="chain" id="chain"></div>
+  <div class="row" style="margin-top:12px;grid-template-columns:minmax(0,2fr) auto">
+    <div class="f"><label for="newmod">Add a module</label><input type="text" id="newmod" placeholder="e.g. 10 dB attenuator"></div>
+    <div class="f"><label>&nbsp;</label><button id="addmod">Add</button></div>
+  </div>
+  <div class="chainline" id="chainline"></div>
+</section>
+
+<section class="panel">
+  <div class="ph"><h2>Conditions</h2><span class="badge free">Recorded, not measured</span></div>
+  <p class="sub">Free text in the sidecar. Worth filling in — the diurnal floor swing turned out
+  to be about 1.2 dB, so what the room and the weather were doing matters later.</p>
+  <div class="row">
+    <div class="f"><label for="temp">Temp °C</label><input type="number" id="temp" step="0.5" placeholder="29"></div>
+    <div class="f"><label for="humid">Humidity %</label><input type="number" id="humid" step="1" placeholder="38"></div>
+    <div class="f"><label for="where">Measured</label>
+      <select id="where"><option value="inside">inside</option><option value="outside">outside</option></select></div>
+    <div class="f"><label for="sky">Sky</label>
+      <select id="sky"><option value="">—</option><option>clear</option><option>sunny</option>
+      <option>overcast</option><option>raining</option><option>night, clear</option><option>night, overcast</option></select></div>
+  </div>
+  <div class="f" style="margin-top:10px"><label for="notes">Anything else</label>
+    <textarea id="notes" placeholder="what is switched on in the room, anything unusual"></textarea></div>
+  <div class="chainline" id="condline"></div>
+</section>
+
+<section class="panel">
+  <div class="ph"><h2>Command</h2>
+    <span style="margin-left:auto;display:flex;gap:8px">
+      <button class="ghost" id="reset">Reset all</button><button id="copy">Copy</button></span></div>
+  <pre id="cmd"></pre>
+  <p class="hint"><b>Baseline, cage A/B and every cascade step share one profile on purpose.</b>
+  Identical settings are what makes them comparable, so only the <em>tag</em> and the
+  <em>chain</em> change between them — <code>casc-3-jumper</code>, <code>cage-off-1</code> and
+  so on. If two runs came from the same profile on the same receiver, their fingerprints match
+  and <code>sdr compare-runs</code> will pair them.</p>
+  <p class="hint">Run from the station folder (the one holding station.json). Each run writes
+  <code>reports/&lt;name&gt;/scan_build.md</code> with the geometry and the fingerprint, then
+  archives itself into <code>occupancy.db</code> and sets the terminated/antenna flag from the
+  chain above — so <code>new</code>, <code>trend</code> and <code>band</code> can see it without
+  a second command. Pass <code>--no-archive</code> to skip that.</p>
+</section>
+
+<section class="panel">
+  <div class="ph"><h2>Integration trade-off</h2><span class="badge lock">Locks comparability</span></div>
+  <div class="scroll">
+    <table><thead><tr>
+      <th>Integration</th><th>Listening</th><th>Sweeps</th>
+      <th>Listen per frequency</th><th>Occupancy step</th><th>CSV</th>
+    </tr></thead><tbody id="tradeoff"></tbody></table>
+  </div>
+  <p class="hint">Retuning costs <span id="retunems">47</span> ms per hop whatever the integration, so a longer
+  <code>-i</code> buys dwell by spending sweeps. Click a row to adopt it. The ceiling on listening
+  per frequency is duration ÷ hops — what you would get if retuning were free.</p>
+</section>
+
+<footer>
+  Geometry reproduces every measured run on this station, including predicting 1242.049 MHz as
+  LS's first hop centre — the frequency rtl_power reported as “PLL not locked”. Levels are
+  relative dB, never calibrated dBm. Settings persist in this browser only.
+</footer>
+</div>
+
+<script>
+// Everything station-specific arrives from /config (built from station.json) and is
+// assigned in boot(). Different tuners have different gain ladders, and librtlsdr
+// silently snaps to the nearest step, so the dropdown only ever offers real ones.
+let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "sdr run";
+let GAINS = {}, LIMITS = {}, DEVICES = {}, GAPS = {}, RXLABEL = {};
+let PRESETS = {}, PRESET_ORDER = [], KNOWN = [], CHAIN_BASE = [], SDR_BASE = {}, CHAIN_OFF = {}, ENC_DEFAULT = {};
+const DUR_DEFAULT = { LS: [16, "h"], deep: [2, "h"], custom: [2, "h"] };
+function fillGains(rx, want) {
+  const list = GAINS[rx] || Object.values(GAINS)[0] || [0];
+  const near = list.reduce((b, g) => Math.abs(g - want) < Math.abs(b - want) ? g : b, list[0]);
+  $("gain").innerHTML = list.map(g => `<option value="${g}">${g}</option>`).join("");
+  $("gain").value = near;
+  return near;
+}
+const BINS = [1, 2.5, 5, 10, 12.5, 20, 25, 50, 100, 200, 500];
+let CANON = {};
+
+function freshChain(rx) {
+  return CHAIN_BASE.map(m => {
+    const c = { ...m, on: (CHAIN_OFF[rx] || []).includes(m.id) ? false : m.on };
+    if (m.id === "sdr") { c.base = SDR_BASE[rx]; c.enc = ENC_DEFAULT[rx]; c.name = `${c.base} (${c.enc})`; }
+    return c;
+  });
+}
+let SRC_ANT = "Antenna", SRC_LOAD = "50 ohm load";
+// The cage is not something the signal passes through, but it IS the variable Phase 2
+// tests - so it rides on the SDR module and lands in --chain, where survey.py compares
+// it as a station change rather than a settings mismatch.
+const ENCLOSURES = ["open bench", "in cage", "in cage, seam taped"];
+const sdrMod = () => chain.find(m => m.id === "sdr");
+function setEnclosure(e) {
+  const m = sdrMod();
+  if (!m) return;
+  m.base = m.base || m.name.replace(/\s*\(.*\)\s*$/, "");
+  m.enc = e;
+  m.name = `${m.base} (${e})`;
+  update();
+}
+// Saved chains keep their on/off state - that is the part worth remembering - but their
+// labels are rewritten to the shared set, so an older save cannot reintroduce per-radio
+// wording for hardware that is physically the same.
+function normaliseEnc(list, rx) {
+  for (const m of list) {
+    if (m.id === "usbint") m.id = "usbext";          // pre-v14 v5 naming
+    if (m.id !== "sdr" && m.id !== "src" && CANON[m.id]) m.name = CANON[m.id];
+  }
+  // Versions before v16 saved the v5 as a separate, shorter rig with no LaNA, coax or SMA
+  // bulkhead at all. Renaming cannot recover a module that was never stored, so any part of
+  // the shared rig that is absent is reinserted at its canonical position - UNCHECKED, so
+  // the tool never silently claims hardware that may not be fitted.
+  const have = new Set(list.map(m => m.id));
+  for (let i = 0; i < CHAIN_BASE.length; i++) {
+    const base = CHAIN_BASE[i];
+    if (have.has(base.id)) continue;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const idx = list.findIndex(m => m.id === CHAIN_BASE[j].id);
+      if (idx >= 0) { at = idx + 1; break; }
+    }
+    const add = { ...base, on: false };
+    if (base.id === "sdr") { add.on = true; add.base = SDR_BASE[rx]; add.enc = ENC_DEFAULT[rx]; }
+    list.splice(at, 0, add);
+    have.add(base.id);
+  }
+  const m = list.find(x => x.id === "sdr");
+  if (m) {
+    if (!m.enc) m.enc = /cage/i.test(m.name || "") ? "in cage" : (ENC_DEFAULT[rx] || "open bench");
+    m.base = SDR_BASE[rx] || m.base || "SDR";
+    m.name = `${m.base} (${m.enc})`;
+  }
+  return list;
+}
+// Keeps the SDR label honest when the radio changes under a remembered chain.
+function syncSdrName(rx) {
+  const m = sdrMod();
+  if (!m) return;
+  m.base = SDR_BASE[rx] || m.base;
+  m.enc = m.enc || ENC_DEFAULT[rx];
+  m.name = `${m.base} (${m.enc})`;
+}
+const $ = id => document.getElementById(id);
+let curRx = "xtr";
+let chains = {};
+let chain = [];   // alias, so edits land in chains[curRx] directly
+
+function geometry(lo, hi, binKhz, integ, durS, crop) {
+  const span = Math.max(1, (hi - lo) * 1e6);
+  const hops = Math.max(1, Math.ceil(span / (RTL_MAX * (1 - crop))));
+  const hopHz = span / hops, rate = hopHz / (1 - crop);
+  let fft = 1;
+  while (rate / fft > binKhz * 1000 && fft < 1 << 20) fft *= 2;
+  const kept = Math.round(fft * (1 - crop));
+  const retune = hops * RETUNE;
+  const sweeps = Math.max(1, Math.floor(durS / Math.max(1, integ)));
+  return {
+    hops, hopMhz: hopHz / 1e6, rate, fft, kept, binKhz: rate / fft / 1e3, bins: hops * kept,
+    sweeps, retune,
+    listening: Math.max(0, 1 - retune / Math.max(1e-9, integ)),
+    perFreq: Math.max(0, sweeps * (integ / hops - RETUNE)),
+    ceilPerFreq: durS / hops,
+    occStep: 100 / sweeps,
+    mb: sweeps * hops * (60 + kept * 8) / 1e6
+  };
+}
+
+const num = (v, d = 0) => v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+function secs(s) {
+  if (s < 90) return num(s, 1) + " s";
+  if (s < 5400) return num(s / 60, 1) + " min";
+  return num(s / 3600, 2) + " h";
+}
+const isLoad = () => chain[0] && chain[0].name === SRC_LOAD;
+
+function read() {
+  const unit = $("durunit").value, durVal = +$("durval").value;
+  const lo = +$("lo").value, hiReq = +$("hi").value;
+  return {
+    preset: PRESETS[$("preset").value] ? $("preset").value : "custom",
+    lo, hiReq, hi: Math.min(hiReq, CEIL), clamped: hiReq > CEIL,
+    bin: +$("bin").value, gain: +$("gain").value, integ: +$("integ").value || 1,
+    crop: +$("crop").value, fir: +$("fir").value,
+    durVal, unit, durS: durVal * (unit === "h" ? 3600 : 60),
+    rx: $("receiver").value, device: $("device").value, tag: $("tag").value.trim(),
+    target: $("target").value === "" ? null : +$("target").value,
+    analyze: $("analyze").checked, useskip: $("useskip").checked,
+    skipmin: +$("skipmin").value || 0, thresh: +$("thresh").value,
+    floorwin: $("floorwin").value === "" ? null : +$("floorwin").value,
+    dryfirst: $("dryfirst").checked, nonint: $("noninteractive").checked,
+    temp: $("temp").value, humid: $("humid").value, where: $("where").value,
+    sky: $("sky").value, notes: $("notes").value.trim()
+  };
+}
+
+function chainText() {
+  return chain.filter(m => m.on).map(m => m.name).join(" > ");
+}
+function conditionsText(s) {
+  const bits = [];
+  if (s.sky) bits.push(s.sky);
+  if (s.temp !== "") bits.push(`${s.temp}C ${s.where}`);
+  if (s.humid !== "") bits.push(`${s.humid}% RH`);
+  if (s.notes) bits.push(s.notes);
+  return bits.join(", ");
+}
+
+function drawChain() {
+  const src = chain[0];
+  $("chain").innerHTML = chain.map((m, i) => {
+    const cls = "mod" + (m.on ? "" : " off") + (i === 0 ? (isLoad() ? " src load" : " src") : "");
+    return (i ? '<span class="link">›</span>' : "") +
+      `<span class="${cls}" data-i="${i}">
+        <input type="checkbox" ${m.on ? "checked" : ""} data-on="${i}" aria-label="${m.name} connected">
+        <span class="name">${m.name}</span>
+        <button class="ghost" data-mv="${i}" data-d="-1" aria-label="move left">◀</button>
+        <button class="ghost" data-mv="${i}" data-d="1" aria-label="move right">▶</button>
+        ${m.fixed ? "" : `<button class="ghost" data-del="${i}" aria-label="remove">×</button>`}
+      </span>`;
+  }).join("");
+  $("chain").querySelectorAll("[data-on]").forEach(el =>
+    el.onchange = () => { chain[+el.dataset.on].on = el.checked; update(); });
+  $("chain").querySelectorAll("[data-mv]").forEach(el =>
+    el.onclick = () => {
+      const i = +el.dataset.mv, j = i + +el.dataset.d;
+      if (j < 0 || j >= chain.length) return;
+      [chain[i], chain[j]] = [chain[j], chain[i]];
+      update();
+    });
+  $("chain").querySelectorAll("[data-del]").forEach(el =>
+    el.onclick = () => { chain.splice(+el.dataset.del, 1); update(); });
+  $("srcAnt").style.opacity = isLoad() ? ".55" : "1";
+  $("srcLoad").style.opacity = isLoad() ? "1" : ".55";
+  const enc = (sdrMod() || {}).enc;
+  $("encBench").style.opacity = enc === ENCLOSURES[0] ? "1" : ".55";
+  $("encCage").style.opacity  = enc === ENCLOSURES[1] ? "1" : ".55";
+  $("encTaped").style.opacity = enc === ENCLOSURES[2] ? "1" : ".55";
+  $("chainline").textContent = chainText() || "(nothing connected)";
+  void src;
+}
+
+function drawMap(g, s) {
+  const svg = $("map"), M = 10, H = 178;
+  const W = Math.max(260, Math.round(svg.getBoundingClientRect().width) || 600);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const x0 = M, x1 = W - M, span = x1 - x0;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const o = [];
+  const bar = y => `<rect x="${x0}" y="${y}" width="${span}" height="15" rx="2" fill="var(--sunk)" stroke="var(--line)"/>`;
+  const txt = (x, y, t, a, c) => `<text x="${x}" y="${y}" text-anchor="${a || "start"}"${c ? ` class="${c}"` : ""}>${t}</text>`;
+
+  const [tmin, tmax] = LIMITS[s.rx], tspan = tmax - tmin, yA = 16;
+  const px = v => x0 + span * clamp((v - tmin) / tspan, 0, 1);
+  o.push(bar(yA));
+  for (const [ga, gb] of GAPS[s.rx])
+    o.push(`<rect x="${px(ga)}" y="${yA}" width="${Math.max(1, px(gb) - px(ga))}" height="15" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width=".5"/>`);
+  const sa = px(s.lo), sb = px(s.hiReq);
+  o.push(`<rect x="${sa}" y="${yA - 3}" width="${Math.max(2.5, sb - sa)}" height="21" rx="2" fill="var(--accent)" fill-opacity=".85"/>`);
+  o.push(txt(x0, yA + 28, `${tmin}`));
+  o.push(txt(x1, yA + 28, `${tmax} MHz · ${s.rx.toUpperCase()}`, "end"));
+  o.push(txt(clamp((sa + sb) / 2, x0 + 50, x1 - 50), yA - 7, `${num(s.hiReq - s.lo, 1)} MHz`, "middle", "k"));
+
+  const yB = 80, nH = g.hops;
+  o.push(`<path d="M${sa},${yA + 18} L${Math.max(sa + 2.5, sb)},${yA + 18} L${x1},${yB - 7} L${x0},${yB - 7} Z" fill="var(--accent)" fill-opacity=".10"/>`);
+  o.push(txt(x1, yB - 12, `×${num(tspan / Math.max(1e-6, s.hiReq - s.lo), 0)}`, "end"));
+  o.push(bar(yB));
+  const hStep = nH <= 140 ? 1 : Math.ceil(nH / 70);
+  for (let i = hStep; i < nH; i += hStep)
+    o.push(`<line x1="${x0 + span * i / nH}" y1="${yB}" x2="${x0 + span * i / nH}" y2="${yB + 15}" stroke="var(--line)" stroke-width=".7"/>`);
+  const cStep = nH <= 48 ? 1 : Math.ceil(nH / 48);
+  for (let i = 0; i < nH; i += cStep)
+    o.push(`<line x1="${x0 + span * (i + .5) / nH}" y1="${yB + 3}" x2="${x0 + span * (i + .5) / nH}" y2="${yB + 12}" stroke="var(--warn)" stroke-width=".9" opacity=".85"/>`);
+  let hIdx = Math.floor(nH / 2);
+  if (s.target != null && s.target >= s.lo && s.target <= s.hi)
+    hIdx = Math.min(nH - 1, Math.floor((s.target - s.lo) / g.hopMhz));
+  const ha = x0 + span * hIdx / nH, hb = x0 + span * (hIdx + 1) / nH;
+  o.push(`<rect x="${ha}" y="${yB - 3}" width="${Math.max(2.5, hb - ha)}" height="21" rx="2" fill="none" stroke="var(--trace)" stroke-width="1.4"/>`);
+  o.push(txt(x0, yB + 28, `${num(s.lo, 1)}`));
+  o.push(txt(x1, yB + 28, `${num(s.hi, 1)} MHz · ${num(nH)} hops of ${num(g.hopMhz, 4)} MHz`, "end"));
+
+  const yC = 144, hc = s.lo + g.hopMhz * (hIdx + .5);
+  o.push(`<path d="M${ha},${yB + 18} L${Math.max(ha + 2.5, hb)},${yB + 18} L${x1},${yC - 7} L${x0},${yC - 7} Z" fill="var(--accent)" fill-opacity=".10"/>`);
+  o.push(txt(x1, yC - 12, `×${num(nH, 0)}`, "end"));
+  o.push(bar(yC));
+  const cw = span * s.crop / 2;
+  o.push(`<rect x="${x0}" y="${yC}" width="${cw}" height="15" fill="var(--bad-soft)"/>`);
+  o.push(`<rect x="${x1 - cw}" y="${yC}" width="${cw}" height="15" fill="var(--bad-soft)"/>`);
+  const kx = x0 + cw, kw = span - 2 * cw, nb = g.kept;
+  const bStep = nb <= 96 ? 1 : Math.ceil(nb / 96);
+  for (let i = bStep; i < nb; i += bStep)
+    o.push(`<line x1="${kx + kw * i / nb}" y1="${yC}" x2="${kx + kw * i / nb}" y2="${yC + 15}" stroke="var(--line)" stroke-width=".6"/>`);
+  const cxm = (x0 + x1) / 2;
+  o.push(`<line x1="${cxm}" y1="${yC - 5}" x2="${cxm}" y2="${yC + 20}" stroke="var(--warn)" stroke-width="1.8"/>`);
+  o.push(txt(cxm, yC - 8, `DC spike · ${num(hc, 4)} MHz`, "middle", "w"));
+  o.push(txt(x0 + cw / 2, yC + 28, "cropped", "middle"));
+  o.push(txt(x1 - cw / 2, yC + 28, "cropped", "middle"));
+  o.push(txt(cxm, yC + 28, `${num(nb)} bins of ${num(g.binKhz, 4)} kHz`, "middle", "k"));
+  svg.innerHTML = o.join("");
+
+  const ratio = Math.round((s.hi - s.lo) * 1000 / g.binKhz);
+  $("mapcap").innerHTML =
+    `Each strip zooms into the one above. One bin is <b>${num(g.binKhz, 4)} kHz</b>, ` +
+    `<b>1/${num(ratio)}</b> of the scan — too fine for one axis, hence the ` +
+    `×${num(tspan / Math.max(1e-6, s.hiReq - s.lo), 0)} and ×${num(nH, 0)} steps. Amber marks ` +
+    `hop centres, where the zero-IF DC spike sits. Pink is the ${num(s.crop * 100, 0)}% of each ` +
+    `hop that <code>-c</code> discards` + (GAPS[s.rx].length ? `, and the PLL gap.` : `.`);
+}
+
+function drawFacts(s) {
+  const [tmin, tmax] = LIMITS[s.rx];
+  const out = [];
+  out.push(["", `${tmin}–${tmax} MHz`, RXLABEL[s.rx] || s.rx]);
+  for (const f of KNOWN) {
+    if (f.b < s.lo || f.a > s.hiReq) continue;
+    const label = f.a === f.b ? `${num(f.a, f.a % 1 ? 2 : 0)}` : `${num(f.a, 0)}–${num(f.b, 0)}`;
+    out.push([f.k || "", label, f.t]);
+  }
+  $("facts").innerHTML = out.map(([k, a, b]) =>
+    `<div class="fact ${k}"><b>${a}</b><span>${b}</span></div>`).join("");
+}
+
+function cells(g, s) {
+  const finish = new Date(Date.now() + s.durS * 1000);
+  const skipped = s.useskip ? Math.min(g.sweeps - 1, Math.ceil(s.skipmin * 60 / s.integ)) : 0;
+  const items = [
+    ["Hops", num(g.hops), "× " + num(g.hopMhz, 4) + " MHz"],
+    ["Sample rate", num(g.rate / 1e6, 6), "MS/s"],
+    ["FFT size", num(g.fft), g.kept + " kept per hop"],
+    ["Actual bin", num(g.binKhz, 4), "kHz"],
+    ["Bins logged", num(g.bins), ""],
+    ["Sweeps", num(g.sweeps), skipped ? `${num(g.sweeps - skipped)} after warm-up` : ""],
+    ["Listening", num(g.listening * 100, 1) + "%", "of each sweep"],
+    ["Listen per frequency", secs(g.perFreq), "ceiling " + secs(g.ceilPerFreq), true],
+    ["Occupancy step", num(100 / Math.max(1, g.sweeps - skipped), 2) + "%", "one sweep"],
+    ["CSV size", num(g.mb, 1), "MB"],
+    ["Retune per sweep", num(g.retune, 2), "s"],
+    ["Finishes", finish.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      finish.toDateString() === new Date().toDateString() ? "today" : "tomorrow"]
+  ];
+  $("read").innerHTML = items.map(([k, v, u, key]) =>
+    `<div class="cell${key ? " key" : ""}"><dt>${k}</dt><dd>${v}${u ? ` <u>${u}</u>` : ""}</dd></div>`).join("");
+  const pct = Math.round(g.listening * 100);
+  $("barL").style.width = pct + "%"; $("barT").style.width = (100 - pct) + "%";
+  $("barL").textContent = pct >= 18 ? pct + "% listening" : "";
+  $("barT").textContent = pct <= 82 ? (100 - pct) + "% retuning" : "";
+}
+
+function flags(g, s) {
+  const out = [], [minF, maxF] = LIMITS[s.rx];
+  if (s.hiReq <= s.lo) out.push(["bad", "Range", "Stop must be above start."]);
+  if (s.lo < minF || s.hiReq > maxF)
+    out.push(["bad", "Tuner", `The ${s.rx.toUpperCase()} covers ${minF}–${maxF} MHz. This range goes outside it.`]);
+  if (s.clamped)
+    out.push(["warn", "Ceiling", `rtl_power stops at ${CEIL} MHz, a signed 32-bit limit. The top is silently clamped from ${num(s.hiReq, 3)}. A range entirely above it writes no file and still exits 0.`]);
+  for (const [a, b] of GAPS[s.rx])
+    if (s.lo < b && s.hiReq > a)
+      out.push(["warn", "PLL gap", `${a}–${b} MHz is this unit's measured lock gap. Hops there record nothing useful; the analyser masks them.`]);
+  if (s.integ < g.retune * 1.2)
+    out.push(["bad", "Dwell", `-i ${s.integ} is under the ${num(g.retune, 1)} s retune floor for ${g.hops} hops. rtl_power misbehaves when a sweep outlasts the interval.`]);
+  else if (g.listening < 0.5)
+    out.push(["bad", "Dwell", `Only ${num(g.listening * 100, 0)}% of the time is spent listening — most of the run is retuning. Fewer hops or a longer -i both fix it.`]);
+  else if (g.listening < 0.75)
+    out.push(["warn", "Dwell", `${num(g.listening * 100, 0)}% listening: ${num(g.retune, 1)} s of every ${s.integ} s sweep is retuning. Doubling -i would reach ${num(100 * (1 - g.retune / (s.integ * 2)), 0)}%. Over 80% is the station norm for long runs.`]);
+  if (g.fft && g.fft <= 32)
+    out.push(["warn", "FFT", `A ${g.fft}-point FFT gives only ${g.kept} bins per hop after crop. Narrow spur lines get averaged into the floor. Halving the bin request would give FFT ${g.fft * 2} at the same hop count and dwell — finer bins cost disk, not time.`]);
+  if (g.sweeps < 10)
+    out.push(["warn", "Sweeps", `${g.sweeps} sweeps is thin for a 20th-percentile floor.`]);
+  if (s.useskip && s.skipmin * 60 >= s.durS)
+    out.push(["bad", "Warm-up", "The warm-up discard is as long as the run."]);
+  if ((s.crop !== 0.25 || s.fir !== 9))
+    out.push(["warn", "Convention", "Crop and FIR differ from 0.25 / 9. Nothing already archived uses these, so this run will have no comparison set."]);
+  if (s.target != null) {
+    let best = null;
+    for (let i = 0; i < g.hops; i++) {
+      const c = s.lo + g.hopMhz * (i + .5), d = Math.abs(c - s.target);
+      if (best === null || d < best.d) best = { d, c };
+    }
+    if (best && best.d * 1000 < g.binKhz * 3)
+      out.push(["bad", "Hop centre", `A hop centre sits at ${num(best.c, 4)} MHz, ${num(best.d * 1000, 1)} kHz from your target. The DC spike there will mask it — shift the start by about half a hop (${num(g.hopMhz / 2, 3)} MHz).`]);
+    else if (best)
+      out.push(["ok", "Hop centre", `Nearest hop centre is ${num(best.c, 4)} MHz, ${num(best.d, 3)} MHz clear.`]);
+  }
+  const span = s.hiReq - s.lo;
+  if (s.analyze && span < 8 && !s.floorwin)
+    out.push(["warn", "Floor window", `The analyser's 2 MHz rolling floor is a large share of a ${num(span, 1)} MHz span. Set Floor MHz to something well under it.`]);
+  const lna = chain.find(m => m.id === "lna");
+  if (s.rx === "v5" && lna && lna.on)
+    out.push(["warn", "LaNA", "The v5 has no bias-tee (0.1 mV measured 2026-10-16), so the LaNA cannot be powered from it. An UNPOWERED LNA is not transparent - it is a lossy, often reflective two-port. Keep it checked only if it is physically still inline, and say 'unpowered' in the name; uncheck it if you took it off the coax."]);
+  const enc = (sdrMod() || {}).enc;
+  if (enc && /cage-?off|open-?bench/i.test(s.tag) && enc !== ENCLOSURES[0])
+    out.push(["warn", "Enclosure", `The tag says the cage is off but the chain records "${enc}".`]);
+  if (enc === ENCLOSURES[0] && /cage-?on/i.test(s.tag))
+    out.push(["warn", "Enclosure", "The tag says the cage is on but the chain records the SDR on the open bench."]);
+  if (!chainText())
+    out.push(["bad", "Chain", "Nothing is connected, so no --chain is emitted and sdr run falls back to whatever station.json last remembered. That is exactly how two runs were mislabelled. Check at least the source, the SDR and the PC."]);
+  if (s.device !== "" && +s.device !== DEVICES[s.rx])
+    out.push(["warn", "Device", `--device ${s.device}, but station.json says the ${s.rx.toUpperCase()} enumerates as index ${DEVICES[s.rx]}. Fine if USB order has since changed — but confirm with rtl_test first, because a wrong index silently records one dongle's data under the other's name.`]);
+  if (s.preset === "gap-probe" && s.rx !== "v5")
+    out.push(["bad", "Wrong receiver", "The gap probe exists because the XTR cannot tune 1095-1240 MHz at all. Switch the receiver to the v5, or pick the baseline profile instead."]);
+  if (s.preset === "baseline") {
+    const [a, b] = LIMITS[s.rx];
+    if (s.lo >= a && s.hiReq <= b && s.lo === 700 && s.hiReq === 1700)
+      out.push(["ok", "Baseline", "700-1700 MHz sits inside both tuners and holds 35 harmonics of 28.8 MHz, so the same test runs on either radio and spur_stats can pair them. Levels never compare across receivers - the family statistic is relative to each run's own median, which does."]);
+  }
+  if (s.rx === "v5" && !isLoad() && !/notch|flamingo|fm filter/i.test(chainText()))
+    out.push(["bad", "FM overload", "The v5 has no FM notch in this chain. Measured 2026-10-16: broadcast FM drove it to +3.8 dB, essentially ADC full scale, and it decoded zero ADS-B frames at any gain while the XTR pulled 1856/min. A v5 run without a notch measures the chain, not the band."]);
+  if (isLoad())
+    out.push(["ok", "Terminated", "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with sdr adsb-check for the sensitivity half, or the characterisation is incomplete."]);
+  if (isLoad() && !/term/i.test(s.tag))
+    out.push(["warn", "Tag", "The source is a 50 ohm load but the tag does not say so. archive.py reads the tag to flag terminated runs, and a mislabelled one pollutes every later comparison."]);
+  if (!isLoad() && /term/i.test(s.tag))
+    out.push(["warn", "Tag", "The tag says terminated but the antenna is connected."]);
+  $("flags").innerHTML = out.map(([k, t, m]) => `<div class="flag ${k}"><b>${t}</b><span>${m}</span></div>`).join("");
+}
+
+const fmtMhz = v => (Number.isInteger(v) ? v : +v.toFixed(6)) + "M";
+
+function command(g, s) {
+  const p = PRESETS[s.preset], dur = s.durVal + s.unit, q = t => '"' + t.replace(/"/g, "'") + '"';
+  const cliPreset = p.as || s.preset;
+  const parts = [CMD, cliPreset, dur];
+  if (s.lo !== p.lo || s.hiReq !== p.hi || s.bin !== p.bin || cliPreset === "custom")
+    parts.push("--freq " + fmtMhz(s.lo) + ":" + fmtMhz(s.hiReq) + ":" + s.bin + "k");
+  if (s.gain !== p.gain) parts.push("--gain " + s.gain);
+  if (s.integ !== p.integ) parts.push("--integration " + s.integ);
+  if (!p.rx || s.rx !== p.rx) parts.push("--receiver " + s.rx);
+  if (s.device !== "") parts.push("--device " + s.device);
+  if (s.tag) parts.push("--tag " + s.tag);
+  const ch = chainText(); if (ch) parts.push("--chain " + q(ch));
+  const cond = conditionsText(s); if (cond) parts.push("--conditions " + q(cond));
+  if (s.thresh !== 10) parts.push("--threshold " + s.thresh);
+  if (s.floorwin) parts.push("--floor-window " + s.floorwin);
+  if (s.useskip && s.skipmin > 0) parts.push("--skip-warmup " + s.skipmin);
+  if (s.crop !== 0.25) parts.push("--crop " + s.crop);
+  if (s.fir !== 9) parts.push("--fir " + s.fir);
+  if (!s.analyze) parts.push("--no-analyze");
+  if (s.nonint) parts.push("--non-interactive");
+  const line = parts.join(" ");
+  const after = [];
+  if (!isLoad())
+    after.push("sdr adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));
+  after.push("# archived and flagged " + (isLoad() ? "--terminated" : "--antenna") + " automatically from the chain above");
+  after.push("# compare: sdr compare-runs <before-tag> <after-tag>");
+  return (s.dryfirst ? line + " --dry-run\n" : "") + line + "\n" + after.join("\n");
+}
+
+function tradeoff(s) {
+  const opts = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300];
+  if (!opts.includes(s.integ)) opts.push(s.integ);
+  opts.sort((a, b) => a - b);
+  $("tradeoff").innerHTML = opts.map(i => {
+    const g = geometry(s.lo, s.hi, s.bin, i, s.durS, s.crop), ok = i >= g.retune * 1.2;
+    return `<tr data-i="${i}" class="${i === s.integ ? "now" : ""}" style="${ok ? "" : "opacity:.45"}">
+      <td>-i ${i}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${num(g.sweeps)}</td>
+      <td>${secs(g.perFreq)}</td><td>${num(g.occStep, 2)}%</td><td>${num(g.mb, 1)} MB</td></tr>`;
+  }).join("");
+  $("tradeoff").querySelectorAll("tr").forEach(tr =>
+    tr.onclick = () => { $("integ").value = tr.dataset.i; update(); });
+}
+
+function syncSliders(s) {
+  const [tmin, tmax] = LIMITS[s.rx];
+  for (const id of ["loS", "hiS"]) { $(id).min = tmin; $(id).max = tmax; $(id).step = 1; }
+  $("loS").value = s.lo; $("hiS").value = s.hiReq;
+  // Whichever thumb is in the upper half must sit on top, or it becomes ungrabbable.
+  const mid = (tmin + tmax) / 2;
+  $("loS").style.zIndex = s.lo > mid ? 3 : 2;
+  $("hiS").style.zIndex = s.lo > mid ? 2 : 3;
+  const f = v => 100 * Math.max(0, Math.min(1, (v - tmin) / (tmax - tmin)));
+  $("dsel").style.left = f(s.lo) + "%";
+  $("dsel").style.width = Math.max(0, f(s.hiReq) - f(s.lo)) + "%";
+}
+
+function update() {
+  const s = read();
+  const g = geometry(s.lo, s.hi, s.bin, s.integ, s.durS, s.crop);
+  syncSliders(s); drawMap(g, s); drawFacts(s); cells(g, s); flags(g, s);
+  tradeoff(s); drawChain();
+  $("sweepsIn").value = g.sweeps;
+  $("fp").textContent = `${num(s.lo, 3)}-${num(s.hi, 3)} MHz | ${num(g.binKhz, 4)} kHz | ` +
+    `g${s.gain} | i${s.integ} | c${s.crop} | F${s.fir} | ${s.rx}`;
+  $("condline").textContent = conditionsText(s) || "(nothing recorded)";
+  $("cmd").textContent = command(g, s);
+  try { localStorage.setItem("scanbuild2", JSON.stringify({ s, chains })); } catch (e) {}
+}
+
+function load(s) {
+  $("preset").value = PRESETS[s.preset] ? s.preset : "custom";
+  $("lo").value = s.lo; $("hi").value = s.hiReq ?? s.hi;
+  $("bin").value = s.bin; $("gain").value = s.gain; $("integ").value = s.integ;
+  $("crop").value = s.crop; $("fir").value = s.fir;
+  $("durval").value = s.durVal; $("durunit").value = s.unit; $("receiver").value = s.rx;
+  $("device").value = s.device ?? 0; $("tag").value = s.tag || "";
+  $("target").value = s.target ?? "";
+  $("analyze").checked = s.analyze; $("useskip").checked = s.useskip;
+  $("skipmin").value = s.skipmin; $("thresh").value = s.thresh;
+  $("floorwin").value = s.floorwin ?? "";
+  $("dryfirst").checked = s.dryfirst; $("noninteractive").checked = s.nonint;
+  $("temp").value = s.temp ?? ""; $("humid").value = s.humid ?? "";
+  $("where").value = s.where || "inside"; $("sky").value = s.sky || "";
+  $("notes").value = s.notes || "";
+  fillGains(s.rx, s.gain);   // after the receiver is set, so the right ladder is offered
+}
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  $("lo").value = p.lo; $("hi").value = p.hi; $("bin").value = p.bin;
+  $("gain").value = p.gain; $("integ").value = p.integ;
+  if (p.rx) { $("receiver").value = p.rx; $("device").value = DEVICES[p.rx]; }  // no rx = test profile, runs on whichever radio is set
+  $("durval").value = p.dur[0]; $("durunit").value = p.dur[1];
+  $("floorwin").value = p.fw || "";
+  fillGains(p.rx || $("receiver").value, p.gain);
+  update();
+}
+
+async function boot() {
+  let cfg = null;
+  try { cfg = await (await fetch("/config")).json(); } catch (e) {}
+  if (!cfg) { document.body.insertAdjacentHTML("afterbegin", '<p style="color:var(--bad);padding:12px">Could not load /config from the station server.</p>'); return; }
+  RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "sdr run";
+  $("retunems").textContent = cfg.retune_ms;
+  for (const [rx, r] of Object.entries(cfg.receivers)) {
+    GAINS[rx] = r.gains; LIMITS[rx] = r.range; DEVICES[rx] = r.device; GAPS[rx] = r.gaps; RXLABEL[rx] = r.label;
+    SDR_BASE[rx] = rx.toUpperCase(); CHAIN_OFF[rx] = cfg.chain_off[rx] || []; ENC_DEFAULT[rx] = cfg.enc_default[rx] || "open bench";
+  }
+  $("receiver").innerHTML = Object.entries(RXLABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+  // JavaScript reorders number-like keys ("900") to the front of any object, so the
+  // dropdown and the default preset follow the explicit order the server sends.
+  PRESET_ORDER = cfg.preset_order || Object.keys(cfg.presets);
+  for (const name of PRESET_ORDER) { const p = cfg.presets[name]; PRESETS[name] = { ...p, dur: p.dur || DUR_DEFAULT[name] || [1, "h"] }; }
+  KNOWN = cfg.known || [];
+  CHAIN_BASE = cfg.chain_modules || [];
+  CANON = Object.fromEntries(CHAIN_BASE.map(m => [m.id, m.name]));
+  SRC_ANT = (CHAIN_BASE[0] && CHAIN_BASE[0].name) || "Antenna";
+  curRx = Object.keys(RXLABEL)[0] || "xtr";
+  for (const rx of Object.keys(RXLABEL)) chains[rx] = freshChain(rx);
+  chain = chains[curRx];
+  $("receiver").value = curRx;
+
+$("preset").innerHTML = PRESET_ORDER.map(k => [k, PRESETS[k]])
+  .map(([k, p]) => `<option value="${k}">${k} — ${p.note}</option>`).join("");
+fillGains(curRx, 29);
+
+const first = PRESETS[PRESET_ORDER[0]] || { lo: 100, hi: 200, bin: 50, gain: 29, integ: 120 };
+const DEFAULTS = {
+  preset: PRESET_ORDER[0] || "custom", lo: first.lo, hiReq: first.hi, bin: first.bin, gain: first.gain, integ: first.integ, crop: 0.25, fir: 9,
+  durVal: 1, unit: "h", rx: curRx, device: String(DEVICES[curRx] ?? 0), tag: "", target: "",
+  analyze: true, useskip: true, skipmin: 16, thresh: 10, floorwin: "",
+  dryfirst: true, nonint: false, temp: "", humid: "", where: "inside", sky: "", notes: ""
+};
+let saved = null;
+try { saved = JSON.parse(localStorage.getItem("scanbuild3") || "null"); } catch (e) {}
+load(saved && saved.s && saved.s.lo ? saved.s : DEFAULTS);
+if (saved && saved.chains) {
+  for (const rx of Object.keys(RXLABEL))
+    if (Array.isArray(saved.chains[rx]) && saved.chains[rx].length) chains[rx] = normaliseEnc(saved.chains[rx], rx);
+} else if (saved && Array.isArray(saved.chain) && saved.chain.length) {
+  const oldRx = saved.s && RXLABEL[saved.s.rx] ? saved.s.rx : curRx;
+  chains[oldRx] = normaliseEnc(saved.chain, oldRx);   // pre-v12 single chain
+}
+curRx = $("receiver").value; chain = chains[curRx]; syncSdrName(curRx);
+
+$("preset").addEventListener("change", () => applyPreset($("preset").value));
+// Switching receiver re-offers that tuner's gains, keeping the nearest to what was set.
+$("receiver").addEventListener("change", () => {
+  const rx = $("receiver").value;
+  fillGains(rx, +$("gain").value);
+  $("device").value = DEVICES[rx];   // stale index = one dongle recorded under the other's name
+  curRx = rx; chain = chains[rx]; syncSdrName(rx);   // same rig, different dongle fitted
+  update();
+});
+if (!saved || !saved.s || !saved.s.lo) applyPreset($("preset").value);
+document.querySelectorAll("input, select, textarea").forEach(el => {
+  if (el.id !== "preset" && el.id !== "sweepsIn" && el.type !== "range")
+    el.addEventListener("input", update);
+});
+// Sweeps drives duration rather than being a second source of truth. Minutes carry
+// decimals because the duration parser accepts them, so an exact sweep
+// count never has to be rounded away.
+$("sweepsIn").addEventListener("input", () => {
+  const n = +$("sweepsIn").value, i = +$("integ").value || 1;
+  if (!n || n < 1) return;
+  const sec = n * i;
+  if (sec % 3600 === 0) { $("durunit").value = "h"; $("durval").value = sec / 3600; }
+  else { $("durunit").value = "m"; $("durval").value = +(sec / 60).toFixed(2); }
+  update();
+});
+$("loS").addEventListener("input", () => {
+  const v = +$("loS").value, [, tmax] = LIMITS[$("receiver").value];
+  if (v >= +$("hi").value) $("hi").value = Math.min(tmax, v + 1);
+  $("lo").value = v; $("preset").value = "custom"; update();
+});
+$("hiS").addEventListener("input", () => {
+  const v = +$("hiS").value, [tmin] = LIMITS[$("receiver").value];
+  if (v <= +$("lo").value) $("lo").value = Math.max(tmin, v - 1);
+  $("hi").value = v; $("preset").value = "custom"; update();
+});
+$("srcAnt").onclick = () => { chain[0].name = SRC_ANT; chain[0].on = true; update(); };
+$("encBench").onclick = () => setEnclosure(ENCLOSURES[0]);
+$("encCage").onclick  = () => setEnclosure(ENCLOSURES[1]);
+$("encTaped").onclick = () => setEnclosure(ENCLOSURES[2]);
+$("srcLoad").onclick = () => { chain[0].name = SRC_LOAD; chain[0].on = true; update(); };
+// Chain-only reset: unchecking and reordering is easy to do and tedious to undo by hand,
+// and "Reset all" would take the range, duration and conditions down with it.
+$("chainReset").onclick = () => { chain = chains[curRx] = freshChain(curRx); update(); };
+$("addmod").onclick = () => {
+  const v = $("newmod").value.trim();
+  if (!v) return;
+  chain.splice(Math.max(1, chain.length - 1), 0, { id: "x" + Date.now(), name: v, on: true });
+  $("newmod").value = ""; update();
+};
+$("newmod").addEventListener("keydown", e => { if (e.key === "Enter") $("addmod").click(); });
+$("reset").onclick = () => { load(DEFAULTS); chain = chains[curRx] = freshChain(curRx); update(); };
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("cmd").textContent); $("copy").textContent = "Copied"; }
+  catch (e) {
+    const r = document.createRange(); r.selectNodeContents($("cmd"));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $("copy").textContent = "Selected";
+  }
+  setTimeout(() => ($("copy").textContent = "Copy"), 1400);
+};
+let redraw;
+addEventListener("resize", () => { clearTimeout(redraw); redraw = setTimeout(update, 120); });
+update();
+}
+boot();
+</script></body></html>

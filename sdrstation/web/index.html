@@ -1,0 +1,499 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>SDR station</title>
+<style>
+:root{--bg:#0a0e13;--panel:#121a22;--line:#253442;--ink:#dde6ee;--dim:#8599a8;--accent:#4fd3e8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px ui-sans-serif,system-ui,sans-serif}
+header{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:14px;margin:0;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.s{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+.s b{color:var(--accent);font-weight:600}
+main{padding:12px 16px}
+.wrap{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px;margin-bottom:12px}
+.lab{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.key{display:flex;flex-wrap:wrap;gap:6px 15px;margin:-2px 0 8px;font-size:11px;color:var(--dim)}
+.key span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.key i{display:inline-block;width:16px;height:2px;flex:none;border-radius:1px}
+.key i.dash{background:repeating-linear-gradient(90deg,rgba(133,153,168,.65) 0 3px,transparent 3px 7px)}
+.key i.vert{width:2px;height:11px}
+canvas{display:block;width:100%;image-rendering:pixelated}
+#spec{height:190px}
+#fall{height:380px}
+#trend{height:110px}
+.ax{display:flex;justify-content:space-between;font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin-top:4px}
+.xs{position:relative;height:14px;margin-top:3px;font-family:ui-monospace,monospace;font-size:10px;color:var(--dim)}
+.ro{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);margin-top:6px;min-height:16px}
+.ro b{color:var(--accent);font-weight:600}
+canvas{cursor:crosshair}
+.tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.tab{padding:9px 16px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+     cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:5px 5px 0 0;user-select:none}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--accent);background:var(--bg);border-color:var(--line);margin-bottom:-1px}
+.pane{display:none}
+.pane.on{display:block}
+.pick{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
+.pick select{width:auto;min-width:340px;max-width:100%}
+.pick .lv{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ok,#4fcf96)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:right;padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+td{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+tbody tr.go{cursor:pointer}
+tbody tr.go:hover{background:var(--bg)}
+pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;
+       line-height:1.6;color:var(--ink);padding:16px;margin:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px}
+.stale{background:#e8b14f}
+#builder{width:100%;height:calc(100vh - 84px);border:0;background:var(--bg);display:block}
+.note{font-size:12px;color:var(--dim);margin:0 0 8px}
+.term{color:#e8b14f}
+.lv{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4fcf96}
+</style></head><body>
+<header>
+  <h1><span class="dot" id="dot"></span>SDR station</h1>
+  <div class="s" id="file">—</div>
+  <div class="s">sweeps <b id="n">0</b></div>
+  <div class="s">last <b id="last">—</b></div>
+  <div class="s">floor <b id="floor">—</b> dB</div>
+  <div class="s">peak <b id="peak">—</b> dB</div>
+  <div class="s" title="estimated from the clock: rtl_power walks the span once per interval">tuned <b id="cur">—</b></div>
+  <div class="s">left <b id="eta">—</b></div>
+  <div class="s" id="fin"></div>
+  <div class="s" id="meta">—</div>
+</header>
+<div class="tabs">
+  <div class="tab on" data-pane="scan">Scan</div>
+  <div class="tab" data-pane="builder">Builder</div>
+  <div class="tab" data-pane="archive">Archive</div>
+  <div class="tab" data-pane="roadmap">Roadmap</div>
+</div>
+
+<div class="pane on" id="pane-scan">
+<div class="pick">
+  <label for="survey" style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">Survey</label>
+  <select id="survey"></select>
+  <span class="lv" id="islive"></span>
+</div>
+<main>
+  <div class="wrap"><div class="lab">Spectrum — latest sweep, with max-hold</div>
+    <div class="key">
+      <span><i style="background:#4fd3e8;height:3px"></i>latest complete sweep</span>
+      <span><i style="background:rgba(79,211,232,.45)"></i>sweep in progress</span>
+      <span><i style="background:rgba(232,177,79,.55)"></i>max-hold — highest seen at each frequency</span>
+      <span><i class="dash"></i>noise floor</span>
+      <span><i class="vert" style="background:#e8b14f"></i>where the tuner is now</span>
+    </div>
+    <canvas id="spec"></canvas><div class="xs" id="xs"></div>
+    <div class="ro" id="readout">&nbsp;</div></div>
+  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
+    <canvas id="fall"></canvas><div class="xs" id="xf"></div></div>
+  <div class="wrap"><div class="lab">Whole-sweep median — the cage statistic, per sweep</div>
+    <canvas id="trend"></canvas>
+    <div class="ax"><span id="t0">—</span><span id="t1">—</span></div></div>
+</main>
+</div>
+
+<div class="pane" id="pane-builder">
+  <iframe id="builder" title="Scan builder"></iframe>
+</div>
+
+<div class="pane" id="pane-archive">
+  <main>
+    <div class="wrap">
+      <div class="lab">Every survey in surveys/ — click a row to open it on the Scan tab</div>
+      <div style="overflow-x:auto"><table id="arch"><tbody></tbody></table></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">occupancy.db — archived surveys with their comparability fingerprint</div>
+      <p class="note" id="dbnote">loading…</p>
+      <div style="overflow-x:auto"><table id="dbsurveys"><tbody></tbody></table></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Frequencies seen in at least two antenna surveys — the persistent set</div>
+      <div style="overflow-x:auto"><table id="dbseen"><tbody></tbody></table></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-roadmap">
+  <main><div class="wrap"><pre class="md" id="road">loading…</pre></div></main>
+</div>
+
+<script>
+const COLS=1200;
+let rows=[], meds=[], lo=null, hi=null, total=0, have=0, lastBytes=0, stale=0;
+let partial=null, cursorPct=null, hoverPct=null;
+let liveFile=null, curFile=null, surveys=[];
+let FAMILIES=[14.4,28.8,24,25,100];
+fetch('/config').then(r=>r.json()).then(c=>{if(c.readout_families)FAMILIES=c.readout_families;}).catch(()=>{});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// View: a horizontal zoom shared by the spectrum and the waterfall so they stay aligned,
+// plus a history scroll for the waterfall. Frequencies are handled as fractions of the
+// full span (0..1); fx() maps a fraction to a pixel under the current view.
+let view={z:1,c:0.5,top:0,fit:true};
+function vlo(){return Math.max(0,Math.min(1-1/view.z,view.c-0.5/view.z));}
+function vhi(){return vlo()+1/view.z;}
+function fLo(){return lo+vlo()*(hi-lo);}
+function fHi(){return lo+vhi()*(hi-lo);}
+function fx(frac,W){return (frac-vlo())/(vhi()-vlo())*W;}
+function fracAt(p){return vlo()+p*(vhi()-vlo());}
+function clampView(){
+  if(view.z<=1.0001){view.z=1;view.c=0.5;}
+  view.c=Math.max(0.5/view.z,Math.min(1-0.5/view.z,view.c));
+  if(view.top<0)view.top=0;
+  if(rows.length&&view.top>rows.length-1)view.top=rows.length-1;
+}
+function redrawView(){if(lastFloor===null)return;drawSpec(lastFloor,lastSpan);drawFall(lastFloor,lastSpan);readout();}
+
+// magma-ish ramp: dark blue -> magenta -> amber -> white
+const STOPS=[[0,[8,6,22]],[.25,[70,20,90]],[.5,[150,40,100]],[.72,[225,95,70]],[.88,[250,175,90]],[1,[255,245,220]]];
+function cmap(t){t=Math.max(0,Math.min(1,t));
+  for(let i=1;i<STOPS.length;i++){const [b,cb]=STOPS[i];const [a,ca]=STOPS[i-1];
+    if(t<=b){const u=(t-a)/(b-a);return [0,1,2].map(k=>Math.round(ca[k]+(cb[k]-ca[k])*u));}}
+  return STOPS[STOPS.length-1][1];}
+
+function pct(arr,p){const v=arr.filter(x=>x!==null).sort((a,b)=>a-b);
+  return v.length?v[Math.min(v.length-1,Math.floor(p*v.length))]:null;}
+
+function fit(c){const r=c.getBoundingClientRect();
+  if(c.width!==Math.round(r.width)||c.height!==Math.round(r.height)){
+    c.width=Math.round(r.width);c.height=Math.round(r.height);}return c.getContext('2d');}
+
+function ticks(lo,hi){
+  const span=hi-lo;
+  for(const step of [1,2,5,10,20,25,50,100,200,250,500,1000]){
+    if(span/step<=12){const out=[];
+      for(let v=Math.ceil(lo/step)*step;v<=hi;v+=step)out.push(v);
+      return {step,vals:out};}}
+  return {step:span,vals:[lo,hi]};
+}
+
+function grid(x,W,H,tk){
+  x.save();x.strokeStyle='rgba(133,153,168,.14)';x.lineWidth=1;
+  x.fillStyle='rgba(133,153,168,.75)';x.font='10px ui-monospace,Consolas,monospace';
+  for(const v of tk.vals){
+    const px=Math.round(fx((v-lo)/(hi-lo),W))+.5;
+    if(px<0||px>W)continue;
+    x.beginPath();x.moveTo(px,0);x.lineTo(px,H);x.stroke();
+  }
+  x.restore();
+}
+
+function labels(el,tk){
+  el.innerHTML=tk.vals.map(v=>{
+    const pct=fx((v-lo)/(hi-lo),100);
+    if(pct<-1||pct>101)return '';
+    return `<span style="position:absolute;left:${pct}%;transform:translateX(-50%)">${v}</span>`;
+  }).join('');
+}
+
+function drawSpec(floor,span){
+  const c=document.getElementById('spec'),x=fit(c),W=c.width,H=c.height;
+  x.clearRect(0,0,W,H);
+  const tk=ticks(fLo(),fHi());
+  grid(x,W,H,tk);
+  const y=v=>H-4-((v-floor)/span)*(H-10);
+  // dB gridlines every 10 dB above the floor
+  x.save();x.strokeStyle='rgba(133,153,168,.10)';
+  for(let d=0;d<=span;d+=10){x.beginPath();x.moveTo(0,y(floor+d));x.lineTo(W,y(floor+d));x.stroke();
+    x.fillStyle='rgba(133,153,168,.6)';x.font='10px ui-monospace,monospace';
+    x.fillText((floor+d).toFixed(0),3,y(floor+d)-2);}
+  x.restore();
+  for(const [arr,col,w] of [[mh,'rgba(232,177,79,.55)',1],[rows[rows.length-1],'#4fd3e8',1.3]]){
+    if(!arr)continue;
+    x.beginPath();x.lineWidth=w;x.strokeStyle=col;let on=false;
+    for(let i=0;i<COLS;i++){const v=arr[i];if(v===null||v===undefined){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();}
+  if(partial){x.beginPath();x.lineWidth=1;x.strokeStyle='rgba(79,211,232,.45)';let on=false;
+    for(let i=0;i<COLS;i++){const v=partial[i];if(v===null){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();}
+  x.strokeStyle='rgba(133,153,168,.35)';x.setLineDash([3,4]);x.beginPath();
+  x.moveTo(0,y(floor));x.lineTo(W,y(floor));x.stroke();x.setLineDash([]);
+  if(cursorPct!==null){const cx=fx(cursorPct,W);
+    x.strokeStyle='#e8b14f';x.lineWidth=1.5;x.beginPath();x.moveTo(cx,0);x.lineTo(cx,H);x.stroke();
+    x.fillStyle='#e8b14f';x.beginPath();x.moveTo(cx,0);x.lineTo(cx-5,8);x.lineTo(cx+5,8);x.fill();}
+  if(hoverPct!==null){const hx=hoverPct*W;
+    x.strokeStyle='rgba(221,230,238,.6)';x.lineWidth=1;x.beginPath();x.moveTo(hx,0);x.lineTo(hx,H);x.stroke();}
+  labels(document.getElementById('xs'),tk);
+}
+
+let fallImg=null;
+function drawFall(floor,span){
+  const f=document.getElementById('fall'),g=fit(f),FW=f.width,FH=f.height;
+  const img=g.createImageData(FW,FH);
+  const n=Math.min(rows.length,FH);
+  const vl=vlo(),vw=vhi()-vl;
+  for(let ry=0;ry<FH;ry++){
+    // fit mode squeezes every sweep in memory into the canvas; history mode is one
+    // sweep per pixel row, starting view.top sweeps back from the newest.
+    const idx=view.fit?Math.floor(ry/FH*n):view.top+ry;
+    const src=idx<rows.length?rows[rows.length-1-idx]:null;
+    for(let px=0;px<FW;px++){
+      const v=src?src[Math.min(COLS-1,Math.floor((vl+px/FW*vw)*COLS))]:null;
+      const o=(ry*FW+px)*4;
+      const rgb=(v===null||v===undefined)?[18,26,34]:cmap((v-floor)/span);
+      img.data[o]=rgb[0];img.data[o+1]=rgb[1];img.data[o+2]=rgb[2];img.data[o+3]=255;}}
+  fallImg=img;
+  overlayFall();
+}
+
+function overlayFall(){
+  const f=document.getElementById('fall'),g=f.getContext('2d'),FW=f.width,FH=f.height;
+  if(!fallImg)return;
+  g.putImageData(fallImg,0,0);
+  const tk=ticks(fLo(),fHi());
+  g.save();g.strokeStyle='rgba(221,230,238,.13)';g.lineWidth=1;
+  for(const v of tk.vals){const px=Math.round(fx((v-lo)/(hi-lo),FW))+.5;
+    if(px<0||px>FW)continue;
+    g.beginPath();g.moveTo(px,0);g.lineTo(px,FH);g.stroke();}
+  g.restore();
+  const n=view.fit?Math.min(rows.length,FH):Math.max(0,Math.min(FH,rows.length-view.top));
+  const yOf=k=>view.fit?k/n*FH:k;
+  // Sweep boundaries. One line per sweep is readable at 15 sweeps and a solid block at
+  // 180, so thin them to at most ~16 lines and label a subset of those.
+  if(n>1){
+    const step=Math.max(1,Math.ceil(n/16));
+    const labelEvery=step*(n/step>9?2:1);
+    g.save();
+    g.font='9px ui-monospace,Consolas,monospace';
+    g.textBaseline='top';
+    for(let k=0;k<=n;k+=step){
+      const y=Math.round(yOf(k))+.5;
+      g.strokeStyle='rgba(221,230,238,.18)';g.lineWidth=1;
+      g.beginPath();g.moveTo(0,y);g.lineTo(FW,y);g.stroke();
+      const sweep=total-(view.fit?0:view.top)-k;
+      if(sweep<1||k%labelEvery)continue;
+      const txt='#'+sweep;
+      const w=g.measureText(txt).width;
+      g.fillStyle='rgba(10,14,19,.72)';
+      g.fillRect(2,y+1,w+6,11);
+      g.fillStyle='rgba(221,230,238,.78)';
+      g.fillText(txt,5,y+2);
+    }
+    g.restore();
+  }
+  if(cursorPct!==null&&(view.fit||view.top===0)){const cx=fx(cursorPct,FW);
+    g.strokeStyle='rgba(232,177,79,.85)';g.lineWidth=1.5;
+    g.beginPath();g.moveTo(cx,0);g.lineTo(cx,Math.max(1,yOf(1)));g.stroke();}
+  if(hoverPct!==null){const hx=hoverPct*FW;
+    g.strokeStyle='rgba(221,230,238,.55)';g.lineWidth=1;
+    g.beginPath();g.moveTo(hx,0);g.lineTo(hx,FH);g.stroke();}
+  labels(document.getElementById('xf'),ticks(fLo(),fHi()));
+  const vi=document.getElementById('vinfo');
+  if(vi)vi.textContent=(view.z>1?`zoom ${view.z.toFixed(1)}×  ${fLo().toFixed(1)}–${fHi().toFixed(1)} MHz  ·  `:'')
+    +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}`)
+    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · double-click: reset';
+}
+
+let mh=[];
+function draw(){
+  if(!rows.length||lo===null)return;
+  const flat=[].concat(...rows.slice(-40));
+  const floor=pct(flat,.2), top=pct(flat,.999);
+  if(floor===null)return;
+  const span=Math.max(6,top-floor);
+  document.getElementById('floor').textContent=floor.toFixed(2);
+  document.getElementById('peak').textContent=top.toFixed(2);
+  mh=new Array(COLS).fill(null);
+  for(const r of rows)for(let i=0;i<COLS;i++)if(r[i]!==null&&(mh[i]===null||r[i]>mh[i]))mh[i]=r[i];
+  lastFloor=floor;lastSpan=span;
+  drawSpec(floor,span);drawFall(floor,span);trend();
+  readout();
+}
+
+let lastFloor=null,lastSpan=null;
+function redrawLight(){
+  if(lastFloor===null)return;
+  drawSpec(lastFloor,lastSpan);overlayFall();readout();
+}
+
+function readout(){
+  const el=document.getElementById('readout');
+  if(hoverPct===null||!rows.length){el.innerHTML='&nbsp;';return;}
+  const hf=fracAt(hoverPct);
+  const f=lo+hf*(hi-lo);
+  const i=Math.round(hf*(COLS-1));
+  const cur=rows[rows.length-1][i], hold=mh[i];
+  const near=FAMILIES.map(k=>({k,n:Math.round(f/k),d:Math.abs(f-Math.round(f/k)*k)}))
+    .filter(o=>o.d<0.12&&o.n>0).sort((a,b)=>a.d-b.d)[0];
+  el.innerHTML=`<b>${f.toFixed(3)} MHz</b>`
+    +(cur!==null?`  latest <b>${cur.toFixed(1)}</b> dB`:'')
+    +(hold!==null?`  max-hold <b>${hold.toFixed(1)}</b> dB`:'')
+    +(cur!==null&&lastFloor!==null?`  over floor <b>${(cur-lastFloor).toFixed(1)}</b> dB`:'')
+    +(near?`  <span style="color:#e8b14f">≈ ${near.k} MHz × ${near.n}</span>`:'');
+}
+
+function hook(id){
+  const c=document.getElementById(id);
+  let drag=null;
+  c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
+    const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    if(drag!==null&&view.z>1){view.c-=(p-drag)/view.z;drag=p;clampView();hoverPct=p;redrawView();return;}
+    hoverPct=p;redrawLight();});
+  c.addEventListener('mouseleave',()=>{hoverPct=null;drag=null;redrawLight();});
+  c.addEventListener('mousedown',e=>{if(e.button!==0)return;const r=c.getBoundingClientRect();
+    drag=(e.clientX-r.left)/r.width;e.preventDefault();});
+  addEventListener('mouseup',()=>{drag=null;});
+  c.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const r=c.getBoundingClientRect(),p=(e.clientX-r.left)/r.width;
+    const dy=e.deltaY||e.deltaX;            // Chrome turns shift+wheel into deltaX
+    if(e.shiftKey){
+      if(!rows.length)return;
+      view.fit=false;
+      view.top+=(dy>0?1:-1)*Math.max(1,Math.round(Math.abs(dy)/25));
+    }else{
+      const f=fracAt(p);                    // keep the frequency under the mouse still
+      const nz=Math.max(1,Math.min(64,view.z*(dy<0?1.25:1/1.25)));
+      view.z=nz;view.c=f-(p-0.5)/nz;
+    }
+    clampView();redrawView();
+  },{passive:false});
+  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true};redrawView();});
+}
+
+function trend(){
+  if(meds.length<2)return;
+  const c=document.getElementById('trend'),x=fit(c),W=c.width,H=c.height;
+  x.clearRect(0,0,W,H);
+  const lo=Math.min(...meds),hi=Math.max(...meds);
+  // Always show at least a 0.5 dB window, or run-to-run noise looks like a trend.
+  const mid=(lo+hi)/2,half=Math.max(0.25,(hi-lo)/2*1.25);
+  const y=v=>H-6-((v-(mid-half))/(2*half))*(H-12);
+  x.strokeStyle='rgba(133,153,168,.2)';x.lineWidth=1;
+  for(const f of [0,.5,1]){const py=6+f*(H-12);x.beginPath();x.moveTo(0,py);x.lineTo(W,py);x.stroke();}
+  x.beginPath();x.lineWidth=1.6;x.strokeStyle='#4fd3e8';
+  meds.forEach((v,i)=>{const px=meds.length<2?0:i/(meds.length-1)*W;
+    i?x.lineTo(px,y(v)):x.moveTo(px,y(v));});
+  x.stroke();
+  const last=meds[meds.length-1];
+  x.fillStyle='#4fd3e8';x.beginPath();x.arc(W-2,y(last),3,0,7);x.fill();
+  document.getElementById('t0').textContent=(mid-half).toFixed(2)+' dB';
+  document.getElementById('t1').textContent='now '+last.toFixed(3)+' dB  ·  spread '+(hi-lo).toFixed(3)+' dB';
+}
+
+function fmt(s){if(s===null||s===undefined)return '—';
+  const m=Math.floor(s/60);return m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'m';}
+
+function resetView(){
+  view={z:1,c:0.5,top:0,fit:true};
+  rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
+  fallImg=null;lastFloor=null;mh=[];
+  for(const id of ['n','last','floor','peak','cur','eta'])document.getElementById(id).textContent='—';
+}
+
+async function loadSurveys(){
+  try{
+    const d=await (await fetch('/surveys')).json();
+    liveFile=d.live;surveys=d.surveys;
+    if(!curFile)curFile=liveFile;
+    const sel=document.getElementById('survey');
+    sel.innerHTML=surveys.map(s=>{
+      const bits=[s.receiver?s.receiver.toUpperCase():null,s.gain!=null?('g'+s.gain):null,
+                  s.integ!=null?('i'+s.integ):null,s.mb+' MB'].filter(Boolean).join(' · ');
+      return `<option value="${s.name}"${s.name===curFile?' selected':''}>${s.name} — ${bits}</option>`;
+    }).join('');
+    document.getElementById('arch').innerHTML=
+      '<thead><tr><th>Survey</th><th>Rx</th><th>Gain</th><th>Integ</th><th>Sweeps</th><th>Range MHz</th><th>MB</th></tr></thead><tbody>'
+      +surveys.map(s=>`<tr class="go" data-f="${esc(s.name)}"><td>${esc(s.name)}${s.name===liveFile?' <span class="lv">live</span>':''}</td>`
+        +`<td>${s.receiver?s.receiver.toUpperCase():'—'}</td><td>${s.gain??'—'}</td><td>${s.integ??'—'}</td>`
+        +`<td>${s.sweeps??'—'}</td><td>${s.lo!=null?s.lo+'–'+s.hi:'—'}</td><td>${s.mb}</td></tr>`).join('')
+      +'</tbody>';
+    document.querySelectorAll('#arch tr[data-f]').forEach(tr=>tr.onclick=()=>{
+      curFile=tr.dataset.f;document.getElementById('survey').value=curFile;
+      resetView();showPane('scan');});
+  }catch(e){}
+}
+
+async function loadArchive(){
+  try{
+    const d=await (await fetch('/archive')).json();
+    const note=document.getElementById('dbnote');
+    if(!d.db){note.textContent='No occupancy.db yet. It is created by `sdr archive add --all` or automatically after each `sdr run`.';}
+    else note.textContent=d.surveys.length+' archived survey(s) in '+d.db+(d.error?'  ('+d.error+')':'');
+    document.getElementById('dbsurveys').innerHTML=
+      '<thead><tr><th>Survey</th><th>Started</th><th>Sweeps</th><th>Signals</th><th>Floor dB</th><th>Fingerprint</th></tr></thead><tbody>'
+      +d.surveys.map(s=>`<tr><td>${esc(s.name)}${s.terminated?' <span class="term">terminated</span>':''}</td>`
+        +`<td>${esc((s.started||'').slice(0,16))}</td><td>${s.sweeps??'—'}</td><td>${s.n??'—'}</td>`
+        +`<td>${s.median_floor_db??'—'}</td><td style="text-align:left">${esc(s.fingerprint)}</td></tr>`).join('')
+      +'</tbody>';
+    document.getElementById('dbseen').innerHTML=
+      '<thead><tr><th>MHz</th><th>Runs</th><th>Avg SNR</th><th>Avg occ %</th><th>Tags</th></tr></thead><tbody>'
+      +d.seen.map(r=>`<tr><td>${Number(r.f).toFixed(2)}</td><td>${r.n}</td><td>${r.snr}</td><td>${r.occ}</td>`
+        +`<td style="text-align:left;white-space:normal">${esc(r.tags||'')}</td></tr>`).join('')
+      +'</tbody>';
+  }catch(e){}
+}
+
+function showPane(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.pane===name));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='pane-'+name));
+  if(name==='scan')setTimeout(draw,0);        // canvases size to zero while hidden
+  if(name==='builder'){const f=document.getElementById('builder');if(!f.src)f.src='/builder';}
+  if(name==='archive')loadArchive();
+  try{localStorage.setItem('sdr-pane',name);}catch(e){}
+}
+
+async function tick(){
+  try{
+    const r=await fetch('/data?since='+have+(curFile?'&file='+encodeURIComponent(curFile):''));
+    if(r.status===404){setTimeout(tick,5000);return;}   // no survey yet
+    const d=await r.json();
+    if(d.live&&d.live!==liveFile){
+      // The server moved to a newer CSV. Follow it if we were watching live;
+      // leave a deliberately chosen archive file alone.
+      const wasLive=(!curFile||curFile===liveFile);
+      liveFile=d.live;
+      if(wasLive){curFile=liveFile;resetView();loadSurveys();setTimeout(tick,500);return;}
+    }
+    if(curFile&&d.file!==curFile){setTimeout(tick,500);return;}   // response for a file we left
+    if(d.lo!==null){lo=d.lo;hi=d.hi;}
+    document.getElementById('file').textContent=d.file;
+    if(d.rows.length){rows=rows.concat(d.rows);meds=meds.concat(d.medians||[]);
+      have=d.from+d.rows.length;
+      if(rows.length>400){rows=rows.slice(-400);meds=meds.slice(-400);}}
+    partial=d.partial||null;
+    cursorPct=(d.cursor_pct===null||d.cursor_pct===undefined)?null:d.cursor_pct;
+    document.getElementById('cur').textContent=d.cursor?('~'+d.cursor.toFixed(0)+' MHz'):'—';
+    document.getElementById('eta').textContent=fmt(d.eta_s);
+    const m=d.meta||{};
+    const fin=m.finished_local;
+    document.getElementById('fin').textContent=fin?('finished '+String(fin).slice(11,16)):'';
+    document.title=(fin?'done · ':'')+'SDR station';
+    document.getElementById('islive').textContent=(curFile===liveFile)?'live':'';
+    document.getElementById('meta').textContent=
+      [m.receiver?m.receiver.toUpperCase():null,
+       m.gain_db!=null?('g'+m.gain_db):null,
+       m.integration_s!=null?('i'+m.integration_s):null,
+       d.expected?('of '+d.expected+' sweeps'):null].filter(Boolean).join('  ');
+    total=d.total;
+    document.getElementById('n').textContent=total;
+    // Only overwrite when a sweep actually completed - otherwise every poll between
+    // sweeps blanks it, since the payload is incremental and returns no stamps.
+    if(d.stamps.length)document.getElementById('last').textContent=d.stamps[d.stamps.length-1].slice(11);
+    stale=(d.bytes===lastBytes)?stale+1:0;lastBytes=d.bytes;
+    document.getElementById('dot').className='dot'+(stale>6?' stale':'');
+    draw();
+  }catch(e){}
+  setTimeout(tick,2500);
+}
+addEventListener('resize',draw);
+hook('spec');hook('fall');
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showPane(t.dataset.pane));
+document.getElementById('survey').onchange=e=>{curFile=e.target.value;resetView();};
+fetch('/roadmap').then(r=>r.text()).then(t=>document.getElementById('road').textContent=t)
+  .catch(()=>document.getElementById('road').textContent='TOOL_ROADMAP.md not found');
+loadSurveys();
+setInterval(loadSurveys,30000);
+tick();
+let startPane='scan';
+try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}
+if(startPane!=='scan')showPane(startPane);
+</script></body></html>
