@@ -263,6 +263,54 @@ for the noise generator to settle before any 2 GHz antenna is built. See CLAUDE.
 
 ---
 
+## Block E - antenna outside the window, A/B/A (2026-10-20)
+
+**DONE 2026-10-20.** Outside is worth **3-5 dB** in the bands that carry signals (5-6 with the
+extension's loss added back), nothing on the digital floor. Low-E glass **refuted** (would have
+been 9+ dB). The control ran the right way: A2 came in 0.7-1.7 dB below A1 (morning
+quietening), and B2 still beat both. The 1799.98 MHz reference carrier faded from -13 to -35 dB
+across the morning on its own and is **retired as a yardstick** until it returns; use the
+1930-1990 downlink block median and the 1241-1341 block. Decision: build a permanent outside
+mount with the notch and LaNA outside in a weatherproof box, no cable ahead of the amplifier;
+until then the inside position stands. Full table in CLAUDE.md.
+
+The antenna has always sat on the inside face of the glass. Modern retrofit windows often carry
+a low-E coating, a metallic oxide film that attenuates radio by 10-30 dB at GHz frequencies. If
+this window has one, moving the antenna outside is the largest gain available to the station. The
+nylon or fiberglass screen is an insulator and invisible to radio; check it with a multimeter on
+continuity across the mesh (open = insulator) before blaming it for anything.
+
+Three 30 min blocks at the LS fingerprint, g29, `--skip-warmup 10`, whips at 60 mm throughout,
+notch and LaNA staying inside on the sill. Only the antenna's position changes between blocks.
+A/B/A because the busy bands are diurnal and the morning is their peak; the bracket separates
+"moved outside" from "the hour changed".
+
+| Block | Antenna | Tag |
+|---|---|---|
+| A1 | inside, on the glass as always | `window-A1-inside` |
+| B | outside the sash, short coax through the gap to the notch | `window-B-outside` |
+| A2 | back inside, same spot | `window-A2-inside` |
+
+**Predictions, on record:**
+
+- **1799.98 MHz carrier, median over sweeps.** Low-E glass: B rises **10 dB or more** over A1.
+  Plain glass: **1-2 dB**, from clearing the frame and the wall.
+- **Busy-band floors** (1241-1541, 1941-2041): rise with the carrier, because those bands are
+  external-noise-limited. **Digital-floor bands** (1841-1941, 2041-2109): do not move.
+- **A2 returns to within 0.5 dB of A1** on the carrier (the handling floor; the antenna is
+  remounted). If A1 and A2 disagree by more, the bracket failed and B is uninterpretable.
+
+**Amendment before B ran:** block B needed a 3 ft coax extension between the antenna and the
+notch so the notch and LaNA could stay secured at the window. That is loss AHEAD of the
+amplifier, about 1 dB at 1.8 GHz, which comes straight off the carrier. Amended: low-E glass
+still shows as **9 dB or more**; plain glass now lands **within 1 dB of A1 either way**, which
+would be ambiguous and need a repeat with a 1 ft pigtail.
+
+Read with `compare_runs.py window-A1-inside window-B-outside --family 14.4 --handling handled`,
+the same for A1 vs A2, and `archive.py trend 1799.98`.
+
+---
+
 ## Rules that apply to every run
 
 - Check the device index first. USB order is not guaranteed: `.\rtl-sdr\rtl_test.exe`

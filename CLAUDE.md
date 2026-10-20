@@ -492,6 +492,67 @@ test signal for the cage.
 A persistent state change in the room or the PC, still unidentified. It did not move the aggregate
 statistics, which is why the A1/A2 control still passed.
 
+### Antenna outside the window, A/B/A (2026-10-20, 07:28-11:00): worth 3-5 dB, and the glass is not low-E
+
+Block E. Three 30 min blocks at the LS fingerprint, g29, 10 analysed sweeps each after a 10 min
+discard: `window-A1-inside` 07:28, `window-B2-outside` ~09:30, `window-A2-inside` ~10:30.
+Whips 60 mm throughout, 90 deg L (mirror-flipped outside, so still one vertical and one
+horizontal element), notch and LaNA on the sill in both positions. Outside needed a **3 ft coax
+extension ahead of the notch**, about 1 dB of pre-amplifier loss, recorded before the run. A
+first outside block (`window-B-outside`, 08:26) is contaminated: the suction cup let go on dusty
+glass part way through and the antenna slid down the window; its whole-sweep level wandered
+0.8 dB and it is superseded by B2, which held to 0.08 dB.
+
+**The reference carrier failed as a yardstick.** 1799.98 MHz read -13.1 dB on 2026-10-19
+evening, -18.8 during A1, -31.1 during B and -34.9 during B2, and it fell 3 dB *within* A1 with
+nothing touched. After a week at -16.6 +/- 0.3 the emitter itself has faded; it is out of this
+comparison and should not be used as a reference until it returns. Use the PCS downlink block
+median (1930-1990 MHz, base stations, always on) and the 1241-1341 block instead.
+
+**The control is the interesting half.** A2 came in 0.7-1.7 dB *below* A1 in every block from
+1241 to 1841 MHz and within 0.4 dB above 1841: the morning quietening the 16 h diurnal survey
+recorded (peak at 08:00, falling through late morning). So the hour was working *against* the
+outside result - B2, sitting between A1 and A2 in time, should have read lower than A1 if nothing
+else had changed. It read higher than both.
+
+| Block | A1 inside | A2 inside | mean inside | B2 outside | outside minus inside |
+|---|---|---|---|---|---|
+| 1241-1341 | -30.42 | -31.36 | -30.89 | -25.98 | **+4.9** |
+| 1341-1441 | -33.04 | -34.67 | -33.86 | -30.98 | +2.9 |
+| 1441-1541 | -31.86 | -33.58 | -32.72 | -29.48 | +3.2 |
+| 1541-1641 | -35.57 | -36.96 | -36.27 | -35.39 | +0.9 |
+| 1641-1741 | -35.42 | -36.70 | -36.06 | -35.56 | +0.5 |
+| 1741-1841 | -36.68 | -37.42 | -37.05 | -36.98 | +0.1 |
+| 1841-1941 (digital floor) | -37.24 | -37.64 | -37.44 | -36.97 | +0.5 |
+| 1941-2041 (PCS downlink) | -34.12 | -34.20 | -34.16 | -32.42 | +1.7 |
+| 2041-2141 | -37.54 | -37.94 | -37.74 | -36.96 | +0.8 |
+| 2141-2147 (AWS downlink) | -36.31 | -36.46 | -36.39 | -31.56 | **+4.8** |
+| whole-band median | -34.86 | -36.06 | -35.46 | -34.02 | +1.4 |
+
+PCS downlink 1930-1990 per sweep: A1 -28 to -30, B2 **-23 to -25**, A2 -28 to -30. Straight
+up outside, straight back inside.
+
+**Verdict against the predictions.** Low-E glass (9 dB or more): **refuted**. Plain glass
+(1-2 dB): **exceeded**. Outside is worth **3-5 dB in the bands that carry signals**, 5-6 dB
+once the extension's loss is added back, and essentially nothing where the floor is the
+converter's. A thin metallic coating would have shown 10 dB and did not, so the loss is the
+frame, the wall and the room, not a film on the glass.
+
+**What 3-5 dB buys, honestly.** In bands where the floor is received noise (1241-1541, the
+downlinks) signals and floor rise together and detection SNR does not improve, though more and
+stronger signals appear (detections 14 -> 22, strongest -16.9 -> -9.6 dB). In bands sitting on
+the digital floor (most of 1541-1941 and 2041-2110) a signal gains the full amount while the
+floor stays put, which is a real sensitivity gain exactly where the station is weakest. The cost
+is overload margin: the strongest signal outside reached -9.6 dB at g29.
+
+**Decision.** A permanent outside mount is worth building, but not with 3 ft of cable ahead of
+the amplifier: the LaNA and notch go outside with the antenna in a small weatherproof box, bias-tee
+powered as now, and the 3 ft coax then carries amplified signal, where its loss costs nothing.
+Suction cups on sun-warmed glass are not a mount. Until then the inside position stands.
+
+Seen outside and not inside: 1435.92 MHz (aeronautical telemetry band, 1435-1525), -11.8 dB in
+B and -20.0 in B2, 80-90% on, varying like a moving emitter; 1489.91 MHz, same band, -18.7.
+
 ### 2 GHz positive control (2026-10-19, 23:52): the XTR hears the cellular downlink at 2.1 GHz, weakly
 
 `deep-2049-awscontrol-g42`, `2049M:2148M:25k -g 42 -i 30`, 1 h, 100 sweeps analysed, 21.8 kHz
