@@ -1,0 +1,25 @@
+# Raw data and generated output stay out of git: they are large, and the
+# raw CSVs are the one thing never to lose, so they are backed up separately.
+surveys/
+reports/
+recordings/
+occupancy.db
+
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build output from PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Third-party binaries: the RTL-SDR Blog Windows release. Download it from
+# https://github.com/rtlsdrblog/rtl-sdr-blog/releases and unzip into rtl-sdr/
+rtl-sdr/
+
+# Scratch output from rtl_test
+rtl_devices.txt
+rtl_err.txt

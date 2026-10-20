@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "live-view",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["tools/live_view.py"],
+      "port": 8731
+    }
+  ]
+}

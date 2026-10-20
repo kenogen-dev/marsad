@@ -1,0 +1,271 @@
+# Run sheet
+
+The order to do things in. Depth and reasoning live in `BASELINE_PROTOCOL.md`; this is the
+checklist. Every run is 1 hour unless it says otherwise.
+
+**Fingerprint for the whole v5 programme:** `700.000-1700.000 MHz | 43.6758 kHz | g29.7 | i120 | c0.25 | F9 | v5`
+Anything that does not match it is not comparable.
+
+---
+
+## Done — the v5 terminated programme is CLOSED (2026-10-18)
+
+**Reference run: `casc4-noferrite`.** Whole-band median **-35.76 dB**, floor flat within 0.3 dB
+across 1620-1700, replicated against `cyc8-usb6-white` to **0.21 dB** in every 10 MHz block.
+Compare all future v5 work against it.
+
+| # | Run | Result |
+|---|---|---|
+| 0 | USB gate | clean, 0 lost/million, v5 = device 0 |
+| 1 | **A1** `baseline-term` | median **-35.890**, family **+4.92** (n=35, SE 0.63) |
+| 2 | **B1** `cage-on-untaped` | median -35.360. Read as a cage effect; later shown to be the faulty cable |
+| 3 | **A2** `cage-off-2` | median -35.840. **Control passes** (+0.050 vs A1) |
+| 4 | `overnight-noprinter` | printer exonerated; handling costs 20x more than time |
+| 5-10 | `cyc1`…`cyc6` | three in/out cycles, stub removal, lid off, 12 in cable |
+| 11 | `cyc8-usb6-white` | **faulty 6 in USB cable identified** (~5 dB at 1670-1680) |
+| 12 | `casc2-jumper` | SMA bulkhead + jumper add **+0.010 dB** — nothing |
+| 13 | `casc3-replicate` | jumper removed, hump stayed — jumper innocent |
+| 14 | **`casc4-noferrite`** | **ferrites off: 1670-1690 drops 1.3 dB.** Baseline clean |
+
+**Three build rules came out of it:**
+
+1. **No ferrite chokes on cables inside the enclosure.** Measured +1.3 dB at 1670-1690.
+   External chokes are unmeasured and stay.
+2. **No interior copper lining.** It only increased coupling to the faulty cable.
+3. **Fewer parts by default.** Five shielding interventions measured: three exactly zero, two
+   actively worse, none beneficial. Each addition needs a measurement earning its place.
+
+**Standing analysis rule:** exclude 700-800 MHz from every family statistic on this receiver.
+720 MHz has ranged +8.3 to +32.7 dB above the band median across fourteen runs and produced one
+spurious 3.2 sigma result. Use `compare_runs.py --exclude 700 800`, or read the block table.
+
+---
+
+## ~~Block A~~ - DONE, but superseded
+
+> Ran 2026-10-17. Its headline cage effect was the faulty USB cable, not the cage.
+> **B2 (seam taped) was never run** - that question is still open. Kept below for
+> the audit trail.
+
+### Block A as written
+
+Load stays on the SMA throughout. Nothing changes but where the dongle sits.
+
+### 2. B1 - cage on, seam NOT taped  &larr; next
+
+Put the v5 in the cage. Lid screws only. Everything else untouched.
+
+**Orientation: logo-up, matching A1** - rotated 180 about the SMA-USB axis from the normal
+cage install. No v5 cage run has ever been done, so there is no legacy orientation to match;
+the only requirement is that all four blocks agree. Check the foam still presses firmly on
+the thermal pad in the flipped position before closing up.
+
+```
+py tools/run_survey.py custom 1h --freq 700M:1700M:50k --gain 29.7 --receiver v5 --device 0 --tag cage-on-untaped --chain "50 ohm load > v5 (in cage) > 6 in USB extension > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC" --conditions "night, clear, 29C inside, 37% RH, v5 logo-up (rotated 180 about the SMA-USB axis from the normal cage install), printer powered but idle inches from dongle, monitors and PC on, TV on, box-fan on, BT headphones connected to PC playing audio" --skip-warmup 16 --non-interactive
+```
+
+### 3. A2 - cage off again
+
+Dongle back out to the **taped spot, logo-up**, same as A1. Lid off, cage body stays put, the
+internal extension stays plugged into the bulkhead and reaches out of the open box. Printer
+unchanged. Run it straight after B1 - the bracket only works while drift is still roughly linear.
+
+```
+py tools/run_survey.py custom 1h --freq 700M:1700M:50k --gain 29.7 --receiver v5 --device 0 --tag cage-off-2 --chain "50 ohm load > v5 (open bench) > 6 in USB extension > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC" --conditions "night, clear, 29C inside, 37% RH, v5 logo-up on the marked spot beside the cage, printer powered but idle inches from dongle, monitors and PC on, TV on, box-fan on" --skip-warmup 16 --non-interactive
+```
+
+### 4. B2 - cage on, seam taped
+
+Back in the cage, tape over the seam. Chain `(in cage, seam taped)`, tag `cage-on-taped`.
+
+**Reading it** (`py tools/spur_stats.py <A>/bins.csv <B>/bins.csv --family 14.4`):
+
+- **A1 vs A2** within ~0.5 dB &rarr; drift and position are controlled, the rest is trustworthy.
+  Further apart &rarr; the room or the placement is moving more than the effect we are hunting.
+- **mean(A1,A2) vs B1** = the shielding effect. Never measured here before.
+- **B1 vs B2** = does the seam leak. B2 is the upper bound on what any gasket could achieve.
+
+---
+
+---
+
+## ~~Block A2~~ - DONE 2026-10-17
+
+> Three cycles run. They did not settle the cage question, because the faulty cable
+> was in the box for every `on` block. They did establish the handling error term,
+> which turned out to matter more.
+
+### Block A2 as written
+
+**Why again:** the first A/B/A gave a significant cage effect (-1.07 dB family, +0.5 dB floor) but
+rests on **one** in/out cycle, and handling between runs is the dominant error term (3.4 dB per-line
+scatter vs 0.16 dB when nothing is touched). Three cycles triples that sample.
+
+**Thermal is refuted** - B1's floor was already 0.8 dB high at sweep 1, before anything could warm
+up, and every run settles *downward*. Do not modify the cage. Freeze the hardware for the series.
+
+30-minute blocks, `--skip-warmup 10` (the settle is done by ~sweep 5). Same fingerprint as every
+other v5 run, so these stay comparable to A1/B1/A2. Alternate strictly:
+
+| # | Tag | Dongle |
+|---|---|---|
+| 1 | `cyc1-off` | bench, taped spot, logo-up |
+| 2 | `cyc1-on` | in cage, seam untaped |
+| 3 | `cyc2-off` | bench |
+| 4 | `cyc2-on` | in cage |
+| 5 | `cyc3-off` | bench |
+| 6 | `cyc3-on` | in cage |
+
+Only the tag and the `(open bench)` / `(in cage)` wording change between them:
+
+```
+py tools/run_survey.py custom 30m --freq 700M:1700M:50k --gain 29.7 --receiver v5 --device 0 --tag cyc1-off --chain "50 ohm load > v5 (open bench) > 6 in USB extension > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC" --conditions "<daytime room state>" --skip-warmup 10 --non-interactive
+```
+
+```
+py tools/run_survey.py custom 30m --freq 700M:1700M:50k --gain 29.7 --receiver v5 --device 0 --tag cyc1-on --chain "50 ohm load > v5 (in cage) > 6 in USB extension > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC" --conditions "<daytime room state>" --skip-warmup 10 --non-interactive
+```
+
+Then repeat both with `cyc2-` and `cyc3-`.
+
+**Reading it:** the three `off` blocks estimate the handling scatter directly; the three `on`
+blocks give three independent cage measurements. The spread *between* the three cage numbers is
+the real error bar - the across-line SE within any one comparison cannot see a shift that moves
+all lines together.
+
+## ~~Block B~~ - DONE for the v5, 2026-10-18
+
+> Answered: **nothing measurable.** The SMA bulkhead and 6 in jumper together move
+> the whole-band median by +0.010 dB. The open question below is resolved - the v5
+> is standalone, so steps 7-9 do not exist for it until the antenna goes on.
+
+### Block B as written
+
+The load moves one element further from the dongle each time. Settings never change.
+
+| # | Load sits at | Tag |
+|---|---|---|
+| 5 | v5 SMA, best enclosure from Block A | `casc-1-sdr` |
+| 6 | far end of the 6 in extension | `casc-2-ext` |
+| 7 | far end of the 8 ft coax | `casc-3-coax` |
+| 8 | notch input *(once the second filter arrives)* | `casc-4-notch` |
+| 9 | **antenna connected** | `casc-5-antenna` |
+
+> **Open question before Block B starts:** is the v5 on the bench actually plumbed into the
+> window run (8 ft coax, SMA bulkhead), or is it standalone with nothing on its SMA but the
+> load? If standalone, steps 6-7 do not exist for the v5 and the cascade is shorter.
+
+> **No LaNA step on the v5.** It is powered by the XTR's bias-tee and the v5 has none, so the
+> v5 cascade has no amplifier stage. The XTR's cascade does.
+
+---
+
+## Block C - NEXT, blocked on the second FM notch
+
+> Everything runnable without new parts is done. This block needs the antenna back
+> on the v5, and step 11 needs the notch. **Run step 10 (P6) BEFORE fitting the
+> notch** or the two variables move together.
+
+### Block C as written
+
+Only reachable once step 9 above is done, because everything before it is terminated.
+
+### 10. P6 - ADS-B with NO notch
+
+Both dongles connected. Run the control first so you know there is traffic.
+
+```
+py tools/adsb_check.py --seconds 60 --gain 29   --device 1 --label "XTR control"
+py tools/adsb_check.py --seconds 60 --gain 40.2 --device 0 --label "v5 no-notch P6"
+```
+
+**Prediction:** v5 still reads ~zero. If frames appear, USB was the original cause and the
+overload diagnosis was wrong. **Do this before the notch goes on** - the filter can wait in a
+drawer as long as it takes.
+
+### 11. Fit the notch, repeat
+
+Same two commands. Frames appearing now = overload confirmed, and the chain is fixed.
+
+### 12. The clean comb test
+
+With antenna + notch (no overload, real signals present), re-run the survey and check
+1190-1210 MHz. **If the 604.2 kHz comb is there, it is genuinely external.** This is the only
+configuration that can settle it - the terminated run could not, because removing the antenna
+removed the overload too.
+
+---
+
+## Block D - COMPLETE 2026-10-19
+
+### Block D as written
+
+Needs the DC block (its bias-tee is always on; a bare load shorts it). Same structure, with
+an LaNA step added, and run at the **LS fingerprint** so it ties to the three existing
+terminated runs.
+
+**Fingerprint for the XTR cascade:** `1241.000-2147.484 MHz | 43.7154 kHz | g29 | i120 | c0.25 | F9 | xtr`
+(the LS range at `-i 120`). Reference run: **`xtr-alu-baseline`**, whole-band median **-38.160 dB**.
+
+| # | Load sits at | Tag | Result |
+|---|---|---|---|
+| 1 | outside of the SMA bulkhead, XTR direct on USB bulkhead | `xtr-alu-baseline` | median **-38.160**, floor flat to 0.20 dB over 900 MHz, 7 detections all clock harmonics. **Reference.** |
+| 2 | far end of the 3 ft RG316 coax, at the window | `xtr-casc2-coax` | **+0.020 dB**, largest block -0.08, family +0.09 (SE 0.10). Nothing. Drift PASS |
+| 3 | LaNA input, LaNA on the far end of the coax *(DC block stays with the load)* | `xtr-casc3-lana` | **+0.640 dB**, predicted 0.6-0.8. But tilted: +1.0 at 1241-1341 to **zero above 1.95 GHz**. Harmonics unmoved. Drift PASS, settles ~25 min |
+| 4 | notch input, notch ahead of the LaNA | `xtr-casc4-notch` | **+0.000 dB**, predicted zero. Largest block -0.05, family -0.09 (SE 0.12). Holds at 18 sweeps discarded |
+| 5 | **antenna connected**, at g29 then g42 back-to-back | `xtr-casc5-antenna-g29`, `xtr-casc5-antenna-g42` | g29: 1799.98 at **-13.1 dB**, 3.5 dB better than predicted; floor +4.5 dB at 1241-1341, 0.00 above 2.04 GHz. g42: carrier **+3.8 dB** for 13 nominal, SNR +1.0. **Stay at g29.** No clipping either run |
+
+Printer **unplugged** from step 2 onward; it was powered-idle for step 1 (see that sidecar's
+`conditions_correction`). Known single difference, measured twice now to contribute nothing.
+
+Step 2's command, for the shape of the next ones (change only the tag, chain and conditions):
+
+```
+py tools/run_survey.py custom 1h --freq 1241M:2148M:50k --gain 29 --receiver xtr --device 0 --tag xtr-casc2-coax --chain "50 ohm load > SMA DC block > SMA M:M adapter > 3 ft RG316 coax (far end, at the window) > SMA bulkhead > 6 in SMA jumper (S-bend, no ferrite) > XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable) > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC" --conditions "cascade step 2, printer unplugged, ..." --skip-warmup 16 --non-interactive
+```
+
+Then `py tools/compare_runs.py xtr-alu-baseline <tag> --family 14.4 --handling handled` and
+`py tools/drift.py <tag>`.
+
+**Step 3 result:** magnitude as predicted, shape not - the LaNA's rise falls to nothing above
+1.95 GHz. 0.64 dB is far too small for a working 20 dB amplifier if the receiver were
+thermal-noise-limited, so either the XTR's floor at `-g 29` is a digital floor or the LaNA is
+under-delivering. See CLAUDE.md "XTR cascade step 3".
+
+**Gain ladder DONE 2026-10-19:** g14 -38.13, g29 -37.46, g42 -35.88. The floor is a digital
+floor at ~-38.3 dB; 28 dB of tuner gain moved it 2.25 dB overall and 0.12 dB above 2 GHz. The
+g29 point reproduced step 3 to 0.04 dB. See CLAUDE.md "Gain ladder 2026-10-19". The cascade
+stays at g29 for its fingerprint; **run the antenna step at both g29 and g42.**
+
+**Step 4 result:** +0.000 dB, exactly as pre-registered. The terminated cascade is complete.
+
+### Step 5 result
+
+Both predictions were wrong in instructive directions: the carrier came in **3.5 dB stronger**
+than the old chain ever gave (-13.1 against -16.6 predicted), and the 13 dB nominal gain step
+delivered **~4 dB** on the carrier and on the received-noise floor alike, for 1.0 dB of SNR.
+Below ~1.55 GHz the station is external-noise-limited; above 2.04 GHz nothing comes through at
+either gain. **L/S surveys stay at g29.** Full numbers in CLAUDE.md "XTR cascade step 5".
+
+Standing config for antenna surveys is now: antenna > notch > LaNA > 3 ft coax > bulkhead >
+jumper > XTR in the aluminium enclosure, direct on the USB bulkhead. station.json carries it.
+
+**Open items from the step:** 1633.47 MHz (steady, external, unidentified, present since
+2026-10-15) and 1405.93 MHz (weak, in the passive band). A `deep` tile over 1600-1700 is the
+next thing to run for the first.
+
+---
+
+## Rules that apply to every run
+
+- Check the device index first. USB order is not guaranteed: `.\rtl-sdr\rtl_test.exe`
+- Hold the room steady across a comparison block, and write down what it was doing.
+- Never change range, bin, gain, integration, crop or FIR. That is the fingerprint.
+- Archiving and the terminated/antenna flag are automatic; no follow-up commands.
+- Compare with `--family 14.4`, not 28.8 - the odd half-harmonics are just as strong.
+- Use `py tools/compare_runs.py <before> <after>` for any A/B. It does the whole
+  analysis: fingerprint check, median, floor by block, family statistic with a
+  verdict against the measured detection floor, periodicity.
+- **Write the prediction down before the run.** Every result this programme trusts
+  came from a prediction that could have failed; every one it had to retract came
+  from a number that matched after the fact.
