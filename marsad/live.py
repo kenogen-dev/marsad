@@ -622,7 +622,18 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                 self.send_error(404); return
             self._send(body, ctype)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), H)
+    # Python's HTTP server sets SO_REUSEADDR, which on Windows lets a second copy bind
+    # a port another copy is already listening on. Then two viewers answer the same
+    # address and the browser may get the stale one. Refuse instead: one viewer per port.
+    class OnePerPort(ThreadingHTTPServer):
+        allow_reuse_address = False
+
+    try:
+        srv = OnePerPort(("127.0.0.1", args.port), H)
+    except OSError:
+        print(f"  Port {args.port} is already in use - a viewer is probably running there.")
+        print(f"  Open http://127.0.0.1:{args.port}/ or start this one with --port {args.port + 1}.")
+        return 2
 
     def loop():
         idle = args.exit_after_idle * 60
