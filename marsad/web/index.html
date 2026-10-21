@@ -250,7 +250,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       </div>
     </div>
     <div class="wrap">
-      <div class="lab">Palette — drag a part onto the rail, or click it to add at the end</div>
+      <div class="lab">Palette — click a part to add it at the left end (the chain is built outward from the PC), or drag it to an exact spot</div>
       <div class="pal" id="ch-pal"></div>
     </div>
     <div class="wrap">
@@ -702,7 +702,7 @@ async function chainInit(){
   chEl('use').onclick=chUse;
   chEl('new').onclick=()=>{const n=prompt('Name for the new chain (letters, digits, dashes):');if(!n)return;
     if(ch.data.chains[n]){alert('that name exists');return;}
-    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:[{type:'antenna',name:'antenna',detail:''},{type:'pc',name:'PC',detail:''}]};
+    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:[{type:'pc',name:'PC',detail:''}]};
     ch.sel=n;ch.part=null;chChanged();};
   chEl('dup').onclick=()=>{const c=chCur();if(!c)return;const n=prompt('Name for the copy:',ch.sel+'-copy');if(!n||ch.data.chains[n])return;
     ch.data.chains[n]={static:false,updated:null,last_used:null,parts:JSON.parse(JSON.stringify(c.parts))};ch.sel=n;ch.part=null;chChanged();};
@@ -721,7 +721,9 @@ function chAdd(type,pos){
   const p={type,name:d.label,detail:''};
   if(type==='antenna')p.name='antenna';if(type==='sdr'){p.name='XTR';p.rx='xtr';}
   if(type==='attenuator'){p.db=10;}
-  if(pos===null||pos===undefined)pos=c.parts.length;
+  // A chain is built outward from the PC, so a clicked part goes to the far left
+  // (the growing source end); a drop onto a slot goes exactly where dropped.
+  if(pos===null||pos===undefined)pos=(type==='pc')?c.parts.length:0;
   c.parts.splice(pos,0,p);ch.part=pos;chChanged();
 }
 function chMove(from,to){
