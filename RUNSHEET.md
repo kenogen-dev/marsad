@@ -323,9 +323,15 @@ receiver, 39 dB ahead of the LaNA, tuner at g-1**; anything less clips.
 
 1. ~~Leakage check~~ **done 07:45:** FM band at the floor (-34.9) with no cable path, so the
    notch's 15 dB is real. Use 15 dB as the Flamingo+'s rejection.
-2. **LS-range D and E** (`LS 5m`, g-1, 36 and 39 dB of pad): the LaNA's gain from 1.24 to
-   2.147 GHz, which is the 2 GHz tuner-versus-antenna answer. Prediction: gain still 15 dB or
-   more at 2.1 GHz means the antenna is the limit up there; under 8 dB means the chain is.
+2. ~~LS-range D and E~~ **done 08:50 at g14** (the g-1 pair fell on the floor): LaNA gain
+   16-18 dB all the way to 2.147 GHz, lower bounds above 1.84 GHz. **The amplifier is not the
+   2 GHz limit.** The receiver itself reads 11 dB less at 2.1 GHz than at 1.3 with the same
+   source on its input, part generator roll-off, part E4000. The antenna is the only movable
+   piece: UWB antenna on the 2049-2147 tile next, then the bridge.
+
+**Block F is complete. Restore the standing chain:** stack off, notch back on the LaNA's input,
+antenna on the notch, and save that chain as the one in use (mark it static so the new
+run guard does not ask every time).
 
 ---
 

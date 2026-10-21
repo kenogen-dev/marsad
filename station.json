@@ -382,7 +382,8 @@
     "whip_length_mm": 60,
     "lna": "Nooelec LaNA, bias-tee powered, at the antenna pigtail",
     "filter": "Nooelec Flamingo+ FM v2 notch (88-108 MHz)",
-    "chain_order": "Noise Generator (9 V barrel, heatsink fitted) > 20 dB SMA attenuator > SMA DC block > SMA bulkhead (SMA bulkhead @ cage) > SMA jumper (6\" coax jumper from SDR to SMA bulkhead, S-bend, no ferrite) > XTR (SDR in aluminum cage w/ foam support.) > USB bulkhead (USB bulkhead @ cage) > USB cable (1' M:M w/ chokes) > USB cable (16' w/ multiple chokes) > USB isolator > PC"
+    "chain_order": "Noise Generator (9 V barrel, heatsink fitted) > 39 dB SMA attenuator stack (20 + 10 + 6 + 3) > SMA DC block > LaNA (at the window, powered by the XTR bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, foam support) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC",
+    "chain_used_at": "2026-10-21T08:45:35"
   },
   "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
 }

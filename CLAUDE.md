@@ -562,6 +562,36 @@ to -0.8 above the gap, floor-squeezed). The stop band is **wider than 88-108**: 
 bottom of the aviation band (118-120 MHz) and 3 dB off 74-80 MHz, which matters if either is
 ever a target.
 
+**LS range (2026-10-21, 08:22-08:50): the LaNA holds 16-18 dB to 2.147 GHz; the receiver itself
+is ~11 dB less sensitive at 2.1 GHz than at 1.3.** `nsrc-Dm1-LS` at g-1 fell on the floor
+(plateau -36 to -38, nothing to subtract) and stands as a floor measurement only; the pair was
+rerun at g14: `nsrc-D14-LS` (36 dB pad, bulkhead) and `nsrc-E14-LS` (39 dB pad, LaNA input,
+notch off), 5 min each, 8 sweeps with 2 discarded, no bin near the ceiling (E max -7.2).
+
+| Block | D14 plateau | E14 plateau | E - D + 3 (LaNA gain less ~1 dB coax) |
+|---|---|---|---|
+| 1241-1341 | -26.3 | -11.0 | +18.3 |
+| 1441-1541 | -28.2 | -13.2 | +17.9 |
+| 1641-1741 | -28.8 | -15.6 | +16.2 |
+| 1741-1841 | -30.0 | -17.3 | +15.7 |
+| 1841-1941 | -34.2 | -20.2 | +17.0 |
+| 1941-2041 | -37.0 | -21.8 | +18.0 |
+| 2041-2147 | -37.5 to -37.7 | -22.4 to -22.7 | +17.9 |
+
+Above 1841 MHz the D plateau is at the receiver's floor, so the true direct level is lower and
+the gain figures there are **lower bounds**. Either way: **the amplifier delivers at least 16-18
+dB all the way to the top of the tuner's range. The LaNA is not the 2 GHz limit.**
+
+What the D run shows instead: with the same generator on its input, the receiver reports **11 dB
+less at 2.1 GHz than at 1.3 GHz** (-26 to -37.7, a smooth slide with a step at 1841). Part of that
+may be the generator rolling off (its listing promises flatness only to 1.5 GHz), part is the
+E4000's own front end weakening toward the top of its range. The two cannot be separated with
+this source. Together with the whip's 0.84-wavelength mismatch at 2.1 GHz, that is the whole
+"weak at 2 GHz" picture: a receiver down several dB, an amplifier that is fine, and an antenna of
+unknown match. **The antenna is the only one of the three that can be changed**, so the UWB
+antenna on the 2049-2147 tile against the whip's +5-6 dB plateau is the right next test, and the
+return-loss bridge on the whip and on any home-built element is the one after it.
+
 **The notch's depth is 15 dB, and the leakage check says that is real.** Inside 80-112 MHz
 the A plateau is **-17.8 to -18.2 dB, flat to 0.4 dB across 32 MHz**, 17 dB above the chain's
 floor, so it is not floor-limited. A flat shelf looked like a leakage floor, so it was tested
