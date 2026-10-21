@@ -22,9 +22,10 @@ def _station(tmp_path):
     return Station.load(tmp_path)
 
 
-def test_seeds_reproduce_the_recorded_chain_text():
+def test_seeds_reproduce_the_recorded_chain_text(tmp_path):
     d = chain.seed_chains()
-    st = Station.load(ROOT)
+    # the packaged default, not the live station.json: "Use for runs" rewrites that
+    st = Station.load(tmp_path)
     assert chain.chain_text(d["chains"]["antenna-xtr"]["parts"]) == st.defaults["chain_order"]
     assert chain.tail_text(d["chains"]["probe-xtr"]["parts"]) == probe.PROBE_CHAIN_TAIL["xtr"]
     assert chain.tail_text(d["chains"]["probe-v5"]["parts"]) == probe.PROBE_CHAIN_TAIL["v5"]
