@@ -54,11 +54,13 @@ Never delete raw survey CSVs or recordings without asking.
 **One web address, always: http://127.0.0.1:8731/.** The Marsad web app (`marsad live`,
 Scan / Builder / Archive / Chain / Probe / Roadmap) runs on port 8731 and nowhere else. It
 follows the newest CSV on its own, `marsad run` reuses it, and since 2026-10-20 a second copy
-cannot bind a port that is in use. **Any Claude session working in this folder: never start a
-viewer on another port, and never start one at all for testing while the owner's viewer is up.**
-Test page changes by restarting the one on 8731 (stop the listener, start `tools/live_view.py
---port 8731 --exit-after-idle 5`, confirm with a GET), or with `--dry-run` and unit tests. Stray
-viewers on 8740/8741 from session testing have twice left the owner looking at a stale page.
+cannot bind a port that is in use. **Any Claude session working in this folder:** the owner only ever uses 8731. A session may
+start a test viewer on another port (8740-8749) so its work does not disrupt the owner's, but it
+must start it with `--exit-after-idle 5` and **stop it when the test is done**, and it must say
+so in its report. Never leave one running. Never start a second viewer on 8731 while one is
+up; to put a page change in front of the owner, restart the one on 8731 (stop the listener,
+start `tools/live_view.py --port 8731 --exit-after-idle 5`, confirm with a GET). Stray viewers
+on 8740/8741 left by session testing have twice had the owner looking at a stale page.
 
 Only **one program can use an SDR at a time.** Before running `rtl_power` etc., SDR++ must be closed (check and warn).
 
