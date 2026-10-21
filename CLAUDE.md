@@ -51,6 +51,15 @@ Never delete raw survey CSVs or recordings without asking.
 | Antenna | Window suction-cup dual-whip dipole, whips adjustable ~50–125 mm each. **Standing config: 90° L, 60 mm each whip** (confirmed 2026-10-13) — quarter-wave at ~1250 MHz, i.e. near-resonant at the bottom of the LS band and electrically short toward 2147 MHz. Whip length in sidecars is **per whip**, not tip-to-tip. |
 | Shielding | SDR sealed in a copper-taped plastic enclosure (built 2026-10-14): lid/body seam covered with conductive-adhesive copper tape, SMA and USB bulkheads bonded to the cage, dongle thermal-padded to a wall with perforated foam holding it against the pad. Ferrite chokes on the external cable segments only - **not inside the box**, measured 2026-10-18 to cost ~1.3 dB at 1670-1690 MHz. |
 
+**One web address, always: http://127.0.0.1:8731/.** The Marsad web app (`marsad live`,
+Scan / Builder / Archive / Chain / Probe / Roadmap) runs on port 8731 and nowhere else. It
+follows the newest CSV on its own, `marsad run` reuses it, and since 2026-10-20 a second copy
+cannot bind a port that is in use. **Any Claude session working in this folder: never start a
+viewer on another port, and never start one at all for testing while the owner's viewer is up.**
+Test page changes by restarting the one on 8731 (stop the listener, start `tools/live_view.py
+--port 8731 --exit-after-idle 5`, confirm with a GET), or with `--dry-run` and unit tests. Stray
+viewers on 8740/8741 from session testing have twice left the owner looking at a stale page.
+
 Only **one program can use an SDR at a time.** Before running `rtl_power` etc., SDR++ must be closed (check and warn).
 
 ### Signal chain (as built 2026-10-14)
