@@ -22,11 +22,19 @@ def _station(tmp_path):
     return Station.load(tmp_path)
 
 
-def test_seeds_reproduce_the_recorded_chain_text(tmp_path):
+ANTENNA_CHAIN = (
+    "antenna (90 deg L dipole, 60 mm each whip, suction-mounted on the inside face of the window "
+    "glass) > Flamingo+ FM notch > LaNA (at the window, on the far end of the coax, powered by the "
+    "XTR bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead > 6 in SMA jumper (S-bend, no "
+    "ferrite) > XTR (in aluminium enclosure, plugged direct into USB bulkhead, no internal USB "
+    "cable) > USB bulkhead > 1 ft USB3 M:M > 16 ft USB3 > USB isolator > PC"
+)
+
+
+def test_seeds_reproduce_the_recorded_chain_text():
     d = chain.seed_chains()
-    # the packaged default, not the live station.json: "Use for runs" rewrites that
-    st = Station.load(tmp_path)
-    assert chain.chain_text(d["chains"]["antenna-xtr"]["parts"]) == st.defaults["chain_order"]
+    # pinned text, not station.json: "Use for runs" rewrites that file by design
+    assert chain.chain_text(d["chains"]["antenna-xtr"]["parts"]) == ANTENNA_CHAIN
     assert chain.tail_text(d["chains"]["probe-xtr"]["parts"]) == probe.PROBE_CHAIN_TAIL["xtr"]
     assert chain.tail_text(d["chains"]["probe-v5"]["parts"]) == probe.PROBE_CHAIN_TAIL["v5"]
     assert chain.receiver_of(d["chains"]["probe-v5"]["parts"]) == "v5"
