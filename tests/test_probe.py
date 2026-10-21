@@ -90,6 +90,18 @@ def test_attenuator_lands_between_the_notch_and_the_lana():
     v5 = probe.compose(st, {**FORM, "receiver": "v5", "attenuator": "6"})
     assert "attenuator" not in v5["chain"] and v5["attenuator_db"] == 0
     assert any("no LaNA" in w for w in v5["warnings"])
+    # a pad already written into the chain text is the record: the picker steps aside
+    tail = ("SMA adapter > SMA DC block > 8 ft coax > Notch (at the window) > 10dB Attenuator > "
+            "LaNA (at the window) > 3 ft RG316 coax > XTR > PC")
+    c = probe.compose(st, {**FORM, "chain_tail": tail})
+    assert c["attenuator_db"] == 10 and c["attenuator_source"] == "chain"
+    assert c["chain"].count("ttenuator") == 1 and "no pad" not in c["conditions"]
+    assert ", 10 dB pad ahead of the LaNA (in the chain)" in c["conditions"]
+    assert c["range_label"].endswith(", 10 dB pad")
+    same = probe.compose(st, {**FORM, "chain_tail": tail, "attenuator": "10"})
+    assert same["chain"].count("ttenuator") == 1
+    with pytest.raises(ValueError, match="already has a 10 dB attenuator"):
+        probe.compose(st, {**FORM, "chain_tail": tail, "attenuator": "6"})
     # it reaches the room-map row through the range cell
     row = probe.log_row(dt.datetime(2026, 10, 20, 13, 0), d, "survey_x", probe.summarise_report(ROOT / "nope"), None, False)
     assert "| wide 52-1660 MHz (g29, i60), 10 dB pad |" in row

@@ -202,6 +202,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <label title="rtl_power's device index for that receiver. Found by asking each plugged-in dongle what it is; the number changes when a dongle is unplugged.">device <input id="pb-device" type="number" min="0" max="9" value="0" style="width:55px"></label>
         <button class="btn" id="pb-detect" title="Opens each dongle for a second and reads its name">Find receivers</button>
         <label id="pb-att-l" title="From the attenuator kit, fitted between the notch's output and the LaNA's input">Pad ahead of the LaNA <select id="pb-attenuator" style="min-width:90px"></select></label>
+        <span class="note" id="pb-attnote" style="margin:0" hidden></span>
         <span class="note" id="pb-rxnote" style="margin:0"></span>
         <label style="flex:1 1 100%">Notes <input id="pb-notes" class="wide" placeholder="what is switched on in the room, anything unusual"></label>
         <label style="flex:1 1 100%;align-items:flex-start">Chain after the probe <textarea id="pb-chain" rows="3" style="flex:1;font-size:12px"></textarea></label>
@@ -768,9 +769,11 @@ function chEditor(){
   if(!c||ch.part===null||ch.part>=c.parts.length){wrap.hidden=true;return;}
   wrap.hidden=false;
   const p=c.parts[ch.part],d=ch.data.parts[p.type]||{fields:[]};
+  const canonHint=(p.type!=='custom'&&p.type!=='attenuator'&&p.name&&p.name!==d.label&&['filter','lna','dcblock','adapter','isolator','pc'].includes(p.type))
+    ?`<span class="note" style="flex:1 1 100%">recorded text stays searchable with the standard name “${esc(d.label)}” — <a href="#" id="che-canon" style="color:var(--accent)">use it</a> (put “${esc(p.name)}” in the detail if it matters)</span>`:'';
   let h=`<label>Type<select id="che-type">${Object.entries(ch.data.parts).map(([t,x])=>`<option value="${t}"${t===p.type?' selected':''}>${esc(x.label)}</option>`).join('')}</select></label>`
-    +`<label>Name (as the chain text says it)<input id="che-name" value="${esc(p.name||'')}"></label>`
-    +`<label>Detail (in brackets)<input id="che-detail" value="${esc(p.detail||'')}" style="min-width:340px"></label>`;
+    +(p.type==='attenuator'?'':`<label>Name (as the chain text says it)<input id="che-name" value="${esc(p.name||'')}" placeholder="${esc(d.label)}"></label>`)
+    +`<label>Detail (in brackets)<input id="che-detail" value="${esc(p.detail||'')}" style="min-width:340px"></label>`+canonHint;
   if(d.fields.includes('length'))h+=`<label>Length<input id="che-length" class="sm" value="${esc(p.length||'')}" placeholder="e.g. 3 ft"></label>`;
   if(d.fields.includes('db'))h+=`<label>dB<input id="che-db" class="sm" type="number" value="${esc(p.db||'')}"></label>`;
   if(d.fields.includes('rx'))h+=`<label>Receiver<select id="che-rx"><option value="xtr"${p.rx==='xtr'?' selected':''}>xtr</option><option value="v5"${p.rx==='v5'?' selected':''}>v5</option></select></label>`;
@@ -778,7 +781,8 @@ function chEditor(){
   if(d.note)h+=`<span class="note" style="flex:1 1 100%">${esc(d.note)}</span>`;
   chEl('ed').innerHTML=h;
   const g=id=>document.getElementById('che-'+id);
-  const upd=()=>{p.type=g('type').value;p.name=g('name').value;p.detail=g('detail').value;
+  const canon=g('canon');if(canon)canon.onclick=e=>{e.preventDefault();p.name=d.label;chChanged();};
+  const upd=()=>{p.type=g('type').value;if(g('name'))p.name=g('name').value;p.detail=g('detail').value;
     if(g('length'))p.length=g('length').value;if(g('db'))p.db=g('db').value?+g('db').value:'';if(g('rx'))p.rx=g('rx').value;
     chChanged(false);};
   g('type').onchange=()=>{p.type=g('type').value;const nd=ch.data.parts[p.type];if(!p.name||p.name===d.label)p.name=nd.label;chChanged();};
@@ -888,8 +892,13 @@ function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'
 function pbShowFields(){
   pbEl('other-l').hidden=pbEl('target').value!=='other';
   pbEl('centre-l').hidden=pbEl('range').value!=='hunt';
-  // the pad sits ahead of the LaNA, which only the XTR chain has
-  pbEl('att-l').hidden=!/(^|>)\s*LaNA/.test(pbEl('chain').value);
+  // the pad sits ahead of the LaNA, which only the XTR chain has; and when the chain
+  // text already names one, the chain is the record and the picker steps aside
+  const chainText=pbEl('chain').value;
+  const inChain=chainText.match(/(\d+(?:\.\d+)?)\s*dB\s*(?:SMA\s*)?(?:attenuator|pad)/i);
+  pbEl('att-l').hidden=!!inChain||!/(^|>)\s*LaNA/.test(chainText);
+  pbEl('attnote').hidden=!inChain;
+  if(inChain){pbEl('attnote').textContent=`pad is in the chain: ${inChain[1]} dB`;pbEl('attenuator').value='0';}
   document.querySelectorAll('#pb-durs .btn').forEach(b=>b.classList.toggle('on',b.dataset.m===pbEl('min').value));
 }
 async function probeInit(){
@@ -932,7 +941,7 @@ async function pbPreview(){
       pbEl('warn').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
     const g=d.geometry;
     pbEl('cmd').textContent=d.command_line+'\n\n'+d.rtl_power_line;
-    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${esc(d.receiver.toUpperCase())} device ${d.device}, g${d.gain}${d.attenuator_db?', '+d.attenuator_db+' dB pad':''} · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
+    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${esc(d.receiver.toUpperCase())} device ${d.device}, g${d.gain}${d.attenuator_db?', '+d.attenuator_db+' dB pad'+(d.attenuator_source==='chain'?' (in the chain)':''):''} · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
       +`${g.sweeps} sweep${g.sweeps===1?'':'s'} of ${d.integration} s, ${(g.listening_frac*100).toFixed(0)}% listening `
       +`(${g.retune_s_per_sweep.toFixed(1)} s of every sweep retunes), ${g.listen_per_freq_s.toFixed(1)} s on each frequency, ~${g.csv_mb.toFixed(1)} MB`
       +(d.hunt?`<br>hop centres at ${d.hunt.hop_centres_mhz.map(x=>x.toFixed(3)).join(', ')} MHz — the target sits ${(d.hunt.clearance_mhz*1000).toFixed(0)} kHz clear of the nearest DC spike`:'');

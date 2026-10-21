@@ -116,6 +116,17 @@ DURATIONS_MIN = [2, 5, 10]
 ATTENUATORS_DB = [0, 3, 6, 10, 20]
 
 
+PAD_RE = re.compile(r"(\d+(?:\.\d+)?)\s*dB\s*(?:SMA\s*)?(?:attenuator|pad)", re.I)
+
+
+def pad_in_chain(text: str) -> float | None:
+    """The attenuator a chain text already names ('10 dB SMA attenuator',
+    '10dB Attenuator', '6 dB pad'), or None. The chain text is the record, so
+    the conditions must agree with it rather than with the picker."""
+    m = PAD_RE.search(text or "")
+    return float(m.group(1)) if m else None
+
+
 def insert_pad(tail: str, db: int) -> str | None:
     """The chain tail with '> SMA adapter > N dB SMA attenuator' ahead of the LaNA,
     or None if the tail has no LaNA to put it in front of (the v5 chain).
@@ -408,18 +419,31 @@ def compose(station: Station, form: dict) -> dict:
     if pad_db not in cat["attenuators_db"]:
         raise ValueError(f"the kit has no {pad_db} dB pad; choose from "
                          + ", ".join(map(str, cat["attenuators_db"])))
-    padded = insert_pad(tail, pad_db)
-    if padded is None:
-        warnings.append(f"the {receiver} chain has no LaNA to put a {pad_db} dB pad ahead of; "
-                        "the pad was NOT added to the chain")
-        pad_db = 0
+    in_chain = pad_in_chain(tail)
+    pad_source = None
+    if in_chain is not None:
+        if pad_db and float(pad_db) != in_chain:
+            raise ValueError(f"the chain already has a {in_chain:g} dB attenuator; set the pad "
+                             f"picker to none, or take the pad out of the chain on the Chain tab")
+        pad_db = int(in_chain) if in_chain.is_integer() else in_chain
         padded = tail
-    pad_text = f"{pad_db} dB pad ahead of the LaNA" if pad_db else "no pad"
+        pad_source = "chain"
+    else:
+        padded = insert_pad(tail, pad_db)
+        if padded is None:
+            warnings.append(f"the {receiver} chain has no LaNA to put a {pad_db} dB pad ahead of; "
+                            "the pad was NOT added to the chain")
+            pad_db = 0
+            padded = tail
+        elif pad_db:
+            pad_source = "picker"
+    pad_text = (f"{pad_db:g} dB pad ahead of the LaNA" + (" (in the chain)" if pad_source == "chain" else "")
+                if pad_db else "no pad")
     chain = f"{probe['desc']}, held {held} > {padded}"
     conditions = (f"near-field probe survey: {target}, {probe['desc']} held {held}, "
                   f"{range_label}, {dur_text}, {pad_text}")
     if pad_db:
-        range_label += f", {pad_db} dB pad"      # the room-map row's Range cell carries it
+        range_label += f", {pad_db:g} dB pad"      # the room-map row's Range cell carries it
     if notes:
         conditions += f"; {notes}"
 
@@ -438,7 +462,8 @@ def compose(station: Station, form: dict) -> dict:
         "target": target, "probe": probe["label"], "probe_id": probe["id"], "held": held,
         "range": rng_id, "range_label": range_label,
         "preset": rng["preset"], "receiver": receiver, "freq": freq,
-        "gain": gain, "integration": integration, "device": device, "attenuator_db": pad_db,
+        "gain": gain, "integration": integration, "device": device,
+        "attenuator_db": pad_db, "attenuator_source": pad_source,
         "minutes": minutes, "duration_text": dur_text, "duration_s": dur_s,
         "hunt": hunt,
         "geometry": {k: (round(v, 4) if isinstance(v, float) else v)

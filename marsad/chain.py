@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import re
 from pathlib import Path
 
 from .config import Station
@@ -121,6 +122,44 @@ def receiver_of(parts: list) -> str | None:
     return None
 
 
+# A hand-typed custom part that is plainly a known one becomes that part, so the
+# recorded text stays searchable: "10dB Attenuator" -> 10 dB SMA attenuator,
+# "Notch (at the window)" -> Flamingo+ FM notch (at the window). Typed parts with a
+# deliberate name (e.g. "cage SMA bulkhead") are left alone.
+_PAD_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*(?:SMA\s*)?(?:attenuator|pad)\s*$", re.I)
+_CANON = [
+    (re.compile(r"^\s*(fm\s*)?notch\s*$|flamingo", re.I), "filter"),
+    (re.compile(r"^\s*(lana|lna|low\s*noise\s*amp\w*)\s*$", re.I), "lna"),
+    (re.compile(r"^\s*(sma\s*)?dc\s*block\s*$", re.I), "dcblock"),
+    (re.compile(r"^\s*(sma\s*)?adapter\s*$", re.I), "adapter"),
+    (re.compile(r"^\s*usb\s*isolator\s*$", re.I), "isolator"),
+]
+
+
+def canonical(p: dict) -> dict:
+    """Normalise one part in place and return it (see above)."""
+    name = p.get("name") or ""
+    if p["type"] == "attenuator":
+        m = _PAD_RE.match(name)
+        if m and p.get("db") in (None, ""):
+            p["db"] = float(m.group(1)) if "." in m.group(1) else int(m.group(1))
+        p["name"] = PART_TYPES["attenuator"]["label"]
+        return p
+    if p["type"] != "custom":
+        return p
+    m = _PAD_RE.match(name)
+    if m:
+        p.update({"type": "attenuator", "name": PART_TYPES["attenuator"]["label"],
+                  "db": float(m.group(1)) if "." in m.group(1) else int(m.group(1))})
+        return p
+    for rx_, type_ in _CANON:
+        if rx_.search(name):
+            p["type"] = type_
+            p["name"] = PART_TYPES[type_]["label"]
+            return p
+    return p
+
+
 # ---------------------------------------------------------------- storage
 def validate(data) -> dict:
     """A chain.json document the page sent, checked and normalised. Raises ValueError."""
@@ -142,7 +181,7 @@ def validate(data) -> dict:
             for f in ("length", "db", "rx"):
                 if p.get(f) not in (None, ""):
                     q[f] = p[f]
-            parts.append(q)
+            parts.append(canonical(q))
         out["chains"][name] = {"static": bool(c.get("static")),
                                "updated": c.get("updated") or _now(),
                                "last_used": c.get("last_used") or None,

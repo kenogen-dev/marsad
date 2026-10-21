@@ -70,6 +70,20 @@ def test_use_writes_the_station_default(tmp_path):
         chain.use(st, "nope")
 
 
+def test_hand_typed_custom_parts_become_canonical():
+    out = chain.validate({"chains": {"x": {"parts": [
+        {"type": "custom", "name": "Notch", "detail": "at the window"},
+        {"type": "custom", "name": "10dB Attenuator"},
+        {"type": "attenuator", "name": "6 dB pad"},
+        {"type": "custom", "name": "mystery box"},
+        {"type": "bulkhead_sma", "name": "cage SMA bulkhead"},
+    ]}}})["chains"]["x"]["parts"]
+    assert chain.chain_text(out) == ("Flamingo+ FM notch (at the window) > 10 dB SMA attenuator > "
+                                     "6 dB SMA attenuator > mystery box > cage SMA bulkhead")
+    assert out[0]["type"] == "filter" and out[1] == {"type": "attenuator", "name": "SMA attenuator",
+                                                     "detail": "", "db": 10}
+
+
 def test_validate_refuses_unknown_parts():
     with pytest.raises(ValueError, match="unknown type"):
         chain.validate({"chains": {"x": {"parts": [{"type": "warp-drive"}]}}})
