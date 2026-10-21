@@ -503,6 +503,76 @@ test signal for the cage.
 A persistent state change in the room or the PC, still unidentified. It did not move the aggregate
 statistics, which is why the A1/A2 control still passed.
 
+### Noise generator characterisation of the XTR chain (2026-10-20/21): LaNA 25 -> 18 dB, coax under 1 dB, notch 15 dB and wider than FM
+
+The first measurements of what each part of the chain *does to a signal*, as opposed to what it
+adds to the floor. A broadband noise source ("Noise Source V2.1, 0.2-2000 MHz", 9 V barrel,
+heatsink fitted) takes the antenna's place; each run removes one part, and the difference between
+two runs is that part's response at every frequency. All runs `wide` (52-1660 MHz, 87 kHz bins),
+5 min, 4 sweeps with 1 discarded, the dongle untouched throughout; only the outside of the cage
+bulkhead and the window stack were handled.
+
+**The generator is ~40 dB above the receiver's ceiling.** Through a 20 dB pad at g29 it read -1 dB
+with 3044 bins at full scale; through 36 dB at g29 it read +1 to +3.6 with 8590 bins clipped,
+i.e. *more* clipped than the first run showed. Working back from the clean runs the raw source
+sits near +40 dB on rtl_power's scale at g29. Treat the listing's "flat, gentle" as relative to
+a spectrum analyser. **Every characterisation run needs 36-39 dB of pad and the tuner at g14 or
+g-1**, and the LaNA runs cannot be kept under the ceiling at any gain above -1.
+
+**Bonus from the clipping: the 29 -> 14 gain step is nearly nominal.** `nsrc-D29` (clipped) vs
+`nsrc-D14` (clean, plateau -10 to -12 below the gap): the plateau moved **13.0-14.4 dB, 13.5
+overall**, for a nominal 15, flat across the range. So the E4000's lower steps deliver; it is only
+the top step (29 -> 42, measured ~4 dB on 2026-10-19) that is hollow.
+
+| Run | Gain | Pad | Where the source went | Plateau below / above the gap |
+|---|---|---|---|---|
+| `nsrc-Dm1-xtr-direct` | -1 | 36 | cage bulkhead, 3 ft coax off | -24.7 / -32 |
+| `nsrc-Fm1-coax` | -1 | 36 | window end of the 3 ft coax | -25.3 / -32.7 |
+| `nsrc-Em1-lana-rerun` | -1 | 39 | LaNA input, notch off | -4 / -17.8 |
+| `nsrc-Am1-notch` | -1 | 39 | notch input, full stack | -5 / -18.5 |
+
+(`nsrc-Em1-lana` 02:17 is **invalid**: a coax joint was found undone afterwards, 30 dB low; marked
+in its sidecar.) Above the gap the direct and coax runs sit only ~6 dB over the receiver's -38
+floor, so F-D is squeezed toward zero there; below the gap there is 13 dB of room.
+
+**3 ft RG316 coax, F minus D:** -0.2 dB at 52-100 MHz rising smoothly to -0.9 at 700-900 and
+-0.7 at 900-1095; scatter 0.37 dB bin to bin, no ripple. Textbook for a yard of RG316.
+Prediction (-0.5 to -1 below 1 GHz) held.
+
+**LaNA gain, E minus F plus the 3 dB extra pad:**
+
+| Band | gain |
+|---|---|
+| 52-100 | +25.5 |
+| 100-300 | +25 |
+| 300-500 | +23.8 |
+| 500-700 | +22.2 |
+| 700-900 | +20.5 |
+| 900-1095 | +18.7 |
+| 1240-1660 | **+17.7, flat** |
+
+The datasheet's 16-25 dB, measured on this unit: 25 at VHF sliding to 18 at L-band and flat from
+1.24 to 1.66 GHz. **The amplifier is fine.** The cascade's 0.64 dB was the digital floor hiding a
+working 18 dB amplifier, exactly as the gain ladder said. What it does past 1.66 GHz is the LS-range
+repeat of D and E (not yet run), which is the 2 GHz tuner-vs-antenna answer.
+
+**Flamingo+ notch, A minus E:** passband loss **-1.1 to -1.4 dB** from 150 MHz to 1.1 GHz (-0.6
+to -0.8 above the gap, floor-squeezed). The stop band is **wider than 88-108**: -3 dB points at
+**73.8 and 126.1 MHz**, -13 dB already at 80-85, -7.9 dB at 112-120. So it takes 5-8 dB off the
+bottom of the aviation band (118-120 MHz) and 3 dB off 74-80 MHz, which matters if either is
+ever a target.
+
+**The notch's depth reads 15 dB and that figure is suspect.** Inside 80-112 MHz the A plateau is
+**-17.8 to -18.2 dB, flat to 0.4 dB across 32 MHz**. A filter has a shape; a flat shelf is a
+leakage floor. The likeliest path: the generator's output is ~40 dB above the ceiling and the pad
+stack sits inches from the LaNA, so noise radiating from the stack's connectors reaches the LaNA's
+input around the notch at about -18 dB and sets the shelf. The notch may be 15 dB deep or 35; this
+run cannot tell. The 2026-10-19 v5 measurement ("at least 16-18 dB, floor-limited") has the same
+ambiguity from the other side. **Test, 2 min:** stack connected to nothing, dangling where it was,
+LaNA input terminated with the 50 ohm load through the DC block, same gain and range. If the FM
+band shows up near -18 dB with no cable path at all, the shelf is leakage and the notch is deeper
+than 15 dB; if the band is at the floor, 15 dB is the real depth.
+
 ### Antenna outside the window, A/B/A (2026-10-20, 07:28-11:00): worth 3-5 dB, and the glass is not low-E
 
 Block E. Three 30 min blocks at the LS fingerprint, g29, 10 analysed sweeps each after a 10 min

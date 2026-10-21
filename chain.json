@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "current": "antenna-xtr",
+  "current": "Noise Gen. Calibration Chain",
   "chains": {
     "antenna-xtr": {
       "static": false,
@@ -76,8 +76,8 @@
     },
     "probe-xtr": {
       "static": false,
-      "updated": "2026-10-20T19:23:01",
-      "last_used": null,
+      "updated": "2026-10-20T20:54:55",
+      "last_used": "2026-10-20T20:59:29",
       "parts": [
         {
           "type": "probe",
@@ -104,6 +104,17 @@
           "type": "filter",
           "name": "Flamingo+ FM notch",
           "detail": ""
+        },
+        {
+          "type": "adapter",
+          "name": "SMA adapter",
+          "detail": ""
+        },
+        {
+          "type": "attenuator",
+          "name": "SMA attenuator",
+          "detail": "",
+          "db": 20
         },
         {
           "type": "lna",
@@ -213,6 +224,73 @@
         {
           "type": "usb",
           "name": "USB cable",
+          "detail": ""
+        },
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    },
+    "Noise Gen. Calibration Chain": {
+      "static": false,
+      "updated": "2026-10-20T23:48:18",
+      "last_used": null,
+      "parts": [
+        {
+          "type": "custom",
+          "name": "Noise Generator",
+          "detail": "9 V barrel, heatsink fitted"
+        },
+        {
+          "type": "attenuator",
+          "name": "SMA attenuator",
+          "detail": "20+10+6 Pads",
+          "db": 36
+        },
+        {
+          "type": "dcblock",
+          "name": "SMA DC block",
+          "detail": ""
+        },
+        {
+          "type": "bulkhead_sma",
+          "name": "SMA bulkhead",
+          "detail": "SMA bulkhead @ cage"
+        },
+        {
+          "type": "jumper",
+          "name": "SMA jumper",
+          "detail": "6\" coax jumper from SDR to SMA bulkhead, S-bend, no ferrite",
+          "length": "6\""
+        },
+        {
+          "type": "sdr",
+          "name": "XTR",
+          "detail": "SDR in aluminum cage w/ foam support.",
+          "rx": "xtr"
+        },
+        {
+          "type": "bulkhead_usb",
+          "name": "USB bulkhead",
+          "detail": "USB bulkhead @ cage"
+        },
+        {
+          "type": "usb",
+          "name": "USB cable",
+          "detail": "1' M:M w/ chokes",
+          "length": "1'"
+        },
+        {
+          "type": "usb",
+          "name": "USB cable",
+          "detail": "16' w/ multiple chokes",
+          "length": "16'"
+        },
+        {
+          "type": "isolator",
+          "name": "USB isolator",
           "detail": ""
         },
         {
