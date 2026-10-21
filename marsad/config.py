@@ -30,6 +30,9 @@ DEFAULT_FILE = Path(__file__).resolve().parent / "station.default.json"
 
 # The flat keys the pre-packaging station.json held: just the chain answers.
 LEGACY_DEFAULT_KEYS = ("antenna_shape", "whip_length_mm", "lna", "filter", "chain_order")
+# chain_used_at: when a run last recorded the default chain_order. A later run
+# without --chain must confirm the rig is still built like that (record.py).
+DEFAULT_KEYS = LEGACY_DEFAULT_KEYS + ("chain_used_at",)
 
 
 def _strip_notes(d):
@@ -194,7 +197,7 @@ class Station:
         Reads the file fresh so hand edits made since start-up survive, and
         writes the full structure back if the file was still the old flat form.
         """
-        keep = {k: answers[k] for k in LEGACY_DEFAULT_KEYS if k in answers}
+        keep = {k: answers[k] for k in DEFAULT_KEYS if k in answers}
         try:
             if self.file.exists():
                 on_disk = json.loads(self.file.read_text(encoding="utf-8"))

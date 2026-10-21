@@ -271,7 +271,42 @@ def build_parser(station: Station, prog: str = "marsad run") -> argparse.Argumen
     p.add_argument("--stop-file", type=Path, metavar="PATH",
                    help="stop early, as Ctrl-C would, when this file appears "
                         "(the web app's Stop button)")
+    p.add_argument("--chain-as-saved", action="store_true",
+                   help="yes, the rig is still built as the saved default chain says "
+                        "(needed once that chain has been used by a run and no --chain is given)")
     return p
+
+
+def confirm_default_chain(station: Station, args) -> str | None:
+    """Guard against recording a stale default chain. Returns the chain text to use.
+
+    Nine command-line runs on 2026-10-20 all recorded the previous rig's chain
+    because a run without --chain silently copies station.json's default. So:
+    once a run has recorded the default (chain_used_at is set), the next run
+    without --chain prints that chain and refuses, unless --chain-as-saved says
+    the rig is unchanged or the Chain tab marks that chain static. On a terminal
+    the question is asked instead of refused. Runs before any hardware is touched.
+    """
+    if args.chain:
+        return args.chain
+    d = station.defaults
+    text = d.get("chain_order") or ""
+    used = d.get("chain_used_at")
+    if not text or not used or args.chain_as_saved:
+        return text
+    from . import chain as chain_mod
+    if chain_mod.default_is_static(station, text):
+        return text
+    print(f"\n  The chain about to be recorded is the saved default, already used by a run "
+          f"at {str(used).replace('T', ' ')}:\n    {text}")
+    if not args.non_interactive and sys.stdin and sys.stdin.isatty():
+        if input("  Is the rig still built exactly like this? [y/N] ").strip().lower() in ("y", "yes"):
+            return text
+        raise SystemExit("  Stopped. Pass --chain \"...\" for the rig as it is now. Nothing was recorded.")
+    raise SystemExit(
+        "  Is the rig still built like this? Re-run with --chain-as-saved to say yes, pass\n"
+        "  --chain \"...\" for the rig as it is now, or tick 'static' on the Chain tab.\n"
+        "  Nothing was recorded.")
 
 
 def show_presets(station: Station) -> None:
@@ -602,6 +637,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
           + ("" if (args.crop, args.fir) == (CROP, FIR)
              else "   NOT standard - not comparable with other surveys"))
     print(f"    receiver    {receiver}")
+    chain_src = ("--chain" if args.chain else
+                 "saved default" + (f", used by a run at {str(station.defaults.get('chain_used_at')).replace('T', ' ')}"
+                                     if station.defaults.get("chain_used_at") else ""))
+    print(f"    chain       ({chain_src}) {args.chain or station.defaults.get('chain_order') or '(none)'}")
     print(f"    writing     surveys/{csv_path.name}")
     free_gb = shutil.disk_usage(station.surveys).free / 1e9
     print(f"    disk free   {free_gb:.1f} GB")
@@ -616,20 +655,26 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         print("\n  --dry-run: nothing recorded.\n")
         return 0
 
+    try:
+        chain_text = confirm_default_chain(station, args)
+    except (KeyboardInterrupt, EOFError):
+        raise SystemExit("\n  Cancelled. Nothing was recorded.")
     check_device_free(args.non_interactive)
     device_check(station, args.device)
     warn_long_run(dur_s)
 
     try:
         chain = ask_conditions(args, station.defaults)
-        if args.chain:
-            # An explicit chain always wins over whatever station.json remembers;
-            # stale chain text is what mislabelled two earlier runs.
-            chain["chain_order"] = args.chain
+        # An explicit chain always wins over whatever station.json remembers;
+        # stale chain text is what mislabelled two earlier runs.
+        chain["chain_order"] = chain_text
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled at the questions. Nothing was recorded.")
     if not args.keep_defaults:
-        station.save_defaults(chain)
+        # This run records this chain: from now on it needs confirming again.
+        station.save_defaults({**chain, "chain_used_at": started.isoformat(timespec="seconds")})
+        from . import chain as chain_mod
+        chain_mod.mark_text_used(station, chain_text)
 
     sidecar = {
         "schema": 1,

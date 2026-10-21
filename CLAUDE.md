@@ -1546,7 +1546,16 @@ chain_order**, so a plain `marsad run` records it; the Probe tab takes its chain
 from the current chain when the receiver matches. Each chain carries `updated` and `last_used`
 stamps: a probe run started from the page stamps the current chain, saving a change clears the
 stamp, and starting a run on a chain that is unchanged since its last run asks "still built as
-drawn?" unless the chain is ticked **static**. Header fields (antenna, whips, LNA, filter) in a probe sidecar
+drawn?" unless the chain is ticked **static**.
+
+**The command line has the same guard (2026-10-21).** Nine `nsrc-*` runs on 2026-10-20 recorded
+a stale chain because a run without `--chain` silently copies station.json's default. Now a run
+that records the default chain stamps `defaults.chain_used_at`, and the next `marsad run` (or
+`tools/run_survey.py`) without `--chain` prints that chain and stops, before any hardware check,
+unless `--chain-as-saved` says the rig is unchanged, `--chain "..."` gives the new rig, or the
+Chain tab's current chain renders to that text and is ticked static. On a terminal it asks
+y/N instead of stopping. "Use for runs" on the Chain tab clears the stamp (choosing a chain is
+a fresh statement). `--dry-run` shows the chain and its source without the guard. Header fields (antenna, whips, LNA, filter) in a probe sidecar
 come from station.json defaults, as for any `--non-interactive` run; `chain_order` is the truth.
 The probe chain goes through the DC block into the LaNA at the window, never a loop straight onto
 the XTR's SMA (bias-tee always on).

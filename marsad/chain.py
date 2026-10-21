@@ -244,8 +244,33 @@ def use(station: Station, name: str) -> dict:
         raise ValueError(f"no chain called {name!r}")
     data["current"] = name
     _write(path_of(station), data)
-    station.save_defaults({"chain_order": chain_text(data["chains"][name]["parts"])})
+    # Choosing a chain is a fresh statement that the rig is built like this, so
+    # the command line's "used, unconfirmed" stamp is cleared with it.
+    station.save_defaults({"chain_order": chain_text(data["chains"][name]["parts"]),
+                           "chain_used_at": None})
     return data
+
+
+def default_is_static(station: Station, text: str) -> bool:
+    """True when the Chain tab's current chain renders to `text` and is marked static."""
+    try:
+        data = load(station)
+    except ValueError:
+        return False
+    cur = data["chains"].get(data.get("current") or "")
+    return bool(cur and cur.get("static") and chain_text(cur["parts"]) == text)
+
+
+def mark_text_used(station: Station, text: str) -> None:
+    """A run just recorded `text`: stamp the Chain tab chain that renders to it, if any."""
+    try:
+        data = load(station)
+    except ValueError:
+        return
+    for name, c in data["chains"].items():
+        if chain_text(c["parts"]) == text:
+            mark_used(station, name)
+            return
 
 
 def mark_used(station: Station, name: str | None = None) -> None:
