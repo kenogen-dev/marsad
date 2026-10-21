@@ -106,6 +106,20 @@ RANGES = {
         "integration": 1,
         "floor_window": 0.3,     # the 2 MHz default is nearly half the span
     },
+    # The tracking tile of Hunt mode: wide enough to hold a whole 10 MHz candidate
+    # block with room either side, fast enough to follow a moving probe. 49 hops
+    # retune in 2.3 s, so -i 3 is the first whole second above the floor (23%
+    # listening); the 5 MHz hunt tile is the "narrow" step once a line is found.
+    # Gain stays at the wide preset's g29 so levels read like the candidate list.
+    "tile": {
+        "label": "tile: 100 MHz around one frequency (25 kHz bins, g29, 3 s sweeps)",
+        "preset": "deep",
+        "span_mhz": 101.0,
+        "bin_khz": 25.0,
+        "gain": 29.0,
+        "integration": 3,
+        "floor_window": 2.0,
+    },
 }
 
 DURATIONS_MIN = [2, 5, 10]
@@ -357,10 +371,11 @@ def compose(station: Station, form: dict) -> dict:
         warnings.append(f"gain {gain:g} dB is not a step on the {receiver}'s tuner; "
                         f"using the nearest, {nearest:g} dB")
         gain = nearest
-    if gain != float(preset["gain"]) and rng_id != "hunt":
+    tiled = "span_mhz" in rng          # a tile around one frequency: hunt, tile
+    if gain != float(preset["gain"]) and not tiled:
         extra += ["--gain", f"{gain:g}"]
     hunt = None
-    if rng_id == "hunt":
+    if tiled:
         try:
             centre = float(form.get("centre") or 0)
         except (TypeError, ValueError):
@@ -380,7 +395,7 @@ def compose(station: Station, form: dict) -> dict:
                                 f"({g_lo:g}-{g_hi:g} MHz): rtl_power cannot tune there")
         extra += ["--freq", freq, "--gain", f"{gain:g}", "--integration", str(integration),
                   "--floor-window", f"{rng['floor_window']:g}"]
-        range_label = f"hunt {centre:g} MHz ({freq}, g{gain:g}, i{integration})"
+        range_label = f"{rng_id} {centre:g} MHz ({freq}, g{gain:g}, i{integration})"
     else:
         freq = preset["freq"]
         extra += ["--integration", str(integration)]
@@ -410,7 +425,9 @@ def compose(station: Station, form: dict) -> dict:
         held = "in open air"
     else:
         raise ValueError("say where the probe is held (for example 'against the PSU fan grille')")
-    tag = f"probe-{slug(target)}-{slug(probe['id'], 20)}"
+    # A tile around one frequency is a hunt whichever panel started it; the wide
+    # overview is a probe survey. The prefix is how the two sort in surveys/.
+    tag = f"{'hunt' if tiled else 'probe'}-{slug(target)}-{slug(probe['id'], 20)}"
     tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
     try:
         pad_db = int(form.get("attenuator") or 0)

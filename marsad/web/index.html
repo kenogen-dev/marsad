@@ -81,6 +81,17 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .state b{color:var(--accent);font-weight:600}
 #pb-map table td{white-space:normal;text-align:left;font-size:12px}
 #pb-map table th{text-align:left}
+/* Hunt mode: a readout big enough to glance at from across the room */
+.hud{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
+.hud-l{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.hud-v{font:600 44px/1.1 ui-monospace,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+.hud-v.big{font-size:68px;color:var(--accent)}
+.hud-u{font-size:12px;color:var(--dim)}
+.bar{height:10px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden;margin-top:10px}
+.bar div{height:100%;width:0;background:linear-gradient(90deg,#4fcf96,#e8b14f 60%,#ff8a65);transition:width .3s}
+#hu-cands table td{font-size:12px;text-align:right;white-space:nowrap}
+#hu-cands table td.l,#hu-cands table th{text-align:left}
+#hu-cands tr.chosen{background:rgba(79,211,232,.12)}
 /* Chain tab */
 .pal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
 .pal .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-right:-6px}
@@ -220,6 +231,46 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <button class="btn halt" id="pb-stop" disabled>Stop</button>
         <span class="state" id="pb-state">idle</span>
       </div>
+    </div>
+    <div class="wrap" id="pb-hunt">
+      <div class="lab">Hunt — what a device adds, then one line followed by ear</div>
+      <p class="note"><b>1. Find candidates.</b> Two <b>wide</b> runs from the form above with the same probe and pad: one with the target
+        <i>background (probe in open air)</i>, one with the probe at the device. Their bins are subtracted (device minus background,
+        median over sweeps so a one-sweep click drops out) and pooled into blocks, ranked by the bin that rose most. Whatever both runs
+        share — the SDR's clock harmonics, the DC spikes, the room's broadcasters — cancels.
+        <b>2. Track.</b> An ordinary run on a tile around the chosen block; the strongest line in the tile (or the centre frequency) becomes
+        a tone, <b>one octave per 10 dB</b> over the tile's floor, so the probe can be moved without looking. Target, probe, held, receiver,
+        pad, notes and chain are taken from the form above; the tag becomes <code>hunt-&lt;target&gt;-&lt;probe&gt;</code>.
+        <b>3. Narrow.</b> When the line is strong, one click stops the tile and restarts a 5 MHz hunt tile centred on it.</p>
+      <div class="frm">
+        <label>Background <select id="hu-bg" style="min-width:320px"></select></label>
+        <label>At the device <select id="hu-dev" style="min-width:320px"></select></label>
+        <label>Blocks <select id="hu-block" style="min-width:80px"></select></label>
+        <button class="btn" id="hu-rank">Rank the bands</button>
+        <button class="btn" id="hu-reload" title="re-read reports/">↻</button>
+      </div>
+      <div id="hu-cands" style="margin-top:8px"></div>
+      <div class="frm" style="margin-top:12px">
+        <label>Centre <input id="hu-centre" type="number" step="0.001" placeholder="MHz"> MHz</label>
+        <label>Follow <select id="hu-follow" style="min-width:190px"><option value="strongest">strongest line in the tile</option><option value="typed">the centre frequency</option></select></label>
+        <button class="btn go" id="hu-tile" title="101 MHz, 25 kHz bins, g29, -i 3: 49 hops, 2.3 s retune floor">Start 100 MHz tile</button>
+        <button class="btn go" id="hu-5" title="5 MHz, 5 kHz bins, g42, -i 1: 3 hops">Start 5 MHz hunt</button>
+        <button class="btn halt" id="hu-stop" disabled>Stop</button>
+        <button class="btn" id="hu-narrow" disabled title="stop the tile and restart a 5 MHz hunt tile centred on the line being followed">Narrow to 5 MHz here</button>
+      </div>
+      <div class="frm" style="margin-top:8px">
+        <button class="btn" id="hu-listen">🔊 Listen</button>
+        <label>Sound <select id="hu-mode" style="min-width:120px"><option value="tone">tone (pitch)</option><option value="clicks">clicks (Geiger)</option></select></label>
+        <label>Volume <input id="hu-vol" type="range" min="0" max="1" step="0.05" value="0.4" style="width:120px"></label>
+        <span class="note" id="hu-note" style="margin:0"></span>
+      </div>
+      <div class="hud" id="hu-hud">
+        <div><div class="hud-l">followed line</div><div class="hud-v" id="hu-f">—</div><div class="hud-u">MHz</div></div>
+        <div><div class="hud-l">level</div><div class="hud-v" id="hu-db">—</div><div class="hud-u">dB (relative)</div></div>
+        <div><div class="hud-l">over the tile's floor</div><div class="hud-v big" id="hu-over">—</div><div class="hud-u">dB · floor <span id="hu-floor">—</span> dB</div></div>
+      </div>
+      <div class="bar"><div id="hu-bar"></div></div>
+      <div class="note" id="hu-stat" style="margin-top:4px"></div>
     </div>
     <div class="wrap">
       <div class="lab">This run <span style="float:right;font-weight:normal;opacity:.75"><a href="#" id="pb-toscan" style="color:var(--accent)">watch it on the Scan tab</a></span></div>
@@ -935,6 +986,7 @@ async function probeInit(){
   pbEl('toscan').onclick=e=>{e.preventDefault();curFile=null;resetView();showPane('scan');};
   pbShowFields();
   pbPreview();
+  huInit();
   if(!pbPolling){pbPolling=true;pbPoll();}
   pbDetect();          // a read-only look at what is plugged in; skipped by the server if the SDR is busy
 }
@@ -1008,6 +1060,241 @@ function pbRender(d){
   pbEl('log').textContent=d.log_tail||'';
   if(d.state==='done'&&pbLastState!=='done')loadProbeMap();
   pbLastState=d.state;
+  huStatus(d);
+}
+
+// ---------------------------------------------------------------- Hunt mode
+// Step 1 asks the server to subtract two finished reports (/hunt/candidates).
+// Step 2 starts an ordinary probe run on a tile and reads its sweeps from /data,
+// the same feed the Scan tab draws: the latest complete sweep's 1200 columns and
+// its whole-sweep median are enough to find the strongest line, its level and how
+// far it stands over the floor. The sound is made here with the Web Audio API.
+const huEl=id=>document.getElementById('hu-'+id);
+const hu={reports:[],csv:null,have:0,lo:null,hi:null,cols:null,hopC:[],stepK:null,range:null,
+          state:'idle',lastSweep:0,sweeps:0,over:null,f:null,narrowTo:null,
+          audio:null,osc:null,toneG:null,clickOsc:null,clickG:null,on:false,clickAt:0,clickTimer:null};
+function huVol(){return parseFloat(huEl('vol').value)||0;}
+function huWhen(i){return i.started?String(i.started).slice(5,16).replace('T',' '):'?';}
+function huLabel(i){return `${huWhen(i)} · ${i.target||i.tag||i.name} · ${i.preset||''}`;}
+async function huLoadReports(){
+  try{
+    const d=await (await fetch('/hunt/reports')).json();
+    hu.reports=d.reports||[];
+    const opt=i=>`<option value="${esc(i.name)}" title="${esc(i.fingerprint||'')}">${esc(huLabel(i))}</option>`;
+    const bgSel=huEl('bg').value, devSel=huEl('dev').value;
+    huEl('bg').innerHTML=hu.reports.map(opt).join('');
+    huEl('dev').innerHTML=hu.reports.map(opt).join('');
+    if(!huEl('block').options.length)huEl('block').innerHTML=(d.block_choices_mhz||[10]).map(b=>`<option value="${b}"${b===d.block_mhz?' selected':''}>${b} MHz</option>`).join('');
+    // defaults: the newest open-air probe run against the newest probe run at a device
+    const bg=hu.reports.find(i=>i.name===bgSel)||hu.reports.find(i=>i.background);
+    const same=i=>bg&&i.name!==bg.name&&i.fingerprint===bg.fingerprint;
+    const dev=hu.reports.find(i=>i.name===devSel)||hu.reports.find(i=>i.probe_run&&!i.background&&same(i))||hu.reports.find(same);
+    if(bg)huEl('bg').value=bg.name;
+    if(dev)huEl('dev').value=dev.name;
+    huFingerNote();
+  }catch(e){huEl('cands').innerHTML=`<span class="bad">could not list reports: ${esc(e)}</span>`;}
+}
+function huFingerNote(){
+  const a=hu.reports.find(i=>i.name===huEl('bg').value), b=hu.reports.find(i=>i.name===huEl('dev').value);
+  if(a&&b&&a.fingerprint&&b.fingerprint&&a.fingerprint!==b.fingerprint)
+    huEl('cands').innerHTML=`<span class="warn">⚠ different fingerprints — these two cannot be subtracted:<br>${esc(a.fingerprint)}<br>${esc(b.fingerprint)}</span>`;
+  else if(!huEl('cands').querySelector('table'))huEl('cands').innerHTML='';
+}
+async function huRank(){
+  huEl('rank').disabled=true;huEl('cands').innerHTML='<span class="note">subtracting…</span>';
+  try{
+    const q=`bg=${encodeURIComponent(huEl('bg').value)}&dev=${encodeURIComponent(huEl('dev').value)}&block=${huEl('block').value}`;
+    const d=await (await fetch('/hunt/candidates?'+q)).json();
+    if(d.error){huEl('cands').innerHTML=`<div class="bad">${esc(d.error).replace(/\n/g,'<br>')}</div>`;return;}
+    const c=d.candidates||[];
+    if(!c.length){huEl('cands').innerHTML='<span class="note">no blocks in common</span>';return;}
+    huEl('cands').innerHTML=`<div class="note">${d.n_bins_common} bins in common at ${d.step_khz} kHz, ${d.blocks} blocks of ${d.block_mhz} MHz; `
+      +`device run <b>${esc(d.device.target||d.device.name)}</b> minus background <b>${esc(d.background.target||d.background.name)}</b>. `
+      +`Peak rise is the single bin that rose most (median over sweeps); floor rise is the block's median rise, which a broadband emitter lifts and a single line does not.</div>`
+      +'<table><thead><tr><th>#</th><th>Block</th><th>Peak at</th><th>Peak rise</th><th>Floor rise</th><th>Device level</th><th>Tag</th><th></th></tr></thead><tbody>'
+      +c.map(x=>`<tr data-f="${x.peak_mhz}"><td class="l">${x.rank}</td><td class="l">${x.lo_mhz}–${x.hi_mhz} MHz</td><td>${x.peak_mhz.toFixed(4)}</td>`
+        +`<td><b>${x.peak_rise_db>0?'+':''}${x.peak_rise_db.toFixed(1)}</b> dB</td><td>${x.floor_rise_db>0?'+':''}${x.floor_rise_db.toFixed(1)} dB</td>`
+        +`<td>${x.device_db.toFixed(1)} dB</td><td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}</td>`
+        +`<td><button class="btn" data-f="${x.peak_mhz}">Track</button></td></tr>`).join('')+'</tbody></table>';
+    huEl('cands').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>huPick(parseFloat(b.dataset.f)));
+  }catch(e){huEl('cands').innerHTML=`<span class="bad">ranking failed: ${esc(e)}</span>`;}
+  finally{huEl('rank').disabled=false;}
+}
+function huPick(f){
+  huEl('centre').value=f.toFixed(3);
+  huEl('cands').querySelectorAll('tr[data-f]').forEach(tr=>tr.classList.toggle("chosen",parseFloat(tr.dataset.f)===f));
+  huEl('note').textContent=`centre set to ${f.toFixed(3)} MHz — start the 100 MHz tile, then narrow once the line is found`;
+  try{localStorage.setItem('sdr-hunt-centre',String(f));}catch(e){}
+}
+async function huStart(range){
+  const centre=huEl('centre').value;
+  if(!centre){huEl('note').innerHTML='<span class="bad">type a centre frequency, or click Track on a candidate</span>';return;}
+  huEl('tile').disabled=huEl('5').disabled=true;
+  const form={...pbForm(),range,centre};
+  try{
+    const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+    const d=await r.json();
+    if(d.error){huEl('note').innerHTML=`<span class="bad">${esc(d.error)}</span>`;huEl('tile').disabled=huEl('5').disabled=false;return;}
+    hu.csv=null;hu.have=0;hu.sweeps=0;hu.over=null;hu.f=null;hu.hopC=[];
+    huEl('note').textContent=`started ${d.tag}`;
+    pbRender(d);
+  }catch(e){huEl('note').innerHTML=`<span class="bad">start failed: ${esc(e)}</span>`;huEl('tile').disabled=huEl('5').disabled=false;}
+}
+function huNarrow(){
+  if(hu.f===null)return;
+  hu.narrowTo=hu.f;
+  huEl('narrow').disabled=true;
+  huEl('note').textContent=`stopping the tile; the 5 MHz hunt tile on ${hu.f.toFixed(3)} MHz starts as soon as the tile's analysis has finished`;
+  pbStop();
+}
+// Called from pbRender with every /probe/status answer: which run to listen to, and
+// the narrow step once the stopped tile has been analysed and the SDR is free.
+function huStatus(d){
+  if(!pbReady)return;
+  const busy=['starting','recording','stopping','analysing'].includes(d.state);
+  hu.state=d.state;
+  const tiled=/^(tile|hunt) /.test(d.range_label||'');
+  hu.range=tiled?(d.range_label||'').split(' ')[0]:null;
+  huEl('tile').disabled=huEl('5').disabled=busy;
+  huEl('stop').disabled=d.state!=='recording';
+  huEl('narrow').disabled=!(d.state==='recording'&&hu.range==='tile'&&hu.f!==null);
+  if(d.csv&&busy&&d.csv!==hu.csv){hu.csv=d.csv;hu.have=0;hu.sweeps=0;hu.hopC=[];hu.lo=hu.hi=null;}
+  if(!busy){
+    if(hu.narrowTo!==null&&(d.state==='done'||d.state==='failed'||d.state==='idle')){
+      const f=hu.narrowTo;hu.narrowTo=null;huEl('centre').value=f.toFixed(3);huStart('hunt');return;}
+    if(hu.csv&&d.state!=='recording'){hu.csv=null;huMute();
+      if(d.state==='done')huEl('stat').textContent+=' · run finished, report written';}
+  }
+}
+// One poll of /data for the run being hunted, roughly once a second while it records.
+async function huTick(){
+  try{
+    if(hu.csv&&(hu.state==='recording'||hu.state==='starting')){
+      const r=await fetch(`/data?since=${hu.have}&file=${encodeURIComponent(hu.csv)}`);
+      if(r.ok){
+        const d=await r.json();
+        if(d.file===hu.csv){
+          if(d.lo!==null){hu.lo=d.lo;hu.hi=d.hi;hu.cols=d.cols;}
+          if(d.hop_centres_mhz)hu.hopC=d.hop_centres_mhz;
+          if(d.step_khz)hu.stepK=d.step_khz;
+          if(d.rows&&d.rows.length){
+            hu.have=d.from+d.rows.length;hu.sweeps=d.total;hu.lastSweep=Date.now();
+            const meds=d.medians||[];
+            huReading(d.rows[d.rows.length-1],meds.length?meds[meds.length-1]:null);
+          }
+        }
+      }
+      const age=hu.lastSweep?(Date.now()-hu.lastSweep)/1000:null;
+      if(age!==null&&age>6){huEl('stat').textContent=`no new sweep for ${age.toFixed(0)} s — rtl_power flushes in bursts, or the run is ending`;huMute();}
+    }
+  }catch(e){}
+  setTimeout(huTick,1000);
+}
+// From one complete sweep (1200 max-per-column values): the followed line's column,
+// its level, and the floor. The DC spike at every hop centre is excluded from
+// "strongest", exactly as the analyser tags it, or it would win every time.
+function huReading(row,med){
+  if(hu.lo===null||!row)return;
+  const n=row.length, span=hu.hi-hu.lo, colMHz=span/(n-1);
+  const colOf=f=>Math.round((f-hu.lo)/span*(n-1));
+  const fOf=c=>hu.lo+c/(n-1)*span;
+  const floor=(med!==null&&med!==undefined)?med:pct(row,0.5);
+  // The spike's skirt is about +/-20 kHz wide at 8 dB over the floor (burst23 file,
+  // 2.6 kHz bins), so at least +/-25 kHz goes, and never less than two columns.
+  const skip=new Set();
+  const w=Math.max(2,Math.ceil(Math.max(1.5*(hu.stepK||0),25)/1e3/colMHz));
+  for(const h of hu.hopC){const c=colOf(h);for(let k=c-w;k<=c+w;k++)skip.add(k);}
+  let idx=-1, best=-1e9;
+  if(huEl('follow').value==='typed'){
+    const c=colOf(parseFloat(huEl('centre').value)||0);
+    for(let k=Math.max(0,c-1);k<=Math.min(n-1,c+1);k++)if(row[k]!==null&&row[k]>best){best=row[k];idx=k;}
+  }else{
+    for(let k=0;k<n;k++)if(row[k]!==null&&!skip.has(k)&&row[k]>best){best=row[k];idx=k;}
+  }
+  if(idx<0||floor===null||floor===undefined)return;
+  const over=best-floor, f=fOf(idx);
+  hu.over=over;hu.f=f;
+  huEl('f').textContent=f.toFixed(hu.range==='hunt'?4:3);
+  huEl('db').textContent=best.toFixed(1);
+  huEl('over').textContent=(over>=0?'+':'')+over.toFixed(1);
+  huEl('floor').textContent=floor.toFixed(1);
+  huEl('bar').style.width=Math.max(0,Math.min(100,over/40*100)).toFixed(0)+'%';
+  huEl('stat').textContent=`sweep ${hu.sweeps} · ${hu.range==='hunt'?'5 MHz hunt tile':'100 MHz tile'} ${hu.lo.toFixed(2)}–${hu.hi.toFixed(2)} MHz · `
+    +(huEl('follow').value==='typed'?'watching the centre frequency':'strongest line, hop centres excluded')+` · ${new Date().toLocaleTimeString()}`;
+  huEl('narrow').disabled=!(hu.state==='recording'&&hu.range==='tile');
+  huSound(over);
+}
+// Sound. Tone: pitch doubles every 10 dB over the floor (dB and pitch are both
+// logarithmic, so equal level steps sound like equal musical steps), 110 Hz at the
+// floor, capped at 3.5 kHz. Clicks: a Geiger counter, rate doubling every 6 dB from
+// 2/s at the floor to 40/s. Audio needs a click on the page first; Listen is that click.
+function huAudioStart(){
+  if(!hu.audio){
+    const A=window.AudioContext||window.webkitAudioContext;
+    hu.audio=new A();
+    hu.toneG=hu.audio.createGain();hu.toneG.gain.value=0;hu.toneG.connect(hu.audio.destination);
+    hu.osc=hu.audio.createOscillator();hu.osc.type='triangle';hu.osc.frequency.value=110;hu.osc.connect(hu.toneG);hu.osc.start();
+    hu.clickG=hu.audio.createGain();hu.clickG.gain.value=0;hu.clickG.connect(hu.audio.destination);
+    hu.clickOsc=hu.audio.createOscillator();hu.clickOsc.type='square';hu.clickOsc.frequency.value=1400;hu.clickOsc.connect(hu.clickG);hu.clickOsc.start();
+  }
+  hu.audio.resume();
+}
+function huMute(){
+  if(!hu.audio)return;
+  const t=hu.audio.currentTime;
+  hu.toneG.gain.cancelScheduledValues(t);hu.toneG.gain.setTargetAtTime(0,t,0.05);
+  hu.clickG.gain.cancelScheduledValues(t);hu.clickG.gain.setValueAtTime(0,t);
+  hu.clickAt=0;
+}
+function huSound(over){
+  if(!hu.on||!hu.audio)return;
+  const t=hu.audio.currentTime, vol=huVol();
+  if(huEl('mode').value==='tone'){
+    hu.clickG.gain.cancelScheduledValues(t);hu.clickG.gain.setValueAtTime(0,t);hu.clickAt=0;
+    const pitch=Math.min(3500,Math.max(80,110*Math.pow(2,over/10)));
+    hu.osc.frequency.setTargetAtTime(pitch,t,0.06);
+    hu.toneG.gain.setTargetAtTime(over>1?vol*0.5:vol*0.08,t,0.05);   // nearly silent at the floor
+  }else{
+    hu.toneG.gain.setTargetAtTime(0,t,0.05);
+    hu.rate=Math.min(40,Math.max(0.5,2*Math.pow(2,over/6)));
+  }
+}
+// The click scheduler runs on a timer and books clicks a little ahead on the audio clock,
+// at whatever rate the last reading set, so clicks keep coming between sweeps.
+function huClicks(){
+  if(hu.on&&hu.audio&&huEl('mode').value==='clicks'&&hu.rate&&hu.csv){
+    const t=hu.audio.currentTime, vol=huVol();
+    if(hu.clickAt<t)hu.clickAt=t+0.02;
+    while(hu.clickAt<t+0.3){
+      hu.clickG.gain.setValueAtTime(vol,hu.clickAt);
+      hu.clickG.gain.setValueAtTime(0,hu.clickAt+0.004);
+      hu.clickAt+=1/hu.rate;
+    }
+  }
+  hu.clickTimer=setTimeout(huClicks,150);
+}
+function huListen(){
+  hu.on=!hu.on;
+  huEl('listen').classList.toggle('on',hu.on);
+  huEl('listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
+  if(hu.on){huAudioStart();if(hu.over!==null)huSound(hu.over);}else huMute();
+}
+let huReady=false;
+function huInit(){
+  if(huReady)return;huReady=true;
+  huLoadReports();
+  huEl('reload').onclick=huLoadReports;
+  huEl('rank').onclick=huRank;
+  huEl('bg').onchange=huEl('dev').onchange=huFingerNote;
+  huEl('tile').onclick=()=>huStart('tile');
+  huEl('5').onclick=()=>huStart('hunt');
+  huEl('stop').onclick=pbStop;
+  huEl('narrow').onclick=huNarrow;
+  huEl('listen').onclick=huListen;
+  huEl('mode').onchange=()=>{if(hu.over!==null)huSound(hu.over);else huMute();};
+  huEl('vol').oninput=()=>{if(hu.over!==null)huSound(hu.over);};
+  try{const c=localStorage.getItem('sdr-hunt-centre');if(c&&!huEl('centre').value)huEl('centre').value=parseFloat(c).toFixed(3);}catch(e){}
+  huTick();huClicks();
 }
 async function pbPoll(){
   try{const d=await (await fetch('/probe/status')).json();pbRender(d);}catch(e){}

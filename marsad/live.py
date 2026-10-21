@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import chain, host, probe
+from . import chain, host, hunt, probe
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        parse_freq_spec)
@@ -623,6 +623,21 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                     body = json.dumps(probe.detect_receivers(station)).encode()
             elif u.path == "/probe/status":
                 body = json.dumps(runner.status()).encode()
+            elif u.path == "/hunt/reports":
+                body = json.dumps({"reports": hunt.report_list(station),
+                                   "block_choices_mhz": hunt.BLOCK_CHOICES_MHZ,
+                                   "block_mhz": hunt.BLOCK_MHZ}).encode()
+            elif u.path == "/hunt/candidates":
+                # Which blocks the device run raised over the background run. A refusal
+                # (different fingerprints, same report twice) is a plain-language `error`.
+                try:
+                    out = hunt.candidates(station, (q.get("bg") or [""])[0], (q.get("dev") or [""])[0],
+                                          float((q.get("block") or [hunt.BLOCK_MHZ])[0]),
+                                          int((q.get("top") or [hunt.TOP])[0]))
+                except ValueError as exc:
+                    self._send(json.dumps({"error": str(exc)}).encode(), code=400)
+                    return
+                body = json.dumps(out).encode()
             elif u.path == "/probe/log":
                 body = probe.read_log(station).encode("utf-8")
                 ctype = "text/plain; charset=utf-8"
@@ -672,7 +687,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
                     print(f"  no new data for {args.exit_after_idle:g} min - shutting down")
                     srv.shutdown()
                     return
-            time.sleep(2.0)
+            # A hunt tile writes a sweep a second and the page turns it into sound, so
+            # while a run started from the page is recording the file is read twice a
+            # second. Otherwise every 2 s is plenty: rtl_power flushes in 4 KB bursts.
+            time.sleep(0.5 if runner.running() else 2.0)
 
     threading.Thread(target=loop, daemon=True).start()
 

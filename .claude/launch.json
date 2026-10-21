@@ -14,6 +14,13 @@
       "runtimeArgs": ["-m", "marsad", "live", "--port", "8741"],
       "port": 8741,
       "autoPort": false
+    },
+    {
+      "name": "live-view-hunt",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-m", "marsad", "live", "--port", "8742"],
+      "port": 8742,
+      "autoPort": false
     }
   ]
 }

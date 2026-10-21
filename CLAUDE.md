@@ -1468,6 +1468,28 @@ come from station.json defaults, as for any `--non-interactive` run; `chain_orde
 The probe chain goes through the DC block into the LaNA at the window, never a loop straight onto
 the XTR's SMA (bias-tee always on).
 
+**Hunt mode (2026-10-21)**, a panel inside the Probe tab, for walking a near-field probe
+around without watching the screen. `marsad/hunt.py` (stdlib) does step 1: two finished
+**wide** probe runs with the same fingerprint - open air, then at the device - are subtracted
+**bin by bin on `median_db`** (median over sweeps, so a one-sweep click drops out) and the
+differences pooled into blocks (5/10/20 MHz), ranked by the bin that rose most; the block's
+median rise is shown beside it, since a broadband emitter lifts that and a single line does
+not. Whatever both runs share - clock harmonics, hop-centre DC spikes, the room's broadcasters
+- cancels. Two open-air backgrounds 100 min apart still differed by **13 dB** in the UHF TV
+and 700 MHz LTE blocks (measured 2026-10-21), so **run the pair back to back**. Step 2 starts
+an ordinary `marsad run` through the probe path on the new `tile` range (**101 MHz, 25 kHz
+bins, g29, `-i 3`**: 49 hops, 2.3 s retune floor, 23% listening) or the 5 MHz `hunt` tile,
+tagged `hunt-<target>-<probe>`; the page reads the run's sweeps from `/data` and turns the
+strongest line in the tile (or the typed centre) into sound with the Web Audio API: **one
+octave per 10 dB** over the sweep's floor (110 Hz at the floor), or Geiger clicks doubling
+every 6 dB. Columns within +/-25 kHz (at least two columns) of every hop centre are excluded
+from "strongest", because the E4000 DC spike's skirt is ~+/-20 kHz wide at 8 dB over the
+floor and would win otherwise. Step 3, "Narrow", stops the tile and restarts the 5 MHz hunt
+tile on the followed line once the tile's analysis has finished (the child process holds the
+SDR until then). Endpoints: `GET /hunt/reports`, `GET /hunt/candidates?bg&dev&block`; a
+fingerprint mismatch is refused in plain words. While a run started from the page records,
+the server reads its CSV twice a second instead of every 2 s.
+
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 
 ```
