@@ -77,6 +77,29 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .state b{color:var(--accent);font-weight:600}
 #pb-map table td{white-space:normal;text-align:left;font-size:12px}
 #pb-map table th{text-align:left}
+/* Chain tab */
+.pal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.pal .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-right:-6px}
+.chip{display:inline-block;padding:5px 10px;border:1px dashed var(--line);border-radius:5px;background:var(--bg);font-size:12.5px;cursor:grab;user-select:none}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.rail{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;padding:10px 4px;min-height:96px;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+.node{position:relative;min-width:120px;max-width:200px;padding:8px 10px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:grab;user-select:none;margin:4px 0}
+.node:hover{border-color:var(--accent)}
+.node.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.node.src{background:#1b4a3a}
+.node.rx{background:#2a2d4a}
+.node .t{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.node .n{font-size:13px;color:var(--ink);margin-top:2px;word-break:break-word}
+.node .d{font-size:11px;color:var(--dim);margin-top:2px;word-break:break-word;max-height:42px;overflow:hidden}
+.slot{width:26px;min-height:60px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:16px;flex:none;border-radius:4px;margin:4px 0}
+.slot.over{background:rgba(79,211,232,.25);color:var(--accent)}
+.slot.end{width:60px;border:1px dashed var(--line);font-size:11px;letter-spacing:.06em}
+.node.drag,.chip.drag{opacity:.45}
+.ed{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-start}
+.ed label{display:flex;flex-direction:column;gap:4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.ed input,.ed select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font:13px ui-sans-serif,system-ui,sans-serif;min-width:200px}
+.ed input.sm{min-width:90px}
+.cur{color:#4fcf96;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 </style></head><body>
 <header>
   <h1><span class="dot" id="dot"></span>SDR station</h1>
@@ -95,6 +118,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
   <div class="tab" data-pane="builder">Builder</div>
   <div class="tab" data-pane="archive">Archive</div>
   <div class="tab" data-pane="probe">Probe</div>
+  <div class="tab" data-pane="chain">Chain</div>
   <div class="tab" data-pane="roadmap">Roadmap</div>
 </div>
 
@@ -181,6 +205,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <span class="note" id="pb-rxnote" style="margin:0"></span>
         <label style="flex:1 1 100%">Notes <input id="pb-notes" class="wide" placeholder="what is switched on in the room, anything unusual"></label>
         <label style="flex:1 1 100%;align-items:flex-start">Chain after the probe <textarea id="pb-chain" rows="3" style="flex:1;font-size:12px"></textarea></label>
+        <span class="note" id="pb-chainnote" style="flex:1 1 100%;margin:-4px 0 0"></span>
       </div>
       <div class="note" id="pb-geom" style="margin-top:10px"></div>
       <pre class="cmd" id="pb-cmd">…</pre>
@@ -199,6 +224,46 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
     <div class="wrap">
       <div class="lab">Room RF map — <span id="pb-logfile" style="text-transform:none;letter-spacing:0">ROOM_RF.md</span></div>
       <div id="pb-map" style="overflow-x:auto"><p class="note">No probe runs logged yet.</p></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-chain">
+  <main>
+    <div class="wrap">
+      <div class="lab">Chains — drawings of the rig, saved in <span id="ch-file" style="text-transform:none;letter-spacing:0">chain.json</span></div>
+      <p class="note">A chain is one line from the source to the PC. Drag a part from the palette onto the rail, drag parts along the rail to reorder,
+        click one to edit or remove it. The text at the bottom is exactly what a run records as its chain. "Use for runs" makes a chain the current one
+        and also writes it into station.json, so a plain <code>marsad run</code> records it too.</p>
+      <div class="frm">
+        <label>Chain <select id="ch-sel"></select></label>
+        <span class="cur" id="ch-cur"></span>
+        <button class="btn" id="ch-use">Use for runs</button>
+        <button class="btn" id="ch-new">New</button>
+        <button class="btn" id="ch-dup">Duplicate</button>
+        <button class="btn" id="ch-ren">Rename</button>
+        <button class="btn" id="ch-del">Delete</button>
+        <label title="Tick when this chain is not what you are working on: runs then use it without asking whether it changed"><input type="checkbox" id="ch-static" style="accent-color:var(--accent)"> static — no changes expected</label>
+        <span class="note" id="ch-stamp" style="margin:0"></span>
+        <span class="note" id="ch-saved" style="margin:0 0 0 auto"></span>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Palette — drag a part onto the rail, or click it to add at the end</div>
+      <div class="pal" id="ch-pal"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Rail — source on the left, PC on the right</div>
+      <div class="rail" id="ch-rail"></div>
+    </div>
+    <div class="wrap" id="ch-edwrap" hidden>
+      <div class="lab">Selected part</div>
+      <div class="ed" id="ch-ed"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Chain text — what a run records</div>
+      <pre class="cmd" id="ch-text"></pre>
+      <button class="btn" id="ch-copy">Copy</button>
     </div>
   </main>
 </div>
@@ -437,6 +502,8 @@ function overlayFall(){
 let mh=[];
 function draw(){
   if(!rows.length||lo===null)return;
+  // a hidden pane's canvases are zero-sized; showPane redraws when Scan comes back
+  if(!document.getElementById('pane-scan').classList.contains('on'))return;
   const flat=[].concat(...rows.slice(-40));
   const floor=pct(flat,.2), top=pct(flat,.999);
   if(floor===null)return;
@@ -596,13 +663,181 @@ function showPane(name){
   if(name==='builder'){const f=document.getElementById('builder');if(!f.src)f.src='/builder';}
   if(name==='archive')loadArchive();
   if(name==='probe'){probeInit();loadProbeMap();}
+  if(name==='chain')chainInit();
   try{localStorage.setItem('sdr-pane',name);}catch(e){}
+}
+
+// ---------------------------------------------------------------- Chain tab
+// The page owns the drawing; the server stores it, stamps 'updated' when a
+// chain's parts change, and renders the text a run records.
+let ch={data:null,sel:null,part:null,ready:false,timer:null,drag:null};
+const chEl=id=>document.getElementById('ch-'+id);
+function chCur(){return ch.data&&ch.sel?ch.data.chains[ch.sel]:null;}
+function chPartText(p){
+  let n=(p.name||ch.data.parts[p.type].label||'part').trim();
+  if(p.type==='attenuator'&&p.db)n=p.db+' dB SMA attenuator';
+  return p.detail?`${n} (${p.detail})`:n;
+}
+function chText(parts){return parts.map(chPartText).join(' > ');}
+function chStamp(s){return s?String(s).slice(5,16).replace('T',' '):'never';}
+async function chainInit(){
+  if(ch.ready){chRender();return;}ch.ready=true;
+  try{
+    ch.data=await (await fetch('/chain')).json();
+    if(ch.data.error){chEl('saved').innerHTML=`<span class="bad">${esc(ch.data.error)}</span>`;}
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">could not load /chain: ${esc(e)}</span>`;return;}
+  chEl('file').textContent=ch.data.file||'chain.json';
+  ch.sel=ch.data.current||Object.keys(ch.data.chains)[0]||null;
+  // palette, grouped
+  const groups={};for(const [t,d] of Object.entries(ch.data.parts))(groups[d.group]=groups[d.group]||[]).push([t,d]);
+  chEl('pal').innerHTML=Object.entries(groups).map(([g,items])=>`<span class="grp">${esc(g)}</span>`
+    +items.map(([t,d])=>`<span class="chip" draggable="true" data-type="${esc(t)}" title="${esc(d.note||'')}">${esc(d.label)}</span>`).join('')).join('');
+  chEl('pal').querySelectorAll('.chip').forEach(c=>{
+    c.addEventListener('dragstart',e=>{ch.drag={type:c.dataset.type};c.classList.add('drag');e.dataTransfer.effectAllowed='copy';e.dataTransfer.setData('text/plain',c.dataset.type);});
+    c.addEventListener('dragend',()=>{c.classList.remove('drag');ch.drag=null;});
+    c.onclick=()=>chAdd(c.dataset.type,null);
+  });
+  chEl('sel').onchange=()=>{ch.sel=chEl('sel').value;ch.part=null;chRender();};
+  chEl('use').onclick=chUse;
+  chEl('new').onclick=()=>{const n=prompt('Name for the new chain (letters, digits, dashes):');if(!n)return;
+    if(ch.data.chains[n]){alert('that name exists');return;}
+    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:[{type:'antenna',name:'antenna',detail:''},{type:'pc',name:'PC',detail:''}]};
+    ch.sel=n;ch.part=null;chChanged();};
+  chEl('dup').onclick=()=>{const c=chCur();if(!c)return;const n=prompt('Name for the copy:',ch.sel+'-copy');if(!n||ch.data.chains[n])return;
+    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:JSON.parse(JSON.stringify(c.parts))};ch.sel=n;ch.part=null;chChanged();};
+  chEl('ren').onclick=()=>{const c=chCur();if(!c)return;const n=prompt('New name:',ch.sel);if(!n||n===ch.sel||ch.data.chains[n])return;
+    ch.data.chains[n]=c;delete ch.data.chains[ch.sel];if(ch.data.current===ch.sel)ch.data.current=n;ch.sel=n;chChanged();};
+  chEl('del').onclick=()=>{const c=chCur();if(!c)return;if(Object.keys(ch.data.chains).length<2){alert('keep at least one chain');return;}
+    if(!confirm(`Delete chain "${ch.sel}"? The drawing is lost; runs already recorded keep their text.`))return;
+    delete ch.data.chains[ch.sel];if(ch.data.current===ch.sel)ch.data.current=Object.keys(ch.data.chains)[0];ch.sel=ch.data.current;ch.part=null;chChanged();};
+  chEl('static').onchange=()=>{const c=chCur();if(c){c.static=chEl('static').checked;chChanged();}};
+  chEl('copy').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(chEl('text').textContent);chEl('saved').textContent='copied';};
+  chRender();
+}
+function chAdd(type,pos){
+  const c=chCur();if(!c)return;
+  const d=ch.data.parts[type];
+  const p={type,name:d.label,detail:''};
+  if(type==='antenna')p.name='antenna';if(type==='sdr'){p.name='XTR';p.rx='xtr';}
+  if(type==='attenuator'){p.db=10;}
+  if(pos===null||pos===undefined)pos=c.parts.length;
+  c.parts.splice(pos,0,p);ch.part=pos;chChanged();
+}
+function chMove(from,to){
+  const c=chCur();if(!c||from===to||from+1===to)return;
+  const [p]=c.parts.splice(from,1);if(to>from)to--;c.parts.splice(to,0,p);ch.part=to;chChanged();
+}
+function chRender(){
+  if(!ch.data)return;
+  const names=Object.keys(ch.data.chains);
+  chEl('sel').innerHTML=names.map(n=>`<option value="${esc(n)}"${n===ch.sel?' selected':''}>${esc(n)}${n===ch.data.current?' (current)':''}</option>`).join('');
+  const c=chCur();
+  chEl('cur').textContent=c&&ch.sel===ch.data.current?'current — runs use this chain':'';
+  chEl('use').disabled=!c||ch.sel===ch.data.current;
+  chEl('static').checked=!!(c&&c.static);
+  chEl('stamp').textContent=c?`updated ${chStamp(c.updated)} · last used as drawn ${chStamp(c.last_used)}`
+    +(c.static?'':(c.last_used?' · unchanged since that run: the next run will ask':'')):'';
+  const rail=chEl('rail');
+  if(!c){rail.innerHTML='<span class="note">no chain</span>';return;}
+  let h='';
+  c.parts.forEach((p,i)=>{
+    const d=ch.data.parts[p.type]||{};
+    h+=`<div class="slot" data-pos="${i}">+</div>`;
+    h+=`<div class="node${i===ch.part?' sel':''}${d.source?' src':''}${p.type==='sdr'?' rx':''}" draggable="true" data-i="${i}">`
+      +`<div class="t">${esc(d.label||p.type)}</div><div class="n">${esc(p.type==='attenuator'&&p.db?p.db+' dB':p.name||d.label)}</div>`
+      +(p.detail?`<div class="d">${esc(p.detail)}</div>`:'')+`</div>`;
+  });
+  h+=`<div class="slot end" data-pos="${c.parts.length}">+ end</div>`;
+  rail.innerHTML=h;
+  rail.querySelectorAll('.node').forEach(n=>{
+    n.onclick=()=>{ch.part=+n.dataset.i;chRender();};
+    n.addEventListener('dragstart',e=>{ch.drag={index:+n.dataset.i};n.classList.add('drag');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','node');});
+    n.addEventListener('dragend',()=>{n.classList.remove('drag');ch.drag=null;chRender();});
+  });
+  rail.querySelectorAll('.slot').forEach(s=>{
+    s.addEventListener('dragover',e=>{e.preventDefault();s.classList.add('over');e.dataTransfer.dropEffect=ch.drag&&ch.drag.type?'copy':'move';});
+    s.addEventListener('dragleave',()=>s.classList.remove('over'));
+    s.addEventListener('drop',e=>{e.preventDefault();s.classList.remove('over');const pos=+s.dataset.pos;
+      if(!ch.drag)return;if(ch.drag.type)chAdd(ch.drag.type,pos);else chMove(ch.drag.index,pos);ch.drag=null;});
+  });
+  chEditor();
+  chEl('text').textContent=chText(c.parts);
+}
+function chEditor(){
+  const c=chCur();const wrap=chEl('edwrap');
+  if(!c||ch.part===null||ch.part>=c.parts.length){wrap.hidden=true;return;}
+  wrap.hidden=false;
+  const p=c.parts[ch.part],d=ch.data.parts[p.type]||{fields:[]};
+  let h=`<label>Type<select id="che-type">${Object.entries(ch.data.parts).map(([t,x])=>`<option value="${t}"${t===p.type?' selected':''}>${esc(x.label)}</option>`).join('')}</select></label>`
+    +`<label>Name (as the chain text says it)<input id="che-name" value="${esc(p.name||'')}"></label>`
+    +`<label>Detail (in brackets)<input id="che-detail" value="${esc(p.detail||'')}" style="min-width:340px"></label>`;
+  if(d.fields.includes('length'))h+=`<label>Length<input id="che-length" class="sm" value="${esc(p.length||'')}" placeholder="e.g. 3 ft"></label>`;
+  if(d.fields.includes('db'))h+=`<label>dB<input id="che-db" class="sm" type="number" value="${esc(p.db||'')}"></label>`;
+  if(d.fields.includes('rx'))h+=`<label>Receiver<select id="che-rx"><option value="xtr"${p.rx==='xtr'?' selected':''}>xtr</option><option value="v5"${p.rx==='v5'?' selected':''}>v5</option></select></label>`;
+  h+=`<label>&nbsp;<span><button class="btn" id="che-left" title="move left">◀</button> <button class="btn" id="che-right" title="move right">▶</button> <button class="btn" id="che-rm">Remove</button></span></label>`;
+  if(d.note)h+=`<span class="note" style="flex:1 1 100%">${esc(d.note)}</span>`;
+  chEl('ed').innerHTML=h;
+  const g=id=>document.getElementById('che-'+id);
+  const upd=()=>{p.type=g('type').value;p.name=g('name').value;p.detail=g('detail').value;
+    if(g('length'))p.length=g('length').value;if(g('db'))p.db=g('db').value?+g('db').value:'';if(g('rx'))p.rx=g('rx').value;
+    chChanged(false);};
+  g('type').onchange=()=>{p.type=g('type').value;const nd=ch.data.parts[p.type];if(!p.name||p.name===d.label)p.name=nd.label;chChanged();};
+  for(const id of ['name','detail','length','db','rx']){const el=g(id);if(el){el.oninput=upd;el.onchange=upd;}}
+  g('left').onclick=()=>{if(ch.part>0)chMove(ch.part,ch.part-1);};
+  g('right').onclick=()=>{if(ch.part<c.parts.length-1)chMove(ch.part,ch.part+2);};
+  g('rm').onclick=()=>{c.parts.splice(ch.part,1);ch.part=null;chChanged();};
+}
+function chChanged(render=true){
+  if(render)chRender();else{const c=chCur();chEl('text').textContent=chText(c.parts);
+    const n=chEl('rail').querySelector('.node.sel');if(n){const p=c.parts[ch.part];n.querySelector('.n').textContent=p.type==='attenuator'&&p.db?p.db+' dB':p.name||'';
+      let dd=n.querySelector('.d');if(p.detail){if(!dd){dd=document.createElement('div');dd.className='d';n.appendChild(dd);}dd.textContent=p.detail;}else if(dd)dd.remove();}}
+  chEl('saved').textContent='saving…';
+  clearTimeout(ch.timer);ch.timer=setTimeout(chSave,500);
+}
+async function chSave(){
+  try{
+    const body={schema:1,current:ch.data.current,chains:{}};
+    for(const [n,c] of Object.entries(ch.data.chains))body.chains[n]={static:c.static,updated:c.updated,last_used:c.last_used,parts:c.parts};
+    const r=await fetch('/chain/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.error){chEl('saved').innerHTML=`<span class="bad">not saved: ${esc(d.error)}</span>`;return;}
+    for(const [n,c] of Object.entries(d.chains)){if(ch.data.chains[n]){ch.data.chains[n].updated=c.updated;ch.data.chains[n].last_used=c.last_used;}}
+    chEl('saved').textContent='saved';
+    const c=chCur();if(c)chEl('stamp').textContent=`updated ${chStamp(c.updated)} · last used as drawn ${chStamp(c.last_used)}`;
+    pbChainRefresh();
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">not saved: ${esc(e)}</span>`;}
+}
+async function chUse(){
+  try{
+    await chSave();
+    const r=await fetch('/chain/use',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ch.sel})});
+    const d=await r.json();
+    if(d.error){chEl('saved').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
+    ch.data.current=d.current;chRender();chEl('saved').textContent='current chain set; station.json default updated';
+    pbChainRefresh();
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">${esc(e)}</span>`;}
 }
 
 // ---------------------------------------------------------------- Probe tab
 // The form is sent to the server as-is; Python composes the tag, chain and
 // conditions and the command, so the page never holds a second copy of the rules.
-let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null, pbCfg=null, pbFound=[];
+let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null, pbCfg=null, pbFound=[], pbChain=null;
+// The Chain tab's current drawing is the authority for the chain after the probe,
+// when its receiver matches the one picked here; otherwise the built-in text for
+// that receiver is used. Either way the box stays editable for a one-off change.
+async function pbChainRefresh(){
+  try{pbChain=await (await fetch('/chain')).json();}catch(e){pbChain=null;}
+  if(pbReady&&pbCfg)pbRxChanged(true);
+}
+function pbChainFor(id){
+  // a probe chain for this receiver: the current one if it qualifies, else the first that does
+  const all=pbChain?Object.entries(pbChain.chains||{}):[];
+  const ok=([n,c])=>c.source==='probe'&&c.receiver===id;
+  const hit=all.find(([n])=>n===pbChain.current&&ok([n,pbChain.chains[n]]))||all.find(ok);
+  if(hit){const [n,c]=hit;return {tail:c.tail,note:`from the Chain tab: "${n}"${n===pbChain.current?' (current)':''}${c.static?' (static)':''} — edit it there, or here for one run`};}
+  const r=(pbCfg.receivers||[]).find(x=>x.id===id);
+  return {tail:r?r.chain_tail:'',note:`no probe chain for the ${id.toUpperCase()} on the Chain tab, so the built-in probe chain is used`};
+}
 const PB_KEYS=['target','target-other','probe','where','min','range','centre','receiver','device','attenuator','notes','chain'];
 const pbEl=id=>document.getElementById('pb-'+id);
 function pbForm(){
@@ -625,8 +860,9 @@ function pbRxLabels(){
 function pbRxChanged(resetChain){
   const id=pbEl('receiver').value;
   pbEl('device').value=pbRxDefault(id);
-  const r=(pbCfg.receivers||[]).find(x=>x.id===id);
-  if(resetChain&&r)pbEl('chain').value=r.chain_tail;
+  const cf=pbChainFor(id);
+  if(resetChain){pbEl('chain').value=cf.tail;pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
+  pbEl('chainnote').textContent=cf.note;
 }
 async function pbDetect(){
   pbEl('detect').disabled=true;pbEl('rxnote').textContent='asking each dongle what it is…';
@@ -671,8 +907,10 @@ async function probeInit(){
     document.querySelectorAll('#pb-durs .btn').forEach(b=>b.onclick=()=>{pbEl('min').value=b.dataset.m;pbChanged();});
   }catch(e){pbEl('cmd').textContent='could not load /probe/config: '+e;return;}
   pbRestore();
-  if(!pbEl('receiver').value)pbEl('receiver').value=(c.receivers[0]||{}).id||'';
-  if(!pbEl('chain').value)pbRxChanged(true);
+  try{pbChain=await (await fetch('/chain')).json();}catch(e){pbChain=null;}
+  const curRx=pbChain&&pbChain.current?pbChain.chains[pbChain.current].receiver:null;
+  if(!pbEl('receiver').value)pbEl('receiver').value=curRx||(c.receivers[0]||{}).id||'';
+  pbRxChanged(true);
   // registered first so the chain swaps before the generic handler previews it
   pbEl('receiver').addEventListener('change',()=>pbRxChanged(true));
   for(const k of PB_KEYS){const el=pbEl(k);el.addEventListener('input',pbChanged);el.addEventListener('change',pbChanged);}
@@ -703,6 +941,16 @@ async function pbPreview(){
 }
 async function pbStart(){
   pbEl('start').disabled=true;
+  // "Still built like this?" - asked when the current chain has not been touched
+  // since its last run, unless it is marked static.
+  try{
+    const d=await (await fetch('/chain')).json();
+    const c=d&&d.current?d.chains[d.current]:null;
+    if(c&&c.needs_confirm&&c.source==='probe'&&c.receiver===pbEl('receiver').value){
+      const ok=confirm(`The chain "${d.current}" has not been changed since it was last used (${String(c.last_used).slice(5,16).replace('T',' ')}).\n\nIs the rig still built exactly as drawn?\n\nOK = start the run.  Cancel = go to the Chain tab first.\n(Tick "static" on the Chain tab to stop this question.)`);
+      if(!ok){pbEl('start').disabled=false;showPane('chain');return;}
+    }
+  }catch(e){}
   try{
     const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pbForm())});
     const d=await r.json();

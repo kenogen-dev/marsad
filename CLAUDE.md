@@ -1451,7 +1451,19 @@ The Receiver picker (XTR / v5) asks each plugged-in dongle what it is with `rtl_
 and fills the device index from that, because USB numbering moves when a dongle is unplugged;
 the chain after the probe follows the receiver and can be edited on the page before a run.
 `--keep-defaults` exists so probe runs do not overwrite the antenna chain that a plain
-`marsad run LS` falls back on. Header fields (antenna, whips, LNA, filter) in a probe sidecar
+`marsad run LS` falls back on.
+
+**Chain tab (2026-10-20)**: the rig as a drawing. `marsad/chain.py` keeps named chains in
+`chain.json` beside station.json, each a line of parts (source, adapter, DC block, coax, notch,
+LaNA, attenuator, bulkheads, jumper, SDR, USB, isolator, PC, custom) with a name and a detail;
+the page draws a chain as a rail you drag palette parts onto, drag to reorder and click to edit,
+and renders the `--chain` text live. The three seeds reproduce the recorded chain text word for
+word. "Use for runs" makes a chain current **and writes its text into station.json's default
+chain_order**, so a plain `marsad run` records it; the Probe tab takes its chain after the probe
+from the current chain when the receiver matches. Each chain carries `updated` and `last_used`
+stamps: a probe run started from the page stamps the current chain, saving a change clears the
+stamp, and starting a run on a chain that is unchanged since its last run asks "still built as
+drawn?" unless the chain is ticked **static**. Header fields (antenna, whips, LNA, filter) in a probe sidecar
 come from station.json defaults, as for any `--non-interactive` run; `chain_order` is the truth.
 The probe chain goes through the DC block into the LaNA at the window, never a loop straight onto
 the XTR's SMA (bias-tee always on).

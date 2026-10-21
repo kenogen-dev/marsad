@@ -79,7 +79,7 @@ PROBE_CHAIN_TAIL = {
     "v5": (
         "SMA adapter > SMA DC block > 8 ft coax > cage SMA bulkhead > v5 (in copper cage, no jumper, "
         "no LNA: the v5 has no bias-tee to power the LaNA) > 6 in USB extension (white, no "
-        "ferrites) > USB bulkhead > USB to PC"
+        "ferrites) > USB bulkhead > USB cable > PC"
     ),
 }
 
@@ -573,6 +573,9 @@ class ProbeRunner:
                                                  cwd=source_root() or None)
                 except (OSError, subprocess.SubprocessError) as exc:
                     raise RuntimeError(f"could not start marsad run: {exc}")
+            # The Chain tab's current drawing is what this run is believed to use.
+            from . import chain as chain_mod
+            chain_mod.mark_used(self.station)
             self.job = {"plan": plan, "started": time.time(), "rec_t0": None,
                         "started_local": dt.datetime.now().isoformat(timespec="seconds"),
                         "stem": None, "stopped": False, "logged": False,

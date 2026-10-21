@@ -1,0 +1,226 @@
+{
+  "schema": 1,
+  "current": "antenna-xtr",
+  "chains": {
+    "antenna-xtr": {
+      "static": false,
+      "updated": "2026-10-20T19:22:48",
+      "last_used": null,
+      "parts": [
+        {
+          "type": "antenna",
+          "name": "antenna",
+          "detail": "90 deg L dipole, 60 mm each whip, suction-mounted on the inside face of the window glass"
+        },
+        {
+          "type": "filter",
+          "name": "Flamingo+ FM notch",
+          "detail": ""
+        },
+        {
+          "type": "lna",
+          "name": "LaNA",
+          "detail": "at the window, on the far end of the coax, powered by the XTR bias-tee through the coax"
+        },
+        {
+          "type": "coax",
+          "name": "3 ft RG316 coax",
+          "detail": "",
+          "length": "3 ft"
+        },
+        {
+          "type": "bulkhead_sma",
+          "name": "SMA bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "jumper",
+          "name": "6 in SMA jumper",
+          "detail": "S-bend, no ferrite",
+          "length": "6 in"
+        },
+        {
+          "type": "sdr",
+          "name": "XTR",
+          "detail": "in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable",
+          "rx": "xtr"
+        },
+        {
+          "type": "bulkhead_usb",
+          "name": "USB bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "usb",
+          "name": "1 ft USB3 M:M",
+          "detail": "",
+          "length": "1 ft"
+        },
+        {
+          "type": "usb",
+          "name": "16 ft USB3",
+          "detail": "",
+          "length": "16 ft"
+        },
+        {
+          "type": "isolator",
+          "name": "USB isolator",
+          "detail": ""
+        },
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    },
+    "probe-xtr": {
+      "static": false,
+      "updated": "2026-10-20T19:23:01",
+      "last_used": null,
+      "parts": [
+        {
+          "type": "probe",
+          "name": "near-field probe",
+          "detail": "held where the Probe tab says"
+        },
+        {
+          "type": "adapter",
+          "name": "SMA adapter",
+          "detail": ""
+        },
+        {
+          "type": "dcblock",
+          "name": "SMA DC block",
+          "detail": ""
+        },
+        {
+          "type": "coax",
+          "name": "8 ft coax",
+          "detail": "",
+          "length": "8 ft"
+        },
+        {
+          "type": "filter",
+          "name": "Flamingo+ FM notch",
+          "detail": ""
+        },
+        {
+          "type": "lna",
+          "name": "LaNA",
+          "detail": "at the window, powered by the XTR bias-tee through the coax"
+        },
+        {
+          "type": "coax",
+          "name": "3 ft RG316 coax",
+          "detail": "",
+          "length": "3 ft"
+        },
+        {
+          "type": "bulkhead_sma",
+          "name": "SMA bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "jumper",
+          "name": "6 in SMA jumper",
+          "detail": "S-bend, no ferrite",
+          "length": "6 in"
+        },
+        {
+          "type": "sdr",
+          "name": "XTR",
+          "detail": "in aluminium enclosure, plugged direct into USB bulkhead, no internal USB cable",
+          "rx": "xtr"
+        },
+        {
+          "type": "bulkhead_usb",
+          "name": "USB bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "usb",
+          "name": "1 ft USB3 M:M",
+          "detail": "",
+          "length": "1 ft"
+        },
+        {
+          "type": "usb",
+          "name": "16 ft USB3",
+          "detail": "",
+          "length": "16 ft"
+        },
+        {
+          "type": "isolator",
+          "name": "USB isolator",
+          "detail": ""
+        },
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    },
+    "probe-v5": {
+      "static": false,
+      "updated": "2026-10-20T19:22:48",
+      "last_used": null,
+      "parts": [
+        {
+          "type": "probe",
+          "name": "near-field probe",
+          "detail": "held where the Probe tab says"
+        },
+        {
+          "type": "adapter",
+          "name": "SMA adapter",
+          "detail": ""
+        },
+        {
+          "type": "dcblock",
+          "name": "SMA DC block",
+          "detail": ""
+        },
+        {
+          "type": "coax",
+          "name": "8 ft coax",
+          "detail": "",
+          "length": "8 ft"
+        },
+        {
+          "type": "bulkhead_sma",
+          "name": "cage SMA bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "sdr",
+          "name": "v5",
+          "detail": "in copper cage, no jumper, no LNA: the v5 has no bias-tee to power the LaNA",
+          "rx": "v5"
+        },
+        {
+          "type": "usb",
+          "name": "6 in USB extension",
+          "detail": "white, no ferrites",
+          "length": "6 in"
+        },
+        {
+          "type": "bulkhead_usb",
+          "name": "USB bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "usb",
+          "name": "USB cable",
+          "detail": ""
+        },
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    }
+  }
+}
