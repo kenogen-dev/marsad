@@ -314,17 +314,15 @@ the same for A1 vs A2, and `archive.py trend 1799.98`.
 ## Block F - noise generator characterisation (2026-10-20/21)
 
 **Done on the wide range.** LaNA gain 25 dB at VHF to 17.7 dB flat across 1.24-1.66 GHz; 3 ft
-coax under 1 dB; notch passband loss 1.1-1.4 dB, stop band 74-126 MHz at -3 dB, depth reads
-15 dB but is probably a leakage floor. Full numbers in CLAUDE.md "Noise generator
+coax under 1 dB; notch passband loss 1.1-1.4 dB, stop band 74-126 MHz at -3 dB, depth 15 dB,
+confirmed real by the leakage check. Full numbers in CLAUDE.md "Noise generator
 characterisation". Facts for every future run with the source: **36 dB of pad direct into the
 receiver, 39 dB ahead of the LaNA, tuner at g-1**; anything less clips.
 
 **Still to run:**
 
-1. **Leakage check, 2 min:** generator stack powered but connected to nothing, dangling where it
-   was; LaNA input terminated with the 50 ohm load through the DC block; `wide`, g-1. FM band at
-   ~-18 dB = the 15 dB notch figure is leakage and the notch is deeper; FM at the floor = 15 dB
-   is real.
+1. ~~Leakage check~~ **done 07:45:** FM band at the floor (-34.9) with no cable path, so the
+   notch's 15 dB is real. Use 15 dB as the Flamingo+'s rejection.
 2. **LS-range D and E** (`LS 5m`, g-1, 36 and 39 dB of pad): the LaNA's gain from 1.24 to
    2.147 GHz, which is the 2 GHz tuner-versus-antenna answer. Prediction: gain still 15 dB or
    more at 2.1 GHz means the antenna is the limit up there; under 8 dB means the chain is.

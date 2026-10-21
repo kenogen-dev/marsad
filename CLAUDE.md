@@ -562,16 +562,18 @@ to -0.8 above the gap, floor-squeezed). The stop band is **wider than 88-108**: 
 bottom of the aviation band (118-120 MHz) and 3 dB off 74-80 MHz, which matters if either is
 ever a target.
 
-**The notch's depth reads 15 dB and that figure is suspect.** Inside 80-112 MHz the A plateau is
-**-17.8 to -18.2 dB, flat to 0.4 dB across 32 MHz**. A filter has a shape; a flat shelf is a
-leakage floor. The likeliest path: the generator's output is ~40 dB above the ceiling and the pad
-stack sits inches from the LaNA, so noise radiating from the stack's connectors reaches the LaNA's
-input around the notch at about -18 dB and sets the shelf. The notch may be 15 dB deep or 35; this
-run cannot tell. The 2026-10-19 v5 measurement ("at least 16-18 dB, floor-limited") has the same
-ambiguity from the other side. **Test, 2 min:** stack connected to nothing, dangling where it was,
-LaNA input terminated with the 50 ohm load through the DC block, same gain and range. If the FM
-band shows up near -18 dB with no cable path at all, the shelf is leakage and the notch is deeper
-than 15 dB; if the band is at the floor, 15 dB is the real depth.
+**The notch's depth is 15 dB, and the leakage check says that is real.** Inside 80-112 MHz
+the A plateau is **-17.8 to -18.2 dB, flat to 0.4 dB across 32 MHz**, 17 dB above the chain's
+floor, so it is not floor-limited. A flat shelf looked like a leakage floor, so it was tested
+(`nsrc-leakcheck`, 2 min, g-1): generator stack powered but screwed to nothing, dangling where it
+had been, LaNA input on the 50 ohm load through the DC block. **The FM band sat at -34.9 dB, the
+floor, against -17.9 in the notch run.** Nothing radiates around the stack into the LaNA at a
+level that matters, so the shelf is the filter's own ultimate rejection at this drive level, not
+our set-up. **Use 15 dB as the Flamingo+'s rejection**, consistent with the floor-limited
+"at least 16-18 dB" seen on the v5 on 2026-10-19. The flatness is then a property of the filter,
+whose stop band bottoms out rather than following a curve. Incidental: the chain's floor at g-1
+with the LaNA terminated is -35.0 dB, 2.5 dB *above* the g29 terminated figure; the tuner's
+minimum-gain setting is not simply "less of the same" and should not be used for surveys.
 
 ### Antenna outside the window, A/B/A (2026-10-20, 07:28-11:00): worth 3-5 dB, and the glass is not low-E
 
