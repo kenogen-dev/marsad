@@ -110,6 +110,25 @@ RANGES = {
 
 DURATIONS_MIN = [2, 5, 10]
 
+# The attenuator kit, in dB. A pad goes between the notch's output and the LaNA's
+# input when strong broadcast signals (UHF television at 560-590 MHz reached +4 dB
+# through a loop) would otherwise drive the amplifier and the ADC into saturation.
+ATTENUATORS_DB = [0, 3, 6, 10, 20]
+
+
+def insert_pad(tail: str, db: int) -> str | None:
+    """The chain tail with '> N dB SMA attenuator' ahead of the LaNA, or None if
+    the tail has no LaNA to put it in front of (the v5 chain)."""
+    if db <= 0:
+        return tail
+    pad = f"{db} dB SMA attenuator"
+    parts = [p.strip() for p in tail.split(">")]
+    for i, p in enumerate(parts):
+        if p.startswith("LaNA"):
+            parts.insert(i, pad)
+            return " > ".join(parts)
+    return None
+
 LOG_NAME = "ROOM_RF.md"
 ROOM_RF_HEADER = """# Room RF map
 
@@ -155,6 +174,7 @@ def catalog(station: Station) -> dict:
         "ranges": [{"id": k, "label": v["label"]} for k, v in RANGES.items()],
         "receivers": receivers,
         "durations_min": list(over.get("durations_min") or DURATIONS_MIN),
+        "attenuators_db": list(over.get("attenuators_db") or ATTENUATORS_DB),
         "chain_tail": tails,
         "log_file": str(station.root / LOG_NAME),
     }
@@ -379,9 +399,25 @@ def compose(station: Station, form: dict) -> dict:
         raise ValueError("say where the probe is held (for example 'against the PSU fan grille')")
     tag = f"probe-{slug(target)}-{slug(probe['id'], 20)}"
     tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
-    chain = f"{probe['desc']}, held {held} > {tail}"
+    try:
+        pad_db = int(form.get("attenuator") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("attenuator must be one of " + ", ".join(map(str, cat["attenuators_db"])))
+    if pad_db not in cat["attenuators_db"]:
+        raise ValueError(f"the kit has no {pad_db} dB pad; choose from "
+                         + ", ".join(map(str, cat["attenuators_db"])))
+    padded = insert_pad(tail, pad_db)
+    if padded is None:
+        warnings.append(f"the {receiver} chain has no LaNA to put a {pad_db} dB pad ahead of; "
+                        "the pad was NOT added to the chain")
+        pad_db = 0
+        padded = tail
+    pad_text = f"{pad_db} dB pad ahead of the LaNA" if pad_db else "no pad"
+    chain = f"{probe['desc']}, held {held} > {padded}"
     conditions = (f"near-field probe survey: {target}, {probe['desc']} held {held}, "
-                  f"{range_label}, {dur_text}")
+                  f"{range_label}, {dur_text}, {pad_text}")
+    if pad_db:
+        range_label += f", {pad_db} dB pad"      # the room-map row's Range cell carries it
     if notes:
         conditions += f"; {notes}"
 
@@ -400,7 +436,7 @@ def compose(station: Station, form: dict) -> dict:
         "target": target, "probe": probe["label"], "probe_id": probe["id"], "held": held,
         "range": rng_id, "range_label": range_label,
         "preset": rng["preset"], "receiver": receiver, "freq": freq,
-        "gain": gain, "integration": integration, "device": device,
+        "gain": gain, "integration": integration, "device": device, "attenuator_db": pad_db,
         "minutes": minutes, "duration_text": dur_text, "duration_s": dur_s,
         "hunt": hunt,
         "geometry": {k: (round(v, 4) if isinstance(v, float) else v)

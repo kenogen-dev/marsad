@@ -74,6 +74,26 @@ def test_compose_hunt_builds_the_offset_tile():
     assert d["warnings"] == []
 
 
+def test_attenuator_lands_between_the_notch_and_the_lana():
+    st = Station.load(ROOT)
+    d = probe.compose(st, {**FORM, "attenuator": "10"})
+    assert "> Flamingo+ FM notch > 10 dB SMA attenuator > LaNA (" in d["chain"]
+    assert ", 5m, 10 dB pad ahead of the LaNA; monitors on" in d["conditions"]
+    assert d["conditions"].count("10 dB pad") == 1
+    assert d["range_label"].endswith(", 10 dB pad") and d["attenuator_db"] == 10
+    none = probe.compose(st, FORM)
+    assert "attenuator" not in none["chain"] and ", 5m, no pad; monitors on" in none["conditions"]
+    with pytest.raises(ValueError, match="kit has no 7 dB"):
+        probe.compose(st, {**FORM, "attenuator": "7"})
+    # the v5 chain has no LaNA: the pad is refused with a warning, not silently placed
+    v5 = probe.compose(st, {**FORM, "receiver": "v5", "attenuator": "6"})
+    assert "attenuator" not in v5["chain"] and v5["attenuator_db"] == 0
+    assert any("no LaNA" in w for w in v5["warnings"])
+    # it reaches the room-map row through the range cell
+    row = probe.log_row(dt.datetime(2026, 10, 20, 13, 0), d, "survey_x", probe.summarise_report(ROOT / "nope"), None, False)
+    assert "| wide 52-1660 MHz (g29, i60), 10 dB pad |" in row
+
+
 def test_compose_on_the_v5_snaps_gain_and_uses_its_chain():
     st = Station.load(ROOT)
     d = probe.compose(st, {**FORM, "receiver": "v5", "device": "1"})
