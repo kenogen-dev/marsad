@@ -21,7 +21,11 @@ main{padding:12px 16px}
 .key i.tri{width:0;height:0;background:none;border-radius:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid}
 .key .pk{margin-left:auto;color:var(--dim)}
 canvas{display:block;width:100%;image-rendering:pixelated}
-#spec{height:190px}
+#spec{height:300px}
+.key.under{margin:10px 0 0;gap:8px 34px;justify-content:space-between;font-size:11.5px}
+.key.under.marks{padding-top:8px;border-top:1px solid var(--line)}
+.key.under label{padding:2px 0}
+.key.under .pk{font-size:11.5px;color:var(--ink)}
 #fall{height:380px}
 #trend{height:110px}
 .ax{display:flex;justify-content:space-between;font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin-top:4px}
@@ -130,23 +134,23 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 </div>
 <main>
   <div class="wrap"><div class="lab">Spectrum — latest sweep, with max-hold</div>
-    <div class="key">
+    <canvas id="spec"></canvas><div class="xs" id="xs"></div>
+    <div class="ro" id="readout">&nbsp;</div>
+    <div class="key under">
       <span><i style="background:#4fd3e8;height:3px"></i>latest complete sweep</span>
       <span><i style="background:rgba(79,211,232,.45)"></i>sweep in progress</span>
       <span><i style="background:rgba(232,177,79,.55)"></i>max-hold — highest seen at each frequency</span>
       <span><i class="dash"></i>noise floor</span>
       <span><i class="vert" style="background:#e8b14f"></i>where the tuner is now</span>
     </div>
-    <div class="key" title="Detections: max-hold at least the threshold above the latest sweep's floor, tagged the way the analyser tags them. The report is the authority; this is its preview.">
+    <div class="key under marks" title="Detections: max-hold at least the threshold above the latest sweep's floor, tagged the way the analyser tags them. The report is the authority; this is its preview.">
       <label><input type="checkbox" id="mk-sig"><i class="tri" style="border-bottom-color:#4fcf96"></i>untagged detection — possible signal</label>
       <label><input type="checkbox" id="mk-spur"><i class="tri" style="border-bottom-color:#e8b14f"></i>known spur family</label>
       <label><input type="checkbox" id="mk-art"><i class="tri" style="border-bottom-color:#8599a8"></i>hop-centre DC spike / hop-wide impulse</label>
       <label><input type="checkbox" id="mk-grid"><i class="vert" style="background:rgba(232,177,79,.6);height:7px"></i>spur family grid (ticks at the top)</label>
       <label><input type="checkbox" id="mk-hop"><i class="vert" style="background:rgba(133,153,168,.7);height:5px"></i>hop centres (ticks at the bottom)</label>
-      <span class="pk" id="pk"></span>
     </div>
-    <canvas id="spec"></canvas><div class="xs" id="xs"></div>
-    <div class="ro" id="readout">&nbsp;</div></div>
+    <div class="key under"><span class="pk" id="pk" style="margin-left:0"></span></div></div>
   <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
     <canvas id="fall"></canvas><div class="xs" id="xf"></div></div>
   <div class="wrap"><div class="lab">Whole-sweep median — the cage statistic, per sweep</div>
