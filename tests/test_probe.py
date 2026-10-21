@@ -77,11 +77,12 @@ def test_compose_hunt_builds_the_offset_tile():
 def test_attenuator_lands_between_the_notch_and_the_lana():
     st = Station.load(ROOT)
     d = probe.compose(st, {**FORM, "attenuator": "10"})
-    assert "> Flamingo+ FM notch > 10 dB SMA attenuator > LaNA (" in d["chain"]
+    assert "> 8 ft coax > Flamingo+ FM notch > SMA adapter > 10 dB SMA attenuator > LaNA (" in d["chain"]
     assert ", 5m, 10 dB pad ahead of the LaNA; monitors on" in d["conditions"]
     assert d["conditions"].count("10 dB pad") == 1
     assert d["range_label"].endswith(", 10 dB pad") and d["attenuator_db"] == 10
     none = probe.compose(st, FORM)
+    assert "> Flamingo+ FM notch > LaNA (" in none["chain"]      # no pad: notch straight onto the LaNA
     assert "attenuator" not in none["chain"] and ", 5m, no pad; monitors on" in none["conditions"]
     with pytest.raises(ValueError, match="kit has no 7 dB"):
         probe.compose(st, {**FORM, "attenuator": "7"})

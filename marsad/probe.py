@@ -117,15 +117,17 @@ ATTENUATORS_DB = [0, 3, 6, 10, 20]
 
 
 def insert_pad(tail: str, db: int) -> str | None:
-    """The chain tail with '> N dB SMA attenuator' ahead of the LaNA, or None if
-    the tail has no LaNA to put it in front of (the v5 chain)."""
+    """The chain tail with '> SMA adapter > N dB SMA attenuator' ahead of the LaNA,
+    or None if the tail has no LaNA to put it in front of (the v5 chain).
+
+    As built, the pad needs an adapter on the notch side; with no pad the notch
+    goes straight onto the LaNA and the tail is returned unchanged."""
     if db <= 0:
         return tail
-    pad = f"{db} dB SMA attenuator"
     parts = [p.strip() for p in tail.split(">")]
     for i, p in enumerate(parts):
         if p.startswith("LaNA"):
-            parts.insert(i, pad)
+            parts[i:i] = ["SMA adapter", f"{db} dB SMA attenuator"]
             return " > ".join(parts)
     return None
 
