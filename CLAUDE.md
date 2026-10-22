@@ -691,6 +691,61 @@ Suction cups on sun-warmed glass are not a mount. Until then the inside position
 Seen outside and not inside: 1435.92 MHz (aeronautical telemetry band, 1435-1525), -11.8 dB in
 B and -20.0 in B2, 80-90% on, varying like a moving emitter; 1489.91 MHz, same band, -18.7.
 
+### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
+
+The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and
+`deep-2049-whip-g42-day` (23:04), same tile, same fingerprint
+`2049.0-2148.0 MHz | 25.0 kHz | g42.0 | i30 | c0.25 | F9 | xtr`, 1 h each, notch and LaNA
+untouched. **The dipole was moved to the UWB's exact spot** so both antennas were compared in
+one place rather than one being measured where the other had never sat - which is what makes
+this comparable at all.
+
+| 10 MHz block | whip | UWB | change |
+|---|---|---|---|
+| 2049-2059 | -41.24 | -40.64 | +0.60 |
+| 2059-2069 | -41.41 | -40.64 | +0.77 |
+| 2069-2079 | -41.36 | -40.64 | +0.72 |
+| 2079-2089 | -41.34 | -40.65 | +0.69 |
+| 2089-2099 | -41.32 | -40.64 | +0.68 |
+| 2099-2109 | -41.52 | -40.72 | +0.79 |
+| **2109-2119** | **-39.72** | **-34.56** | **+5.16** |
+| **2119-2129** | **-34.96** | **-31.08** | **+3.88** |
+| **2129-2139** | **-35.40** | **-31.71** | **+3.69** |
+| 2139-2147 | -36.49 | -34.17 | +2.31 |
+
+**The band edge is exactly where the allocation says.** Six consecutive empty blocks sit flat
+within 0.3 dB in each run, then 2109-2119 jumps. The downlink starts at 2110 MHz and the data
+finds it unaided.
+
+**Read it on the within-run plateau, not the raw difference.** Downlink (2124-2147) minus the
+empty reference (2049-2099), computed inside each run, so it cannot be moved by gain, drift or
+the hour:
+
+| Run | empty | downlink | plateau |
+|---|---|---|---|
+| `deep-2049-awscontrol-g42` whip, 10-19 night | -41.49 | -36.48 | **+5.01 dB** |
+| `deep-2049-whip-g42-day` whip, 10-21 evening | -41.34 | -35.52 | **+5.82 dB** |
+| `deep-2049-uwb-g42` UWB, 10-21 evening | -40.64 | -32.49 | **+8.15 dB** |
+
+**The UWB beats the whip by +2.33 dB** on the statistic that cannot be gamed by conditions, and
+the two whip runs two days apart agree to 0.81 dB, which is the repeatability figure for this
+measurement. Raw signal is up 3.7-5.2 dB in the downlink blocks; the empty band rises a uniform
++0.7 dB, so some of the raw gain is more received noise, which is exactly why the plateau is the
+honest number.
+
+**This settles the open question from the 2 GHz positive control.** That section listed three
+candidates for the weak 2.1 GHz performance - the tuner, the LaNA and the antenna - and noted the
+antenna was the only one that could be changed. The noise generator had already cleared the LaNA
+(16-18 dB to 2.147 GHz) and measured the receiver as ~11 dB less sensitive at 2.1 than at 1.3 GHz.
+**The 60 mm whips, 0.84 wavelengths at 2.1 GHz and past their half-wave resonance, were costing
+about 2.3 dB.** The receiver's own roll-off is the remaining limit and cannot be bought back.
+
+**Caveats, honestly.** One run of each, 4.5 h apart, no A/B/A bracket, and the UWB ran first. The
+plateau statistic removes most of what that could do, and the 0.81 dB whip-to-whip agreement
+bounds the rest, but a bracket would make it airtight. The suction mount puts the UWB at the
+inside face of the glass, so this is an inside-the-window figure; the outside result (+3-5 dB,
+2026-10-20) stacks on top of it in principle and has not been measured together.
+
 ### 2 GHz positive control (2026-10-19, 23:52): the XTR hears the cellular downlink at 2.1 GHz, weakly
 
 `deep-2049-awscontrol-g42`, `2049M:2148M:25k -g 42 -i 30`, 1 h, 100 sweeps analysed, 21.8 kHz
@@ -1571,7 +1626,17 @@ command, and `sdr` is a second entry point for the same thing, kept so every com
 notes and RUNSHEET still works. The `tools/*.py` scripts below are thin wrappers over the
 package and keep their original command lines. `.venv\Scripts\python.exe -m pytest` runs 33
 regression tests that pin the recorded figures; the frozen Windows build is
-`packaging/marsad.spec` -> `dist/marsad/marsad.exe`.
+`packaging/marsad.spec` -> `dist/marsad/marsad.exe`. **A double-click on marsad.exe (or a bare
+`marsad`) is the launcher (2026-10-22):** it starts the web app on 8731 and opens the browser,
+with a "close this window to stop" banner; if 8731 is already served it only opens the browser
+on it and lingers a few seconds so the message can be read. Before this the busy-port refusal
+made a double-click flash a console and exit. `Start marsad.cmd` beside the exe keeps the
+window open on an error. `tests/test_launch.py` pins the dispatch. For testing a build without
+touching the owner's address: `MARSAD_PORT=8745` moves the launcher and `MARSAD_NO_BROWSER=1`
+keeps the browser shut. Found on the way, same day: `marsad live` had refused to start at all
+since the rtl_power_fftw presets landed, because the Builder tab's config parsed every preset's
+range with the rtl_power parser and `top` (`2147M:2187M`, no bin width) failed it; the builder
+now skips presets for another engine. The viewer `marsad run` starts was dying the same way.
 
 **Probe tab (2026-10-20)** in the web app (`marsad live`, port 8731): near-field probe surveys
 of the room from the browser, one hand on the probe. `marsad/probe.py` holds the catalogue
@@ -1663,6 +1728,35 @@ py -m marsad response --open <tag|csv> --load <tag|csv> --antenna <tag|csv>
     [--name "2130 GP v1"] [--f0 2130] [--smooth-mhz 1] [--margin-db 6]
     [--rx-floor-db -37.5] [--skip-sweeps N] [--out reports/response/<name>_<stamp>]
 ```
+
+**Second engine: rtl_power_fftw (2026-10-21).** `rtl-sdr/rtl_power_fftw.exe` is a native
+Windows build of github.com/AD-Vega/rtl-power-fftw 1.0-beta2, made on this PC with the
+Visual Studio Build Tools that were already installed (static FFTW 3.3.10, the same
+rtlsdr.dll rtl_power uses); `packaging/rtl_power_fftw/BUILD.md` records every version and
+hash, `build.cmd` there rebuilds it from scratch, and the one patch (four lines) makes
+Ctrl-Break finish the pass the way Ctrl-C does, so marsad's Stop button works on it. It
+exists for three things rtl_power cannot do: **record above 2147.48 MHz** (frequencies are
+64-bit), **bins as narrow as you like** (any even FFT size, 1.17 kHz at 2048 bins) and
+**baseline subtraction** (`-B FILE`, N values by bin index, so single-hop runs only). What it
+does not have: crop, FIR, a built-in window (`-w FILE` takes N values you supply), offset
+tuning, bias-tee control. `marsad run <preset> <duration> --engine rtl_power_fftw`, or a
+preset that names the engine: `top` (2147-2187 MHz, 22 hops of 2.4 MHz at 25% overlap,
+128 bins = 18.75 kHz, 1 s per hop) and `h1` (one hop on 1420.4058 MHz on the v5, 2048 bins,
+60 s per spectrum). Options `--bins --time --rate --overlap --baseline --window`; gain is
+validated against the tuner ladder as before and passed in tenths of a dB (`-g 290`). The
+raw output is `surveys/<stem>.dat` (the live viewer only reads rtl_power CSVs and never sees
+it) with the program's stderr in `<stem>.log`; the sidecar carries `"engine"` and an
+`rtl_power_fftw` section with the actual sample rate parsed from that log. **Crop is applied
+at analysis time**: the recorder asks for `-o 100*crop` overlap and the parser drops
+`int(N*crop/2)` bins off each edge of every hop, rtl_power's own arithmetic, so hops still
+tile. `marsad analyze` reads either format (judged by the file's first line) and takes
+`--crop` for a .dat without a sidecar. **The fingerprint names the engine**
+(`... | N128 | r2.4M | o25 | c0.25 | rtl_power_fftw | xtr`), so an rtl_power_fftw run never
+matches an rtl_power run, `compare` refuses the mix, and `archive new` never compares across
+engines. Its dB are a power spectral density, `10*log10(sum|X|^2 / repeats / N / rate)`, not
+rtl_power's scale; see the characterisation section for the measured offset.
+`tests/test_rpf.py` pins the hop plan (the program's own Plan::Plan arithmetic), geometry,
+fingerprint, command line, log parser and the parser on a sample file.
 
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 

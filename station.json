@@ -407,8 +407,8 @@
     "whip_length_mm": 60,
     "lna": "Nooelec LaNA, bias-tee powered, at the antenna pigtail",
     "filter": "Nooelec Flamingo+ FM v2 notch (88-108 MHz)",
-    "chain_order": "antenna (90 deg L dipole, 60 mm each whip, suction-mounted on the inside face of the window glass) > Flamingo+ FM notch > LaNA (at the window, on the far end of the coax, powered by the XTR bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, foam support) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC",
-    "chain_used_at": "2026-10-21T09:27:55"
+    "chain_order": "UWB biconical antenna (vertical, screwed straight onto the notch input, 8 in right of and a few inches below the dipole's outlined spot on the inside face of the window glass) > Flamingo+ FM notch > LaNA (at the window, on the far end of the coax, powered by the XTR bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, foam support) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC",
+    "chain_used_at": "2026-10-22T06:50:07"
   },
   "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
 }

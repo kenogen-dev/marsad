@@ -235,14 +235,9 @@
     },
     "Noise Gen. Calibration Chain": {
       "static": false,
-      "updated": "2026-10-20T23:48:18",
+      "updated": "2026-10-21T18:42:58",
       "last_used": null,
       "parts": [
-        {
-          "type": "custom",
-          "name": "Noise Generator",
-          "detail": "9 V barrel, heatsink fitted"
-        },
         {
           "type": "attenuator",
           "name": "SMA attenuator",
@@ -293,6 +288,18 @@
           "name": "USB isolator",
           "detail": ""
         },
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    },
+    "UWB Chain": {
+      "static": false,
+      "updated": "2026-10-21T18:42:47",
+      "last_used": null,
+      "parts": [
         {
           "type": "pc",
           "name": "PC",
