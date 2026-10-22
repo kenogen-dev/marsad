@@ -746,6 +746,15 @@ bounds the rest, but a bracket would make it airtight. The suction mount puts th
 inside face of the glass, so this is an inside-the-window figure; the outside result (+3-5 dB,
 2026-10-20) stacks on top of it in principle and has not been measured together.
 
+**Bracket closed (2026-10-22, 06:50): the UWB's margin survives the clock.** A second UWB leg in the
+same spot, `deep-2049-uwb-g42-B`, cut to 30 min (41 sweeps analysed) by an app restart but intact.
+Within-run plateau, downlink 2124-2147 over empty 2049-2099: UWB 18:40 **+8.00**, whip 23:04 **+5.78**,
+UWB 06:50 **+7.15**; on the 2119-2134 core the three read +9.63, +6.45, +9.92. UWB/whip/UWB in one
+spot across twelve hours: the UWB is **+1.8 dB on the plateau and +3.3 dB on the core** over the whip,
+and the two UWB legs twelve hours apart agree to 0.85 dB on the plateau and 0.3 dB on the core, which
+is the clock's whole contribution. The evening traffic was not the margin. Verdict unchanged: the
+whip was the 2.1 GHz limit by 2-3 dB, and the UWB is the antenna for the top of the band.
+
 ### 2 GHz positive control (2026-10-19, 23:52): the XTR hears the cellular downlink at 2.1 GHz, weakly
 
 `deep-2049-awscontrol-g42`, `2049M:2148M:25k -g 42 -i 30`, 1 h, 100 sweeps analysed, 21.8 kHz
