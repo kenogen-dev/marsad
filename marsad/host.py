@@ -39,6 +39,14 @@ def running_sdr_programs() -> list[str] | None:
     return found
 
 
+def port_in_use(port: int, host_addr: str = "127.0.0.1") -> bool:
+    """True when something already answers on the port (a running viewer, usually)."""
+    import socket
+    with socket.socket() as sk:
+        sk.settimeout(0.3)
+        return sk.connect_ex((host_addr, port)) == 0
+
+
 def popen_group_flags() -> int:
     """Flags that put a child in its own process group.
 

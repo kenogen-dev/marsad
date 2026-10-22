@@ -380,7 +380,15 @@ def builder_config(station: Station) -> dict:
     """Everything the scan builder page needs, derived from station.json."""
     presets = {}
     for name, p in station.presets.items():
-        lo, hi, b = parse_freq_spec(p["freq"])
+        # The builder writes rtl_power commands. An rtl_power_fftw preset has a
+        # range with no bin width ("2147M:2187M", or a single centre) and would
+        # make the whole page refuse to start, as it did on 2026-10-22.
+        if p.get("engine") not in (None, "rtl_power"):
+            continue
+        try:
+            lo, hi, b = parse_freq_spec(p["freq"])
+        except (SystemExit, ValueError, KeyError):
+            continue
         presets[name] = {"lo": lo, "hi": hi, "bin": b, "gain": p["gain"],
                          "integ": p["integration"], "rx": p.get("receiver"),
                          "fw": p.get("floor_window", 0), "note": p.get("note", "")}
@@ -480,7 +488,9 @@ def get_tailer(station: Station, name: str, cols: int, keep: int):
         return t
 
 
-def main(argv=None, station: Station | None = None, prog: str = "marsad live") -> int:
+def main(argv=None, station: Station | None = None, prog: str = "marsad live",
+         banner: str | None = None) -> int:
+    """`banner` replaces the usual "(Ctrl-C to stop)" line, for the double-click launch."""
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description="The station's local web app")
     ap.add_argument("--csv", help="path to the CSV (default: newest in surveys/)")
@@ -696,7 +706,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live") -
 
     url = f"http://127.0.0.1:{args.port}/"
     note = f", exits {args.exit_after_idle:g} min after the scan ends" if args.exit_after_idle else ""
-    print(f"  {url}   (Ctrl-C to stop{note})")
+    print(banner if banner else f"  {url}   (Ctrl-C to stop{note})", flush=True)
     if args.open:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:

@@ -47,8 +47,11 @@ You need `rtl_power` from the [RTL-SDR Blog Windows release](https://github.com/
 `rtl-sdr` next to `station.json`, or put it on your PATH.
 
 **Windows, no Python:** download the `marsad` folder from the releases page, put it anywhere,
-and double-click `marsad.exe`. It opens the web app in your browser. For the commands, open a
-terminal in that folder.
+and double-click `marsad.exe`. It starts the web app on http://127.0.0.1:8731/, opens it in
+your browser, and keeps a console window open that says so; close that window to stop. If the
+app is already running (one copy per address, always), the double-click just opens the browser
+on it. `Start marsad.cmd` beside the exe does the same and keeps the window open if anything
+goes wrong, so an error can be read. For the commands, open a terminal in that folder.
 
 **From source (any OS):**
 

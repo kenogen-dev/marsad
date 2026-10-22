@@ -22,10 +22,14 @@ that command's own options.
 """
 from __future__ import annotations
 
+import os
 import sys
+import time
+import webbrowser
 
 from . import __version__
 from .config import Station
+from .rtlpower import frozen
 
 COMMANDS = {
     "run": "record a survey from a preset, then analyse it",
@@ -52,7 +56,8 @@ def usage() -> str:
              "commands:"]
     for name, text in COMMANDS.items():
         lines.append(f"  {name:<{width}}  {text}")
-    lines += ["", "With no command, opens the web app in your browser.",
+    lines += ["", "With no command (a double-click on marsad.exe), starts the web app on",
+              f"{HOME_URL} and opens it in your browser; if it is already running, just opens it.",
               "`marsad <command> --help` lists that command's options."]
     return "\n".join(lines)
 
@@ -77,12 +82,57 @@ def split_station(argv: list) -> tuple:
     return root, rest
 
 
+HOME_PORT = 8731      # the one address the station's web app lives at
+HOME_URL = f"http://127.0.0.1:{HOME_PORT}/"
+
+
+def _linger(seconds: float = 8.0) -> None:
+    """Keep a double-clicked console readable before it closes.
+
+    Started from Explorer, the frozen exe owns its console window, which closes
+    the instant the program exits; anything printed would vanish unread.
+    """
+    if frozen():
+        print(f"  (this window closes in {seconds:g} s)")
+        time.sleep(seconds)
+
+
+def launch(station: Station) -> int:
+    """What a double-click on marsad.exe (or a bare `marsad`) does.
+
+    One viewer per address, always: if something already serves 8731 it is
+    the station's web app, so just open the browser on it. Otherwise start
+    the app on 8731, open the browser, and stay up until the window closes.
+
+    Two environment variables exist for testing a build without touching the
+    owner's address: MARSAD_PORT moves the launcher to another port, and
+    MARSAD_NO_BROWSER=1 skips opening the browser.
+    """
+    from . import host
+    port = int(os.environ.get("MARSAD_PORT") or HOME_PORT)
+    url = f"http://127.0.0.1:{port}/"
+    use_browser = os.environ.get("MARSAD_NO_BROWSER") != "1"
+    if host.port_in_use(port):
+        print(f"  marsad is already running on {url}")
+        print("  Opening it in your browser; this launcher is not needed."
+              if use_browser else "  (browser not opened: MARSAD_NO_BROWSER is set)")
+        if use_browser:
+            webbrowser.open(url)
+        _linger(6)
+        return 0
+    from . import live
+    rc = live.main((["--open"] if use_browser else []) + ["--port", str(port)], station,
+                   banner=f"  marsad is running on {url} - close this window to stop")
+    if rc:
+        _linger()
+    return rc
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     root, rest = split_station(argv)
     if not rest:
-        from . import live
-        return live.main(["--open"], Station.load(root))
+        return launch(Station.load(root))
     cmd, args = rest[0], rest[1:]
     if cmd in ("-h", "--help", "help"):
         print(usage())

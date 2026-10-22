@@ -37,7 +37,9 @@ jobs:
         run: python -m pytest -q
 
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm packaging/marsad.spec
+        run: |
+          pyinstaller --noconfirm packaging/marsad.spec
+          copy "packaging\Start marsad.cmd" "dist\marsad\Start marsad.cmd"
 
       - name: Smoke test the build
         run: |
