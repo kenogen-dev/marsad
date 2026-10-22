@@ -691,6 +691,118 @@ Suction cups on sun-warmed glass are not a mount. Until then the inside position
 Seen outside and not inside: 1435.92 MHz (aeronautical telemetry band, 1435-1525), -11.8 dB in
 B and -20.0 in B2, 80-90% on, varying like a moving emitter; 1489.91 MHz, same band, -18.7.
 
+### rtl_power_fftw characterised against rtl_power (2026-10-22, 07:40-07:51): the hops match, the scale is 3.3 dB off the model, and the E4000 stopped at 2170.6 MHz
+
+First use of the second engine on the radio. XTR, the only dongle plugged in (device 0),
+UWB biconical on the notch at the window, chain untouched between runs, g29, antenna on,
+about 07:40 local. Yardstick: the PCS downlink block 1930-1990 MHz, always on. Six short
+runs, files under `surveys/tooltests/rpfchar/`, nothing archived.
+
+| Run | Command (device 0) | Passes / sweeps | Bins kept | Wall |
+|---|---|---|---|---|
+| `rp50k` | `rtl_power -f 1930M:1990M:50k -g 29 -i 10 -c 0.25 -F 9 -e 120` | 12 | 1393 (43.10 kHz, FFT 64) | 121.4 s |
+| `rp25k` | same at `25k` | 12 | 2785 (21.55 kHz, FFT 128) | 121.6 s |
+| `fftw64` | `rtl_power_fftw -f 1930M:1990M -g 290 -b 64 -r 2400000 -t 1 -o 25 -e 120` | 4 | 1584 (37.5 kHz, 33 hops) | 145.6 s |
+| `fftw128` | same at `-b 128` | 4 | 3168 (18.75 kHz) | 145.5 s |
+| `fftwfast` | `-b 64 -t 0.05 -e 60` | 17 | 1584 | 62.6 s |
+| `fftwtop` | `-f 2147M:2187M -b 128 -t 1 -o 25 -e 60` | 5 | 1242 (13 hops, see below) | 73.2 s |
+
+rtl_power_fftw runs are read with the analysis-time crop of 0.25 (the middle 75% of each
+hop), so both engines are judged on the same part of their hops. No dropped samples and no
+buffer underruns in any of the 893 hops the program recorded (`Buffer queue histogram`
+first column 0 throughout).
+
+**(a) The dB scale.** Pre-registered from the two programs' source: rtl_power_fftw writes
+`10*log10(sum|X|^2 / repeats / N / rate)`, a power spectral density; rtl_power multiplies
+each sample by 256 (its window coefficients are scaled by 256, rectangular by default),
+runs a fixed-point FFT that divides by N, and writes `10*log10(sum|X/N|^2 / samples / rate)`.
+So on the same input, **fftw minus rtl_power = 10*log10(N_rtl_power) - 48.2 dB +
+10*log10(rate_rtl_power / rate_fftw)**: -29.5 dB against rtl_power's 64-point FFT (the 50k
+presets) and -26.5 dB against its 128-point (25k), independent of rtl_power_fftw's own bin
+count. Block medians (median over sweeps, then over the block):
+
+| Block | rp50k | rp25k | fftw64 | fftw128 |
+|---|---|---|---|---|
+| 1930-1940 | -27.72 | -30.66 | -53.22 | -53.14 |
+| 1940-1950 | -26.84 | -29.64 | -52.36 | -52.34 |
+| 1950-1960 | -27.78 | -30.98 | -54.33 | -53.31 |
+| 1960-1970 | -28.20 | -31.45 | -54.37 | -54.27 |
+| 1970-1980 | -27.48 | -30.80 | -54.01 | -53.58 |
+| 1980-1990 | -28.92 | -32.42 | -55.16 | -54.31 |
+| **1930-1990** | **-27.78** | **-30.96** | **-53.94** | **-53.52** |
+
+| Offset | Measured | Predicted |
+|---|---|---|
+| fftw64 - rp50k | **-26.16 dB** (10 MHz blocks -25.5 to -26.6, std 0.43) | -29.5 |
+| fftw128 - rp25k | **-22.56 dB** | -26.5 |
+| rp25k - rp50k | -3.18 | -3.01 |
+| fftw128 - fftw64 | +0.42 | 0 |
+
+**The shape of the prediction held and the constant did not.** rtl_power's own 64 -> 128
+step moved it -3.18 dB (3.01 predicted), and rtl_power_fftw's reading is the same at 64 and
+128 bins to within the +0.4 dB that two different bin grids make of a structured block, so
+the per-Hz normalisation and the 10*log10(N) dependence are as the source says. But both
+offsets sit **3.3 dB above** the model. The integer FFT is not the reason: rtl_power's
+`fix_fft`, `FIX_MPY`, sine table and `real_conj` were compiled verbatim from its source into
+a harness and fed the same quantised Gaussian samples as a float DFT, and they reproduce the
+model to **0.01 dB at every noise level from 0.5 to 8 ADC counts** (the harness is
+throwaway; the method is the record). So the two programs do what their source says, and the
+difference is in what the **dongle delivers**: rtl_power ran the RTL2832U at 2.7586 MS/s (its
+own choice for 29 hops over 60 MHz) and rtl_power_fftw at 2.4 MS/s, and the per-Hz level that
+comes out differs by about 3.3 dB between those two rates - the decimation chain's gain, or
+the E4000's IF filter, which librtlsdr sets from the sample rate, drooping across rtl_power's
+wider kept region (+/-1.03 MHz against +/-0.90). The two cannot be told apart on a
+structured block. **Pre-registered discriminator, two minutes of radio:** `rtl_power_fftw -f
+1930M:1990M -b 64 -r 2758620 -t 1 -o 25 -e 120` beside `rp50k`. If the offset becomes
+-30.1 dB the sample rate is the whole story; if it stays near -26 the rest is in the filter
+shape. Best done with the noise generator on a pad, where the input is flat and the block
+median is honest. Until then the working rule is: **an rtl_power_fftw reading at 2.4 MS/s
+is about 26 dB below the same thing on rtl_power's 50k scale**, an empirical constant shown
+only for 1930-1990 MHz at g29, and never a reason to compare the two engines' numbers
+directly. The fingerprint carries the sample rate for exactly this reason.
+
+**(b) Dwell and retune.** Timestamps are UTC to the second, so the per-hop figures come from
+many hops: first acquisition start to last acquisition end, divided by the hops in between.
+
+| Run | Hops | Span | Per hop | Listening per hop | Overhead per hop |
+|---|---|---|---|---|---|
+| `fftwfast` (-t 0.05) | 561 | 61 s | 0.1087 s | 0.0500 s | **58.7 ms** (+/- 2) |
+| `fftw64` (-t 1) | 132 | 144 s | 1.091 s | 1.000 s | **91 ms** |
+| `fftw128` (-t 1) | 132 | 144 s | 1.091 s | 1.000 s | 91 ms |
+
+The overhead is not one number: a 0.05 s hop is one 240 KB read and costs 59 ms (tune, the
+5 ms sleep the program keeps, buffer reset, USB start); a 1 s hop at 2.4 MS/s is 4.8 MB,
+which the program reads as three 1.6 MB buffers with `rtlsdr_reset_buffer` before each, and
+costs 91 ms, so **about 16 ms per extra buffer**. rtl_power's figure on this USB stack is 47
+ms per hop. Listening fraction: 92% at `-t 1`, 46% at `-t 0.05`. The model `59 + 16 x (reads
+- 1)` ms is now what `marsad run` uses for this engine (`rpf.geometry`, overridable in
+station.json), and it predicts the measured 1.091 s per hop by construction. **The hop plan
+is reproduced exactly:** all 33 centres the program tuned over 1930-1990 and all 13 it
+reached over 2147-2187 equal `rpf.plan_hops()` to the hertz (first 1931.200000, then
++1.800000 MHz; first 2148.200000, then +1.790477 MHz).
+
+**(c) Above rtl_power's ceiling.** `fftwtop` recorded **2147.302-2170.565 MHz, 1232 bins
+above 2147.483648 MHz, all finite, five passes in 73 s** - the first data this station has
+above 2^31 Hz. Median -60.8 dB on the engine's scale (about -34.6 on rtl_power's with the
+empirical offset); 2147-2160 sits 0.9 dB above 2160-2170, consistent with the AWS downlink
+ending at 2155; strongest bin 2158.915 MHz at -54.5; nothing within 10 dB of floor+10. **But
+the E4000 would not lock above 2170.6 MHz.** Every planned centre from 2171.476 MHz up
+failed three times with `[E4K] PLL not locked` and was dropped, nine hops in all; the
+program carried on with the thirteen that worked, which is the behaviour wanted. So on this
+morning, after the dongle had been running for ten hours, the XTR's usable top was between
+2170.9 (top edge of the last locked hop) and 2171.5 MHz (first refused centre) - **16 MHz
+short of the 2187 MHz `rtl_test -t` reported on 2026-10-13** and 23 MHz above rtl_power's
+ceiling. Whether that is temperature (the E4000 PLL's top end is known to move with it), the
+margin by which `rtl_test` judges a lock, or a drift in the unit is open: re-measure cold with
+`rtl_test -t` and with `marsad run top 5m` back to back, and again after an hour warm. The
+`top` preset stays at 2147-2187: it asks for everything, the program drops what will not
+lock, and the `.log` names each dropped hop.
+
+Incidental, for anyone reading the raw `.dat`: with `-e` the program writes the extra blank
+line that marks the end of a pass **only once, at the very end**, not after every pass, so
+passes are not separated in the file; the parser groups hops into passes by the frequency
+wrapping back down, as it does for rtl_power, and does not care.
+
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
 The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and

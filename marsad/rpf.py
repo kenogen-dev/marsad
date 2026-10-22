@@ -56,6 +56,16 @@ LOG_SUFFIX = ".log"        # the program's stderr: actual rate, tuning, dropped 
 DEFAULT_RATE_HZ = 2_400_000
 DEFAULT_BINS = 128
 DEFAULT_TIME_S = 1.0
+# Per-hop overhead, measured on the station PC 2026-10-22 (CLAUDE.md,
+# "rtl_power_fftw characterised"): about 59 ms to retune and start the first
+# read, plus about 16 ms for every further 1.6 MB buffer read within the hop
+# (the program calls rtlsdr_reset_buffer before each read). station.json can
+# override both: retune_ms_per_hop_fftw, read_ms_per_buffer_fftw.
+RETUNE_MS_DEFAULT = 59.0
+READ_MS_DEFAULT = 16.0
+BASE_BUF = 16384                 # librtlsdr read granularity, bytes
+DEFAULT_BUF_BYTES = 100 * BASE_BUF   # the program's buffer when more than that is needed
+
 # Analysis-time crop, the counterpart of rtl_power's -c 0.25: keep the middle
 # 75% of every hop. rtl_power_fftw has no crop, so the recorder asks it for a
 # 25% overlap between hops (-o 25) and the parser drops 12.5% at each edge.
@@ -115,14 +125,28 @@ def plan_hops(lo_hz: float, hi_hz: float, rate_hz: int, overlap_pct: float,
     return centres
 
 
+def reads_per_hop(bins: int, repeats: int) -> int:
+    """How many rtlsdr_read_sync calls one hop takes, from Plan::Plan's buffer
+    sizing: up to 1.6 MB the buffer is the data rounded up to 16 KiB and one
+    read does it; beyond that the buffer is 1,638,400 bytes and the hop needs
+    ceil(data / that) reads."""
+    data = 2 * bins * repeats
+    mult = math.ceil(data / BASE_BUF)
+    if mult <= 100:
+        return 1
+    return math.ceil(data / DEFAULT_BUF_BYTES)
+
+
 def geometry(lo_mhz: float, hi_mhz: float, rate_hz: int, bins: int, time_s: float,
              overlap_pct: float, crop: float, duration_s: float,
-             retune_ms_per_hop: float, centre_mhz: float | None = None) -> dict:
+             retune_ms_per_hop: float = RETUNE_MS_DEFAULT, centre_mhz: float | None = None,
+             read_ms_per_buffer: float = READ_MS_DEFAULT) -> dict:
     """Everything the pre-run summary and scan_build.md say about a request.
 
     `repeats` and the listening time per hop are the program's own figures
-    (repeats = ceil(rate * t / N)); the retune cost per hop is the one input
-    that has to be measured on the station (station.json `retune_ms_per_hop_fftw`).
+    (repeats = ceil(rate * t / N)); the overhead per hop (retune plus one read
+    start, then one more read cost per extra buffer) was measured on this PC
+    and can be overridden from station.json.
     The program ends after the pass during which the requested duration
     elapses, so the pass count is rounded up.
     """
@@ -131,7 +155,8 @@ def geometry(lo_mhz: float, hi_mhz: float, rate_hz: int, bins: int, time_s: floa
     hops = len(centres)
     repeats = math.ceil(rate_hz * time_s / bins)
     listen_s = bins * repeats / rate_hz
-    retune_s = retune_ms_per_hop / 1000.0
+    reads = reads_per_hop(bins, repeats)
+    retune_s = (retune_ms_per_hop + read_ms_per_buffer * (reads - 1)) / 1000.0
     pass_s = hops * (listen_s + retune_s)
     passes = max(1, math.ceil(duration_s / pass_s)) if pass_s > 0 else 1
     kept = bins - 2 * int(bins * crop * 0.5)
@@ -148,6 +173,8 @@ def geometry(lo_mhz: float, hi_mhz: float, rate_hz: int, bins: int, time_s: floa
         "kept_bins_per_hop": kept,
         "bins": hops * kept,
         "repeats_per_hop": repeats,
+        "reads_per_hop": reads,
+        "overhead_per_hop_s": retune_s,
         "listen_per_hop_s": listen_s,
         "retune_s_per_sweep": hops * retune_s,
         "sweep_s": pass_s,
@@ -296,8 +323,9 @@ def write_scan_build(raw_path: Path, sidecar: dict, geom: dict, analyze_cmd,
         "bin by its neighbours' mean, but the spike's skirt is wider than one bin.", "",
         "## Dwell", "", "| Quantity | Value |", "|---|---|",
         f"| Listening per hop | {geom['listen_per_hop_s']:.3f} s |",
-        f"| Retuning per pass | {geom['retune_s_per_sweep']:.2f} s "
-        f"({geom['hops']} hops x {retune_ms:g} ms) |",
+        f"| Overhead per pass | {geom['retune_s_per_sweep']:.2f} s "
+        f"({geom['hops']} hops x {geom['overhead_per_hop_s'] * 1000:.0f} ms: {retune_ms:g} ms retune "
+        f"+ {geom['reads_per_hop'] - 1} extra buffer reads) |",
         f"| One pass | {geom['sweep_s']:.1f} s |",
         f"| Listening | {geom['listening_frac'] * 100:.1f}% |",
         f"| Passes (sweeps) | {geom['sweeps']:,} planned; the run ends after the pass in which the duration elapses |",
@@ -461,8 +489,9 @@ def record(args, station: Station, preset: dict) -> int:
 
     cmd = build_command(str(exe or TOOL), freq, gain, bins, rate, time_s, overlap, dur_s,
                         args.device, baseline, window)
-    retune_ms = float(station.data.get("retune_ms_per_hop_fftw", station.retune_ms_per_hop))
-    geom = geometry(lo, hi, rate, bins, time_s, overlap, crop, dur_s, retune_ms, centre)
+    retune_ms = float(station.data.get("retune_ms_per_hop_fftw", RETUNE_MS_DEFAULT))
+    read_ms = float(station.data.get("read_ms_per_buffer_fftw", READ_MS_DEFAULT))
+    geom = geometry(lo, hi, rate, bins, time_s, overlap, crop, dur_s, retune_ms, centre, read_ms)
 
     print()
     print(f"  Survey: {args.preset}  ({preset.get('note', '')})   engine: {ENGINE}")
@@ -476,7 +505,8 @@ def record(args, station: Station, preset: dict) -> int:
     print(f"    gain        {gain:g} dB fixed   integration {time_s:g} s per hop "
           f"({geom['repeats_per_hop']} spectra averaged)")
     print(f"    dwell       one pass {geom['sweep_s']:.1f} s, {geom['listening_frac'] * 100:.0f}% listening "
-          f"(retune {retune_ms:g} ms/hop{'' if 'retune_ms_per_hop_fftw' in station.data else ', unmeasured for this engine'})")
+          f"({geom['overhead_per_hop_s'] * 1000:.0f} ms overhead per hop: {retune_ms:g} ms retune "
+          f"+ {geom['reads_per_hop'] - 1} extra reads x {read_ms:g} ms)")
     print(f"    duration    {dur_text}  (~{geom['sweeps']:,} passes, ~{geom['csv_mb']:.0f} MB, "
           f"occupancy step {geom['occupancy_step_pct']:.2f}%)")
     print(f"    crop        {crop:g} at analysis (-o {overlap:g} overlap recorded)"

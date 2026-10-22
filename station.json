@@ -9,7 +9,7 @@
   "rtl_sdr_dir": "rtl-sdr",
   "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
   "retune_ms_per_hop": 47.0,
-  "_retune_ms_per_hop_fftw": "rtl_power_fftw's own retune cost per hop; unmeasured until marsad run --engine rtl_power_fftw has been timed (see CLAUDE.md)",
+  "_retune_ms_per_hop_fftw": "rtl_power_fftw overhead, measured 2026-10-22 on this PC: 59 ms per hop (retune + first read) and 16 ms per extra 1.6 MB buffer read within a hop (91 ms at -t 1 and 2.4 MS/s). Built into marsad; set retune_ms_per_hop_fftw and read_ms_per_buffer_fftw here to override.",
   "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. Measured 2026-10-13 on one USB stack; run `sdr calibrate-retune` to measure yours.",
   "receivers": {
     "xtr": {

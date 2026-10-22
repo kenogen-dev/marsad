@@ -40,14 +40,21 @@ def test_single_frequency_is_one_hop():
 
 
 def test_top_geometry():
-    g = rpf.geometry(2147, 2187, 2_400_000, 128, 1.0, 25, 0.25, 1800, 47.0)
+    g = rpf.geometry(2147, 2187, 2_400_000, 128, 1.0, 25, 0.25, 1800)
     assert g["hops"] == 22 and g["fft"] == 128
     assert g["bin_khz_predicted"] == pytest.approx(18.75)
     assert g["kept_bins_per_hop"] == 96 and g["bins"] == 2112
     assert g["repeats_per_hop"] == 18750          # ceil(2.4e6 * 1 / 128)
     assert g["listen_per_hop_s"] == pytest.approx(1.0)
-    assert g["sweep_s"] == pytest.approx(22 * 1.047)
-    assert g["sweeps"] == 79
+    # 4.8 MB per hop = three 1.6 MB reads: 59 ms + 2 x 16 ms = 91 ms overhead,
+    # the 1.091 s per hop measured on 2026-10-22 (132 hops in 144 s)
+    assert g["reads_per_hop"] == 3
+    assert g["overhead_per_hop_s"] == pytest.approx(0.091)
+    assert g["sweep_s"] == pytest.approx(22 * 1.091)
+    assert g["sweeps"] == 75
+    # a 0.05 s hop needs one 240 KB read: just the 59 ms
+    f = rpf.geometry(1930, 1990, 2_400_000, 64, 0.05, 25, 0.25, 60)
+    assert f["reads_per_hop"] == 1 and f["overhead_per_hop_s"] == pytest.approx(0.059)
     assert g["covered_mhz"] == pytest.approx([2147.3, 2186.7])
 
 
@@ -150,3 +157,25 @@ def test_h1_preset_is_a_single_hop_and_allows_zero_overlap():
     assert "one hop centred on 1420.41 MHz" in out
     assert "2048 bins, 1.1719 kHz bins" in out
     assert "-f 1420.4058M -g 496 -b 2048 -r 2400000 -t 60 -e 7200 -q" in out
+
+
+def test_parser_on_captured_pcs_sample():
+    """tests/data/rpf_pcs_20261022.dat: the first two passes of a real capture on
+    the XTR, 2026-10-22 07:44 local: 1930M:1990M at 2.4 MS/s, -b 64 -t 1 -o 25,
+    g29, UWB antenna, the PCS downlink block. 33 hops per pass."""
+    from marsad.analyze import load_rtl_power_fftw, survey_engine
+    import numpy as np
+    path = DATA / "rpf_pcs_20261022.dat"
+    assert survey_engine(path) == "rtl_power_fftw"
+    s = load_rtl_power_fftw(path, crop=0.25)
+    assert s.power_db.shape == (2, 1584)               # 33 hops x 48 kept bins
+    assert s.step_hz == pytest.approx(37_500.0)
+    assert [int(c) for c in s.hop_centres_hz] == rpf.plan_hops(1930e6, 1990e6, 2_400_000, 25)
+    assert s.freqs_hz[0] == pytest.approx(1_930_312_500.0)
+    assert s.freqs_hz[-1] == pytest.approx(1_989_675_000.0)
+    assert not np.isnan(s.power_db).any()
+    med = np.nanmedian(s.power_db, axis=0)
+    assert float(np.nanmedian(med)) == pytest.approx(-53.93, abs=0.01)
+    assert float(np.nanmax(med)) == pytest.approx(-46.98, abs=0.01)
+    assert (s.times[1] - s.times[0]).total_seconds() == 36.0   # one 33-hop pass at -t 1
+    assert load_rtl_power_fftw(path, crop=0.0).power_db.shape == (2, 1600)
