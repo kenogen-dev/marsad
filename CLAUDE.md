@@ -605,6 +605,31 @@ whose stop band bottoms out rather than following a curve. Incidental: the chain
 with the LaNA terminated is -35.0 dB, 2.5 dB *above* the g29 terminated figure; the tuner's
 minimum-gain setting is not simply "less of the same" and should not be used for surveys.
 
+### Standing chain restored after Block F (2026-10-21, 09:27): the gain path is unchanged to 0.04 dB
+
+`chain-restored-check`, 30 min LS at g29 with the generator stack and pads removed and the
+antenna back on the notch, against `window-A2-inside` (same fingerprint, 10 sweeps each).
+Judged on the base-station block, which is always on and does not care about the hour:
+
+| Block | A2 (2026-10-20 10:20) | restored (09:27) | change |
+|---|---|---|---|
+| 1941-2041 (PCS downlink) | -34.20 | -34.16 | **+0.04** |
+| 2041-2141 (digital floor) | -37.94 | -37.79 | +0.15 |
+| 1841-1941 | -37.64 | -36.94 | +0.70 |
+| 1541-1841 | -36.96 to -37.42 | -36.20 to -36.90 | +0.5 to +0.85 |
+| 1341-1541 | -33.58 to -34.67 | -31.98 to -33.11 | +1.6 |
+| 1241-1341 | -31.36 | -27.64 | **+3.72** |
+| 14.4 MHz family, paired, n=63 | +2.60 | +2.94 | +0.35, SE 0.18, not significant |
+
+**The chain is back.** A loose joint, a missing part or a pad left in would show on the downlink
+block first, and it moved 0.04 dB. The low blocks are higher, but uniformly: every 10 MHz slice
+of 1241-1341 is up 3.5 +/- 0.3 dB with the same 1291-1321 hump as A2 and no new detection,
+and the lift tapers smoothly to nothing by 1.9 GHz. That is the shape antenna-on received noise
+had in cascade step 5 (+4.5, +3.5, +1.1, +0.5, 0.0), scaled up: the environment at 1.2-1.5 GHz
+was louder this morning than during A2, as the 16 h diurnal survey says it can be. A remount of
+the antenna in a slightly better spot would look the same and cannot be excluded; the next LS
+run on this chain settles which. Nothing in it needs a repeat before the antenna work starts.
+
 ### Antenna outside the window, A/B/A (2026-10-20, 07:28-11:00): worth 3-5 dB, and the glass is not low-E
 
 Block E. Three 30 min blocks at the LS fingerprint, g29, 10 analysed sweeps each after a 10 min

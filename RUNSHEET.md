@@ -329,9 +329,13 @@ receiver, 39 dB ahead of the LaNA, tuner at g-1**; anything less clips.
    source on its input, part generator roll-off, part E4000. The antenna is the only movable
    piece: UWB antenna on the 2049-2147 tile next, then the bridge.
 
-**Block F is complete. Restore the standing chain:** stack off, notch back on the LaNA's input,
-antenna on the notch, and save that chain as the one in use (mark it static so the new
-run guard does not ask every time).
+**Block F is complete. The standing chain is restored and checked** (`chain-restored-check`,
+2026-10-21 09:27, 30 min LS at g29, against `window-A2-inside`): the PCS downlink block
+1941-2041 agrees to **+0.04 dB** and the digital-floor block 2041-2141 to +0.15, so the
+gain path is exactly as it was. 1241-1341 read +3.7 dB and 1341-1541 +1.6, lifted uniformly
+across every 10 MHz slice with no new line and tapering to zero by 1.9 GHz: the received-noise
+pattern of step 5, i.e. the morning environment, not the chain. The next LS run will show
+whether it was a one-off. station.json carries the standing chain again.
 
 ---
 
