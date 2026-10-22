@@ -9,6 +9,7 @@
   "rtl_sdr_dir": "rtl-sdr",
   "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
   "retune_ms_per_hop": 47.0,
+  "_retune_ms_per_hop_fftw": "rtl_power_fftw's own retune cost per hop; unmeasured until marsad run --engine rtl_power_fftw has been timed (see CLAUDE.md)",
   "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. Measured 2026-10-13 on one USB stack; run `sdr calibrate-retune` to measure yours.",
   "receivers": {
     "xtr": {
@@ -136,6 +137,30 @@
       "integration": 120,
       "receiver": "xtr",
       "note": "custom build; --freq sets the range"
+    },
+    "top": {
+      "engine": "rtl_power_fftw",
+      "freq": "2147M:2187M",
+      "bins": 128,
+      "rate": 2400000,
+      "time": 1,
+      "overlap": 25,
+      "crop": 0.25,
+      "gain": 29.0,
+      "receiver": "xtr",
+      "note": "2147-2187 MHz, above rtl_power's 2^31 ceiling; 22 hops of 2.4 MHz, 18.75 kHz bins"
+    },
+    "h1": {
+      "engine": "rtl_power_fftw",
+      "freq": "1420.4058M",
+      "bins": 2048,
+      "rate": 2400000,
+      "time": 60,
+      "overlap": 0,
+      "crop": 0.25,
+      "gain": 49.6,
+      "receiver": "v5",
+      "note": "hydrogen line, one hop centred on 1420.4058 MHz, 1.17 kHz bins, 60 s per spectrum; --baseline FILE for an off-source spectrum"
     }
   },
   "_presets": "Named ranges for `sdr run <preset> <duration>`. Keep `custom` so a hand-built range is recorded as custom rather than masquerading as a preset.",

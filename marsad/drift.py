@@ -62,7 +62,7 @@ def settle_index(series, budget):
 
 def main(argv=None, station: Station | None = None, prog: str = "marsad drift") -> int:
     import numpy as np
-    from .analyze import load_rtl_power   # reuses the tested sweep grouping
+    from .analyze import load_survey   # reuses the tested sweep grouping, either engine
 
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description="Per-sweep drift of a survey")
@@ -73,7 +73,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad drift") 
     args = ap.parse_args(argv)
 
     path = resolve(station, args.survey)
-    s = load_rtl_power(path)
+    s = load_survey(path)
     with np.errstate(all="ignore"):
         med = np.nanmedian(s.power_db, axis=1)
     med = [float(v) for v in med if math.isfinite(float(v))]

@@ -274,6 +274,8 @@ def build_parser(station: Station, prog: str = "marsad run") -> argparse.Argumen
     p.add_argument("--chain-as-saved", action="store_true",
                    help="yes, the rig is still built as the saved default chain says "
                         "(needed once that chain has been used by a run and no --chain is given)")
+    from . import rpf
+    rpf.add_arguments(p)
     return p
 
 
@@ -311,11 +313,26 @@ def confirm_default_chain(station: Station, args) -> str | None:
 
 def show_presets(station: Station) -> None:
     print("\n  Presets (gain and integration are the station defaults):\n")
+    fftw = []
     for name, p in station.presets.items():
+        if p.get("engine") == "rtl_power_fftw":
+            fftw.append((name, p))
+            continue
         lo, hi, b = parse_freq_spec(p["freq"])
         print(f"    {name:<7} {lo:>7.1f} - {hi:<7.1f} MHz  bin {b:>6.1f} kHz  "
               f"-g {p['gain']:<5g} -i {p['integration']:<3d}  {p['note']}")
     print(f"\n  Every survey also uses -c {CROP} -F {FIR}.\n")
+    if fftw:
+        from . import rpf
+        print("  rtl_power_fftw presets (the engine is named in the preset; its dB scale is not rtl_power's):\n")
+        for name, p in fftw:
+            rate = p.get("rate", rpf.DEFAULT_RATE_HZ)
+            lo, hi, c = rpf.parse_freq(p["freq"], rate)
+            where = f"{lo:>7.1f} - {hi:<7.1f} MHz" if c is None else f"centre {c:<13.4f} MHz"
+            print(f"    {name:<7} {where}  -b {p.get('bins', rpf.DEFAULT_BINS):<5} "
+                  f"-g {p['gain']:<5g} -t {p.get('time', rpf.DEFAULT_TIME_S):<4g} "
+                  f"{p.get('receiver')}  {p['note']}")
+        print()
 
 
 def write_scan_build(csv_path: Path, sidecar: dict, geom: dict,
@@ -555,6 +572,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
                          f"Known: {', '.join(presets)} (--list for detail)")
 
     preset = presets[args.preset]
+    # A preset may name its recording engine; --engine overrides. rtl_power_fftw
+    # has its own path (rpf.py) so nothing below changes for rtl_power runs.
+    engine = args.engine or preset.get("engine", "rtl_power")
+    if engine == "rtl_power_fftw":
+        from . import rpf
+        return rpf.record(args, station, preset)
+    if preset.get("engine") not in (None, "rtl_power"):
+        raise SystemExit(f"preset {args.preset!r} is for engine {preset['engine']!r}")
     dur_text, dur_s = parse_duration(args.duration)
     freq = args.freq or preset["freq"]
     # `is None` not `or`, so --gain 0 / --integration 0 are rejected, not ignored.

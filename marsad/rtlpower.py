@@ -166,6 +166,17 @@ def actual_bin_width_khz(csv_path) -> float | None:
         return None
 
 
+def engine_of(sidecar: dict | None) -> str:
+    """Which program recorded a survey. Sidecars before 2026-10-21 have no
+    `engine` key and are all rtl_power."""
+    return (sidecar or {}).get("engine") or "rtl_power"
+
+
+def engine_section(sidecar: dict | None) -> dict:
+    """The sidecar section holding the recording settings, whichever engine."""
+    return (sidecar or {}).get(engine_of(sidecar), {}) or {}
+
+
 def fingerprint(sidecar: dict, bin_khz_actual) -> str:
     """One line that two scans must share to be comparable.
 
@@ -174,6 +185,9 @@ def fingerprint(sidecar: dict, bin_khz_actual) -> str:
     comparison. Range and receiver are in there too, because a different span
     changes the hop geometry and therefore the bins themselves.
     """
+    if engine_of(sidecar) == "rtl_power_fftw":
+        from .rpf import fingerprint as rpf_fingerprint
+        return rpf_fingerprint(sidecar, bin_khz_actual)
     rp = sidecar["rtl_power"]
     b = f"{bin_khz_actual:.4f}" if bin_khz_actual else f"~{rp['bin_khz']:g}"
     # The earliest sidecars predate freq_high_mhz_effective; fall back to what was asked.

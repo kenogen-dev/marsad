@@ -74,7 +74,9 @@ def test_station_defaults_match_the_original_tables():
     assert [f for f, _ in st.spur_families] == [28.8, 0.6, 480.0, 24.0, 25.0, 100.0]
     assert st.retune_ms_per_hop == 47.0
     assert st.detection_floors == {"handled": 0.5, "untouched": 0.05}
-    assert list(st.presets) == ["LS", "L", "milair", "900", "wide", "burst23", "deep", "custom"]
+    assert list(st.presets) == ["LS", "L", "milair", "900", "wide", "burst23", "deep", "custom",
+                                "top", "h1"]
+    assert st.presets["top"]["engine"] == st.presets["h1"]["engine"] == "rtl_power_fftw"
     assert st.presets["burst23"]["floor_window"] == 0.3
 
 

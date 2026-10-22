@@ -18,12 +18,19 @@ are found, so a shipped build always includes it).
 rtl_power CSV format, one line per hop per sweep:
   date, time, Hz low, Hz high, Hz step, samples, dB, dB, dB, ...
 
+rtl_power_fftw output (surveys/*.dat, recorded by `marsad run --engine
+rtl_power_fftw`): one block per hop, a `#` header with UTC start/end
+timestamps, then `frequency_Hz power_dB` lines, blank line between hops, two
+blank lines between passes. load_survey() tells the two apart by their first
+line and the rest of the analysis is the same.
+
 The receiver gaps and spur families come from station.json via `configure()`;
 the module-level tables below are only the fallback for a bare import.
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import math
 import sys
@@ -160,6 +167,158 @@ def load_rtl_power(path: str | Path) -> Survey:
     )
 
 
+def load_rtl_power_fftw(path: str | Path, crop: float = 0.0) -> Survey:
+    """Read rtl_power_fftw's text output into the same Survey as rtl_power's CSV.
+
+    Each hop is a block: five `#` header lines (the program's name, acquisition
+    start and end in UTC to the second, a blank comment, the column names), then
+    N lines of `frequency power`, then a blank line; a pass over every hop ends
+    with a second blank line. Frequencies are bin CENTRES, tuned_freq + (i - N/2)
+    * rate / N, so the bin at index N/2 is the hop centre (the DC bin, which the
+    program has already replaced by its neighbours' mean).
+
+    `crop` is the counterpart of rtl_power's -c: drop that fraction of each hop,
+    half from each edge, using rtl_power's own index arithmetic (int(N*crop/2)
+    bins off each end). The recorder asks for a matching -o overlap so the kept
+    parts still tile the span. A single-hop run is cropped the same way, which
+    removes the anti-alias roll-off at the edges.
+
+    Sweeps are grouped exactly as for rtl_power: a new one starts when a hop's
+    first frequency is not above the previous hop's, so a hop the program
+    dropped as untunable shifts nothing. Timestamps are converted from UTC to
+    local time so reports read like rtl_power's.
+    """
+    path = Path(path)
+    blocks: list[tuple[pd.Timestamp | None, np.ndarray, np.ndarray]] = []
+    freqs: list[float] = []
+    vals: list[float] = []
+    start: pd.Timestamp | None = None
+    nonfinite = 0
+    total = 0
+
+    def close_block():
+        nonlocal freqs, vals, start
+        if freqs:
+            f = np.asarray(freqs, dtype=float)
+            v = np.asarray(vals, dtype=float)
+            n = len(f)
+            k = int(n * crop * 0.5) if crop > 0 else 0
+            if k > 0 and n - 2 * k >= 2:
+                f, v = f[k:n - k], v[k:n - k]
+            blocks.append((start, f, v))
+        freqs, vals, start = [], [], None
+
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for ln, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                close_block()
+                continue
+            if line.startswith("#"):
+                m = line.partition("Acquisition start:")[2].strip()
+                if m:
+                    try:
+                        start = pd.Timestamp(m.replace(" UTC", ""), tz="UTC")
+                    except (ValueError, TypeError):
+                        start = None
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                print(f"  skipping malformed line {ln}", file=sys.stderr)
+                continue
+            try:
+                f = float(parts[0])
+            except ValueError:
+                print(f"  skipping malformed line {ln}", file=sys.stderr)
+                continue
+            v = _reading(parts[1])
+            total += 1
+            nonfinite += int(math.isnan(v))
+            freqs.append(f)
+            vals.append(v)
+    close_block()
+    if not blocks:
+        raise SystemExit(f"No rtl_power_fftw data found in {path}")
+
+    if nonfinite:
+        pct = 100.0 * nonfinite / max(total, 1)
+        print(f"  note: {nonfinite} of {total} readings ({pct:.1f}%) were not finite "
+              f"and are treated as missing.", file=sys.stderr)
+
+    # The bin width is rate / N: take it from the spacing inside the first block,
+    # which the program prints to enough digits for this to be exact.
+    f0 = blocks[0][1]
+    step_hz = float(np.median(np.diff(f0))) if len(f0) > 1 else 1.0
+    # Hop centres: the middle bin of each uncropped block is the tuned frequency.
+    # After cropping, the middle of the kept run is still that bin.
+    hop_centres = set()
+    for _, f, _v in blocks:
+        hop_centres.add(round(float(f[len(f) // 2])))
+
+    sweep_id = []
+    sid, prev_lo = 0, -math.inf
+    for _, f, _v in blocks:
+        if f[0] <= prev_lo:
+            sid += 1
+        prev_lo = f[0]
+        sweep_id.append(sid)
+
+    all_k = np.unique(np.round(np.concatenate([b[1] for b in blocks]) / step_hz).astype(np.int64))
+    grid = all_k * step_hz
+    index = {k: i for i, k in enumerate(all_k)}
+    n_sweeps = sid + 1
+    P = np.full((n_sweeps, len(grid)), np.nan)
+    t0: list = [None] * n_sweeps
+    local_tz = dt.datetime.now().astimezone().tzinfo
+    for (ts, f, v), sw in zip(blocks, sweep_id):
+        if t0[sw] is None and ts is not None:
+            t0[sw] = ts.tz_convert(local_tz).tz_localize(None)
+        cols = [index[k] for k in np.round(f / step_hz).astype(np.int64)]
+        cur = P[sw, cols]
+        # where hops overlap, keep the lower value (edge bins are the unreliable ones)
+        P[sw, cols] = np.where(np.isnan(cur), v, np.fmin(cur, v))
+    # A pass with no readable timestamp gets the previous one plus nothing: keep
+    # the index monotonic rather than invent a time.
+    for i in range(n_sweeps):
+        if t0[i] is None:
+            t0[i] = t0[i - 1] if i and t0[i - 1] is not None else pd.Timestamp(0)
+    return Survey(
+        name=path.stem,
+        freqs_hz=grid,
+        times=pd.DatetimeIndex(t0),
+        power_db=P,
+        step_hz=step_hz,
+        hop_centres_hz=np.array(sorted(hop_centres), dtype=float),
+    )
+
+
+def survey_engine(path: str | Path) -> str:
+    """'rtl_power_fftw' if the file is that program's output, else 'rtl_power'.
+
+    rtl_power_fftw starts every block with `# rtl-power-fftw output`; rtl_power
+    CSVs start with a date. Judged on the first non-blank line.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.strip():
+                    return "rtl_power_fftw" if line.lstrip().startswith("#") else "rtl_power"
+    except OSError:
+        pass
+    return "rtl_power"
+
+
+def load_survey(path: str | Path, crop: float | None = None) -> Survey:
+    """Load either engine's output. For rtl_power_fftw the crop comes from the
+    argument, else the sidecar's `crop`, else 0 (nothing dropped)."""
+    if survey_engine(path) != "rtl_power_fftw":
+        return load_rtl_power(path)
+    if crop is None:
+        sc = load_sidecar(path) or {}
+        crop = float((sc.get("rtl_power_fftw") or {}).get("crop", 0.0) or 0.0)
+    return load_rtl_power_fftw(path, crop=crop)
+
+
 def drop_sweeps(s: Survey, n: int) -> None:
     """Discard the first n sweeps, in place.
 
@@ -241,8 +400,10 @@ def sidecar_lines(sc: dict | None) -> list[str]:
                 "_No sidecar JSON found beside this CSV, so the gain, crop and integration "
                 "time are unknown. Surveys recorded with `tools/run_survey.py` get one "
                 "automatically._", ""]
-    rp = sc.get("rtl_power", {})
     chain = sc.get("chain", {})
+    if sc.get("engine") == "rtl_power_fftw":
+        return _sidecar_lines_fftw(sc)
+    rp = sc.get("rtl_power", {})
     rows = [
         ("Preset", sc.get("preset")),
         ("Recorded", sc.get("started_local")),
@@ -276,6 +437,60 @@ def sidecar_lines(sc: dict | None) -> list[str]:
     return out
 
 
+def _sidecar_lines_fftw(sc: dict) -> list[str]:
+    """The 'Survey settings' section for an rtl_power_fftw run."""
+    rp = sc.get("rtl_power_fftw", {})
+    chain = sc.get("chain", {})
+    rows = [
+        ("Engine", "rtl_power_fftw (dB are a power spectral density on its own scale, "
+                   "not rtl_power's)"),
+        ("Preset", sc.get("preset")),
+        ("Recorded", sc.get("started_local")),
+        ("Duration", f"{sc.get('duration_requested')} requested"
+                     + (f", {sc['duration_actual_s'] / 60:.1f} min actual"
+                        if sc.get("duration_actual_s") else "")),
+        ("Gain", f"{rp.get('gain_db')} dB fixed" if rp.get("gain_db") is not None else None),
+        ("Integration", f"{rp.get('time_per_hop_s')} s per hop" if rp.get("time_per_hop_s") else None),
+        ("FFT bins per hop", rp.get("bins")),
+        ("Sample rate", f"{rp['rate_hz'] / 1e6:g} MS/s"
+                        + (f" ({rp['rate_hz_actual'] / 1e6:.6f} actual)" if rp.get("rate_hz_actual") else "")
+                        if rp.get("rate_hz") else None),
+        ("Bin width", f"{rp['bin_khz']:.4f} kHz"
+                      + (f" ({rp['bin_khz_actual']:g} kHz actual)" if rp.get("bin_khz_actual") else "")
+                      if rp.get("bin_khz") else None),
+        ("Overlap / crop", f"-o {rp.get('overlap_pct')}, crop {rp.get('crop')} at analysis"
+                           if rp.get("crop") is not None else None),
+        ("Baseline", rp.get("baseline")),
+        ("Window", rp.get("window")),
+        ("Receiver", sc.get("receiver")),
+        ("Antenna", f"{chain.get('antenna_shape')}, whips {chain.get('whip_length_mm')} mm each"
+                    if chain.get("antenna_shape") else None),
+        ("LNA", chain.get("lna")),
+        ("Filter", chain.get("filter")),
+    ]
+    out = ["## Survey settings", "", "| Setting | Value |", "|---|---|"]
+    out += [f"| {k} | {v} |" for k, v in rows if v not in (None, "", "None")]
+    if sc.get("interrupted"):
+        out.append("| Note | **run was interrupted**, this is a partial survey |")
+    out += ["", f"Command: `{sc.get('command_line', 'unknown')}`", ""]
+    for note in sc.get("corrections", []):
+        out += [f"**Corrected after the fact:** {note}", ""]
+    if sc.get("conditions"):
+        out += ["**Conditions:** " + sc["conditions"], ""]
+    return out
+
+
+# rtl_power_fftw settings that must match for two of its runs to be comparable.
+CRITICAL_SETTINGS_FFTW = [
+    ("gain_db", "gain", "dB"),
+    ("time_per_hop_s", "integration per hop", "s"),
+    ("bins", "FFT bins", ""),
+    ("rate_hz", "sample rate", "Hz"),
+    ("overlap_pct", "overlap", "%"),
+    ("crop", "crop", ""),
+]
+
+
 def compare_sidecars(sa_name, sca, sb_name, scb, step_khz_a, step_khz_b) -> list[str]:
     """Warn about setting differences that make a comparison meaningless.
 
@@ -293,8 +508,13 @@ def compare_sidecars(sa_name, sca, sb_name, scb, step_khz_a, step_khz_b) -> list
         notes.append("No sidecar for " + ", ".join(missing)
                      + ", so gain, crop and integration could not be checked.")
     else:
-        ra, rb = sca.get("rtl_power", {}), scb.get("rtl_power", {})
-        for key, label, unit in CRITICAL_SETTINGS:
+        ea, eb = sca.get("engine") or "rtl_power", scb.get("engine") or "rtl_power"
+        if ea != eb:
+            problems.append(f"**engine differs**: {ea} vs {eb} (their dB scales are not the "
+                            "same; levels cannot be compared at all)")
+        ra, rb = sca.get(ea, {}), scb.get(eb, {})
+        settings = CRITICAL_SETTINGS_FFTW if ea == eb == "rtl_power_fftw" else CRITICAL_SETTINGS
+        for key, label, unit in settings:
             va, vb = ra.get(key), rb.get(key)
             if va is None or vb is None:
                 continue
@@ -720,7 +940,9 @@ def write_report(s: Survey, a: Analysis, out: Path, mask, sidecar: dict | None =
         "",
         md_table(spur_summary(pk)) if not pk.empty else "_none_",
         "",
-        "Notes: levels are relative dB from rtl_power, not calibrated dBm. 'steady' = above threshold in at least 90% of sweeps;",
+        ("Notes: levels are relative dB from rtl_power_fftw (a power spectral density on its own scale, not rtl_power's and not dBm). 'steady' = above threshold in at least 90% of sweeps;"
+         if (sidecar or {}).get("engine") == "rtl_power_fftw" else
+         "Notes: levels are relative dB from rtl_power, not calibrated dBm. 'steady' = above threshold in at least 90% of sweeps;"),
         "'intermittent' = 5-90%; 'rare burst' = under 5%. Hop-centre tags mark the zero-IF DC spot of each tuning hop;",
         "use rtl_power -c 0.25 (crop) to remove most of them.",
     ]
@@ -830,7 +1052,7 @@ def parse_mask(items, receiver):
 
 
 def run_one(csv, args, base_out: Path):
-    s = load_rtl_power(csv)
+    s = load_survey(csv, crop=getattr(args, "crop", None))
     drop_sweeps(s, args.skip_sweeps)
     keep_sweeps(s, getattr(args, 'max_sweeps', 0))
     sc = load_sidecar(csv)
@@ -859,7 +1081,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad"):
     for name in ("analyze", "compare"):
         sp = sub.add_parser(name)
         if name == "analyze":
-            sp.add_argument("csv", nargs="+", help="rtl_power CSV file(s)")
+            sp.add_argument("csv", nargs="+", help="rtl_power CSV or rtl_power_fftw .dat file(s)")
         else:
             sp.add_argument("before")
             sp.add_argument("after")
@@ -872,6 +1094,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad"):
         sp.add_argument("--skip-sweeps", type=int, default=0,
                         help="discard the first N sweeps (receiver warm-up drift)")
         sp.add_argument("--out", default="reports", help="output folder (default ./reports)")
+        sp.add_argument("--crop", type=float, default=None, metavar="F",
+                        help="rtl_power_fftw files only: fraction of each hop to drop at the edges "
+                             "(default: the sidecar's value, else 0). rtl_power files are cropped "
+                             "by rtl_power itself (-c) and ignore this.")
     args = p.parse_args(argv)
     base = Path(args.out)
     if args.cmd == "analyze":

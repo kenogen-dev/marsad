@@ -198,6 +198,12 @@ def load_sidecar(station: Station, report_dir):
 
 
 def fingerprint_loose(side):
+    if side.get("engine") == "rtl_power_fftw":
+        try:
+            from .rpf import fingerprint as rpf_fingerprint
+            return rpf_fingerprint(side)
+        except (KeyError, TypeError, ValueError):
+            return None
     rp = side.get("rtl_power", {})
     if not rp:
         return None

@@ -40,7 +40,7 @@ import sqlite3
 from pathlib import Path
 
 from .config import Station
-from .rtlpower import fingerprint
+from .rtlpower import engine_section, fingerprint
 
 BUCKET_MHZ = 1.0
 
@@ -151,7 +151,10 @@ def add_report(station: Station, con: sqlite3.Connection, report_dir: Path,
         con.execute("DELETE FROM surveys WHERE id=?", (row["id"],))
 
     sc = json.loads(side.read_text(encoding="utf-8"))
-    rp, ch = sc["rtl_power"], sc.get("chain", {})
+    # rtl_power_fftw runs keep their settings under their own key; the columns
+    # below take what matches (gain, range, bin width, crop) and the fingerprint
+    # names the engine, so `new` never compares across engines.
+    rp, ch = engine_section(sc), sc.get("chain", {})
     sweeps, skipped = report_facts(report_dir)
 
     band_rows = list(csv.DictReader(bins.open(encoding="utf-8")))
