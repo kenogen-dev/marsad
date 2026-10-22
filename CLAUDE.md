@@ -1637,6 +1637,33 @@ SDR until then). Endpoints: `GET /hunt/reports`, `GET /hunt/candidates?bg&dev&bl
 fingerprint mismatch is refused in plain words. While a run started from the page records,
 the server reads its CSV twice a second instead of every 2 s.
 
+`marsad response` (2026-10-21) - an antenna's return loss and SWR at every bin from three
+runs through the return-loss bridge with the noise generator on its input: `open` (nothing on
+the test port, total reflection, the 0 dB reference), `load` (50 ohm on the port, the bridge's
+own leakage, i.e. its directivity and the deepest return loss it can show there) and `antenna`.
+Per bin on the **median over sweeps**: `rl = open - antenna` (clipped at 0), `rho = 10^(-rl/20)`,
+`SWR = (1+rho)/(1-rho)`, `floor = open - load`. Each bin carries a trust flag: `at-least` when
+the return loss is within `--margin-db` (6) of the bridge's directivity or the antenna reading
+is within that margin of `--rx-floor-db`; `dropped` within 25 kHz of a hop centre or in the
+PLL gap. A running median over `--smooth-mhz` (1) gives the smoothed columns; raw stays in
+`response.csv`. The three fingerprints must match, as for compare-runs, or it refuses in a
+sentence. Writes `response.csv` (every bin), `response.md` (dip, best SWR, 2:1 bandwidth over
+trusted bins, the range the bridge vouches for at >= 15 dB directivity, flagged fractions,
+offset from `--f0`) and `atlas.json` for the Antenna Atlas import, thinned to 800 points
+with the dip bin always kept. `tests/test_response.py` pins the arithmetic on a synthetic trio.
+
+**`--rx-floor-db` is a number you supply, not the run's floor column**, because with the
+generator on the analyser's floor (20th percentile over time, rolling median over frequency)
+sits on the trace itself; it is the generator, not the receiver. Take it from a terminated run
+with the generator off (-37.5 dB at g29 on the XTR). Without it that flag is simply off, and
+response.md says so.
+
+```
+py -m marsad response --open <tag|csv> --load <tag|csv> --antenna <tag|csv>
+    [--name "2130 GP v1"] [--f0 2130] [--smooth-mhz 1] [--margin-db 6]
+    [--rx-floor-db -37.5] [--skip-sweeps N] [--out reports/response/<name>_<stamp>]
+```
+
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 
 ```

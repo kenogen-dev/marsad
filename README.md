@@ -33,6 +33,7 @@ same command, so `sdr run LS 1h` and `marsad run LS 1h` are identical.
 | `marsad drift <tag>` | did the receiver drift as it warmed? |
 | `marsad adsb-check` | proves the receive path works, in 60 s, by counting aircraft at 1090 MHz |
 | `marsad archive list / new / trend / band / seen` | the long-term occupancy database |
+| `marsad response --open A --load B --antenna C` | an antenna's return loss and SWR at every bin, from three runs through a return-loss bridge |
 | `marsad calibrate-retune` | measures how long *your* PC loses to retuning between hops |
 | `marsad init` | writes a `station.json` for you to edit |
 | `marsad config` | shows what was loaded and from where |

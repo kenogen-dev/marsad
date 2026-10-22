@@ -10,6 +10,7 @@
     marsad adsb-check            1090 MHz positive control
     marsad archive list|add|new|trend|band|seen|mark
     marsad live                  the web app, without opening a browser
+    marsad response --open A --load B --antenna C   return loss / SWR per bin
     marsad calibrate-retune      measure this machine's retune cost per hop
     marsad init                  write a station.json to edit
     marsad config                show what station.json was loaded, from where
@@ -36,6 +37,7 @@ COMMANDS = {
     "adsb-check": "1090 MHz ADS-B receive check",
     "archive": "the occupancy.db archive (list, add, new, trend, band, seen, mark)",
     "live": "the local web app",
+    "response": "antenna return loss and SWR from three bridge runs (open, load, antenna)",
     "calibrate-retune": "measure rtl_power's retune cost per hop on this PC",
     "init": "write a station.json into this folder to edit",
     "config": "show the loaded station configuration",
@@ -118,6 +120,9 @@ def main(argv=None) -> int:
     if cmd == "live":
         from . import live
         return live.main(args, station, prog)
+    if cmd == "response":
+        from . import response
+        return response.main(args, station, prog)
     if cmd == "calibrate-retune":
         from . import calibrate
         return calibrate.main(args, station, prog)
