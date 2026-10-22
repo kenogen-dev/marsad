@@ -618,12 +618,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
               f"(2^31 Hz).\n  It will quietly record only up to there; "
               f"{hi - RTL_POWER_MAX_MHZ:.1f} MHz will be missing.")
 
+    # Looked up here so the summary can print its path; a missing rtl_power is
+    # refused only after the chain guard below, which must speak first.
     rtl_power = find_tool("rtl_power", station.tool_dirs())
-    if rtl_power is None and not args.dry_run:
-        raise SystemExit(
-            "rtl_power not found. Put the RTL-SDR Blog release in "
-            f"{station.root / station.data.get('rtl_sdr_dir', 'rtl-sdr')} "
-            "or on PATH, or set rtl_sdr_dir in station.json.")
 
     station.surveys.mkdir(parents=True, exist_ok=True)
     started = dt.datetime.now()
@@ -684,6 +681,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         chain_text = confirm_default_chain(station, args)
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled. Nothing was recorded.")
+    if rtl_power is None:
+        raise SystemExit(
+            "rtl_power not found. Put the RTL-SDR Blog release in "
+            f"{station.root / station.data.get('rtl_sdr_dir', 'rtl-sdr')} "
+            "or on PATH, or set rtl_sdr_dir in station.json.")
     check_device_free(args.non_interactive)
     device_check(station, args.device)
     warn_long_run(dur_s)
