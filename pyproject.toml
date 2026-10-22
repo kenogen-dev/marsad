@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "marsad"
-version = "0.1.0"
+version = "0.2.0"
 description = "Marsad (المرصد, the observatory): an RTL-SDR spectrum monitoring station with a comparability fingerprint for every survey, pre-registered A/B statistics, thermal drift and spur-family tools, an occupancy archive, and a live waterfall. Built around rtl_power on Windows."
 readme = "README.md"
 requires-python = ">=3.10"
