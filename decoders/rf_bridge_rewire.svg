@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 2160" width="1000" height="2160" font-family="Segoe UI, Arial, sans-serif">
+<rect width="1000" height="2160" fill="#ffffff"/>
+<text x="20" y="34" font-size="22" fill="#111" text-anchor="start" font-weight="700">transverters-store RF bridge: as shipped, and the two correct ways to wire the balun</text>
+<text x="20" y="56" font-size="13" fill="#444" text-anchor="start" font-weight="normal">Drawn in the listing's orientation: Input left, REF top, DUT bottom, OUT right. Your photos show the board turned 180°.</text>
+<g transform="translate(120,150)">
+<text x="120" y="-20" font-size="17" font-weight="700" fill="#111">1.  AS SHIPPED (your board now)</text>
+<rect x="0" y="0" width="760" height="300" rx="6" fill="#1d4e89" stroke="#0f2f55" stroke-width="2"/>
+<rect x="150" y="34" width="470" height="232" fill="#17417a" stroke="#0f2f55"/>
+<text x="385" y="62" text-anchor="middle" fill="#dfe8f3" font-size="14">0.1 – 3000 MHz   RF bridge</text>
+<g fill="#d9a441" stroke="#8a6a1e" stroke-width="2"><rect x="-46" y="136" width="46" height="28" rx="3"/><rect x="62" y="-46" width="28" height="46" rx="3"/><rect x="62" y="300" width="28" height="46" rx="3"/><rect x="760" y="136" width="46" height="28" rx="3"/></g>
+<text x="-23" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">Input</text>
+<text x="76" y="-52" text-anchor="middle" fill="#111" font-weight="700" font-size="13">REF</text>
+<text x="76" y="362" text-anchor="middle" fill="#111" font-weight="700" font-size="13">DUT</text>
+<text x="783" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">OUT</text>
+<g stroke="#9fb6cf" stroke-width="4" fill="none"><line x1="0" y1="150" x2="92" y2="150"/><line x1="76" y1="0" x2="76" y2="96"/><line x1="76" y1="300" x2="76" y2="204"/><line x1="760" y1="150" x2="700" y2="150"/></g>
+<rect x="96" y="96" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="107" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="116" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="127" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="170" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="181" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="190" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="201" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<line x1="92" y1="103" x2="92" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="96" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="204" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="123" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="177" x2="130" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="197" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="96" x2="150" y2="98" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="204" x2="150" y2="202" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="128" x2="700" y2="150" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="170" x2="700" y2="170" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="700" y1="170" x2="760" y2="176" stroke="#9fb6cf" stroke-width="4"/>
+<g fill="#e8c56b" stroke="#111"><rect x="600" y="100" width="18" height="12"/><rect x="600" y="118" width="18" height="12"/><rect x="600" y="136" width="18" height="12"/><rect x="600" y="154" width="18" height="12"/></g><rect x="598" y="172" width="22" height="12" fill="#222" stroke="#ccc"/><text x="609" y="181" text-anchor="middle" fill="#eee" font-size="8">0</text>
+<rect x="150" y="88" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="192" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="118" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="160" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<text x="165.0" y="121" text-anchor="middle" fill="#fff" font-size="10">REF node</text>
+<text x="165.0" y="225" text-anchor="middle" fill="#fff" font-size="10">DUT node</text>
+<text x="165.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<text x="655.0" y="151" text-anchor="middle" fill="#fff" font-size="10">OUT centre</text>
+<text x="655.0" y="193" text-anchor="middle" fill="#fff" font-size="10">OUT shell</text>
+<text x="655.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<rect x="215" y="128" width="380" height="44" rx="9" fill="#2a2a2a" stroke="#000"/>
+<line x1="255" y1="128" x2="255" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="297" y1="128" x2="297" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="339" y1="128" x2="339" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="381" y1="128" x2="381" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="423" y1="128" x2="423" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="465" y1="128" x2="465" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="507" y1="128" x2="507" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="549" y1="128" x2="549" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="591" y1="128" x2="591" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<text x="405" y="155" text-anchor="middle" fill="#ddd" font-size="12">shielded pair through ferrite beads: two white wires inside one braid</text>
+<path d="M215,140 C195,130 185,110 170,98" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,140 C195,130 185,110 170,98" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,140 185,118 172,104" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,140 185,118 172,104" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,165 C200,175 185,195 170,205" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+<ellipse cx="168" cy="100" rx="22" ry="16" fill="#c9ced6" stroke="#8a8f99" stroke-width="2"/>
+<path d="M595,140 C615,130 630,125 650,126" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,140 C615,130 630,125 650,126" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,142 630,135 652,132" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,142 630,135 652,132" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,165 C615,170 632,172 652,172" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+<ellipse cx="640" cy="135" rx="34" ry="30" fill="#c9ced6" stroke="#8a8f99" stroke-width="2"/>
+<ellipse cx="620" cy="165" rx="22" ry="10" fill="#c9ced6" stroke="#8a8f99" stroke-width="2"/>
+<rect x="596" y="96" width="28" height="92" fill="none" stroke="#e5533d" stroke-width="3" stroke-dasharray="5 3"/>
+<text x="430" y="92" fill="#ffd9d4" font-size="12" font-weight="700">0.3 Ω short: blob bridges the pad row</text>
+<text x="200" y="230" fill="#ffd9d4" font-size="12" font-weight="700">whites and braid blobbed together at both ends</text>
+</g>
+<g transform="translate(120,610)">
+<text x="120" y="-20" font-size="17" font-weight="700" fill="#111">2.  COAX-STYLE wiring</text>
+<rect x="0" y="0" width="760" height="300" rx="6" fill="#1d4e89" stroke="#0f2f55" stroke-width="2"/>
+<rect x="150" y="34" width="470" height="232" fill="#17417a" stroke="#0f2f55"/>
+<text x="385" y="62" text-anchor="middle" fill="#dfe8f3" font-size="14">0.1 – 3000 MHz   RF bridge</text>
+<g fill="#d9a441" stroke="#8a6a1e" stroke-width="2"><rect x="-46" y="136" width="46" height="28" rx="3"/><rect x="62" y="-46" width="28" height="46" rx="3"/><rect x="62" y="300" width="28" height="46" rx="3"/><rect x="760" y="136" width="46" height="28" rx="3"/></g>
+<text x="-23" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">Input</text>
+<text x="76" y="-52" text-anchor="middle" fill="#111" font-weight="700" font-size="13">REF</text>
+<text x="76" y="362" text-anchor="middle" fill="#111" font-weight="700" font-size="13">DUT</text>
+<text x="783" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">OUT</text>
+<g stroke="#9fb6cf" stroke-width="4" fill="none"><line x1="0" y1="150" x2="92" y2="150"/><line x1="76" y1="0" x2="76" y2="96"/><line x1="76" y1="300" x2="76" y2="204"/><line x1="760" y1="150" x2="700" y2="150"/></g>
+<rect x="96" y="96" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="107" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="116" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="127" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="170" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="181" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="190" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="201" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<line x1="92" y1="103" x2="92" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="96" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="204" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="123" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="177" x2="130" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="197" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="96" x2="150" y2="98" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="204" x2="150" y2="202" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="128" x2="700" y2="150" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="170" x2="700" y2="170" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="700" y1="170" x2="760" y2="176" stroke="#9fb6cf" stroke-width="4"/>
+<g fill="#e8c56b" stroke="#111"><rect x="600" y="100" width="18" height="12"/><rect x="600" y="118" width="18" height="12"/><rect x="600" y="136" width="18" height="12"/><rect x="600" y="154" width="18" height="12"/></g><rect x="598" y="172" width="22" height="12" fill="#222" stroke="#ccc"/><text x="609" y="181" text-anchor="middle" fill="#eee" font-size="8">0</text>
+<rect x="150" y="88" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="192" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="118" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="160" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<text x="165.0" y="121" text-anchor="middle" fill="#fff" font-size="10">REF node</text>
+<text x="165.0" y="225" text-anchor="middle" fill="#fff" font-size="10">DUT node</text>
+<text x="165.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<text x="655.0" y="151" text-anchor="middle" fill="#fff" font-size="10">OUT centre</text>
+<text x="655.0" y="193" text-anchor="middle" fill="#fff" font-size="10">OUT shell</text>
+<text x="655.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<rect x="215" y="128" width="380" height="44" rx="9" fill="#2a2a2a" stroke="#000"/>
+<line x1="255" y1="128" x2="255" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="297" y1="128" x2="297" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="339" y1="128" x2="339" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="381" y1="128" x2="381" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="423" y1="128" x2="423" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="465" y1="128" x2="465" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="507" y1="128" x2="507" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="549" y1="128" x2="549" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="591" y1="128" x2="591" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<text x="405" y="155" text-anchor="middle" fill="#ddd" font-size="12">shielded pair through ferrite beads: two white wires inside one braid</text>
+<path d="M215,140 C190,135 185,215 172,202" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,140 C190,135 185,215 172,202" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,150 190,215 176,206" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,150 190,215 176,206" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,165 C200,150 190,120 168,100" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+<path d="M595,140 C615,135 630,130 652,128" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,140 C615,135 630,130 652,128" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,145 632,133 656,132" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,145 632,133 656,132" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,165 C620,168 635,170 652,170" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+</g>
+<g transform="translate(120,1110)">
+<text x="120" y="-20" font-size="17" font-weight="700" fill="#111">3.  BALANCED-PAIR wiring</text>
+<rect x="0" y="0" width="760" height="300" rx="6" fill="#1d4e89" stroke="#0f2f55" stroke-width="2"/>
+<rect x="150" y="34" width="470" height="232" fill="#17417a" stroke="#0f2f55"/>
+<text x="385" y="62" text-anchor="middle" fill="#dfe8f3" font-size="14">0.1 – 3000 MHz   RF bridge</text>
+<g fill="#d9a441" stroke="#8a6a1e" stroke-width="2"><rect x="-46" y="136" width="46" height="28" rx="3"/><rect x="62" y="-46" width="28" height="46" rx="3"/><rect x="62" y="300" width="28" height="46" rx="3"/><rect x="760" y="136" width="46" height="28" rx="3"/></g>
+<text x="-23" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">Input</text>
+<text x="76" y="-52" text-anchor="middle" fill="#111" font-weight="700" font-size="13">REF</text>
+<text x="76" y="362" text-anchor="middle" fill="#111" font-weight="700" font-size="13">DUT</text>
+<text x="783" y="184" text-anchor="middle" fill="#111" font-weight="700" font-size="13">OUT</text>
+<g stroke="#9fb6cf" stroke-width="4" fill="none"><line x1="0" y1="150" x2="92" y2="150"/><line x1="76" y1="0" x2="76" y2="96"/><line x1="76" y1="300" x2="76" y2="204"/><line x1="760" y1="150" x2="700" y2="150"/></g>
+<rect x="96" y="96" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="107" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="116" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="127" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="170" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="181" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<rect x="96" y="190" width="34" height="14" fill="#2b2b2b" stroke="#ccc"/><text x="113" y="201" text-anchor="middle" fill="#eee" font-size="9">101</text>
+<line x1="92" y1="103" x2="92" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="96" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="76" y1="204" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="123" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="177" x2="130" y2="197" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="103" x2="130" y2="96" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="197" x2="130" y2="204" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="96" x2="150" y2="98" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="130" y1="204" x2="150" y2="202" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="128" x2="700" y2="150" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="670" y1="170" x2="700" y2="170" stroke="#9fb6cf" stroke-width="4"/>
+<line x1="700" y1="170" x2="760" y2="176" stroke="#9fb6cf" stroke-width="4"/>
+<g fill="#e8c56b" stroke="#111"><rect x="600" y="100" width="18" height="12"/><rect x="600" y="118" width="18" height="12"/><rect x="600" y="136" width="18" height="12"/><rect x="600" y="154" width="18" height="12"/></g><rect x="598" y="172" width="22" height="12" fill="#222" stroke="#ccc"/><text x="609" y="181" text-anchor="middle" fill="#eee" font-size="8">0</text>
+<rect x="150" y="88" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="192" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="150" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="118" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="160" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<rect x="640" y="236" width="30" height="20" fill="#e8c56b" stroke="#111"/>
+<text x="165.0" y="121" text-anchor="middle" fill="#fff" font-size="10">REF node</text>
+<text x="165.0" y="225" text-anchor="middle" fill="#fff" font-size="10">DUT node</text>
+<text x="165.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<text x="655.0" y="151" text-anchor="middle" fill="#fff" font-size="10">OUT centre</text>
+<text x="655.0" y="193" text-anchor="middle" fill="#fff" font-size="10">OUT shell</text>
+<text x="655.0" y="269" text-anchor="middle" fill="#fff" font-size="10">ground</text>
+<rect x="215" y="128" width="380" height="44" rx="9" fill="#2a2a2a" stroke="#000"/>
+<line x1="255" y1="128" x2="255" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="297" y1="128" x2="297" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="339" y1="128" x2="339" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="381" y1="128" x2="381" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="423" y1="128" x2="423" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="465" y1="128" x2="465" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="507" y1="128" x2="507" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="549" y1="128" x2="549" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<line x1="591" y1="128" x2="591" y2="172" stroke="#5a5a5a" stroke-width="2"/>
+<text x="405" y="155" text-anchor="middle" fill="#ddd" font-size="12">shielded pair through ferrite beads: two white wires inside one braid</text>
+<path d="M215,140 C195,130 185,110 170,98" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,140 C195,130 185,110 170,98" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,160 190,210 174,204" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M215,150 C195,160 190,210 174,204" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M215,165 C205,180 195,230 172,246" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+<path d="M595,140 C615,132 632,128 652,128" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,140 C615,132 632,128 652,128" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,150 632,160 652,170" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/>
+<path d="M595,150 C615,150 632,160 652,170" stroke="#fafafa" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M595,165 C612,190 630,230 652,246" stroke="#ff8c1a" stroke-width="8" fill="none" stroke-linecap="round"/>
+</g>
+<path d="M30,1440 L70,1440" stroke="#222" stroke-width="7"/><path d="M30,1440 L70,1440" stroke="#fafafa" stroke-width="4"/>
+<text x="80" y="1445" font-size="13" fill="#222" text-anchor="start" font-weight="normal">white inner wires (PTFE sheath), two of them</text>
+<path d="M330,1440 L370,1440" stroke="#ff8c1a" stroke-width="8"/>
+<text x="380" y="1445" font-size="13" fill="#222" text-anchor="start" font-weight="normal">braid (outer shield), drawn orange</text>
+<rect x="580" y="1432" width="26" height="16" fill="#e8c56b" stroke="#111"/>
+<text x="614" y="1445" font-size="13" fill="#222" text-anchor="start" font-weight="normal">solder pad</text>
+<ellipse cx="760" cy="1440" rx="18" ry="10" fill="#c9ced6" stroke="#8a8f99"/>
+<text x="786" y="1445" font-size="13" fill="#222" text-anchor="start" font-weight="normal">factory solder blob</text>
+<rect x="20" y="1470" width="960" height="124" rx="8" fill="#f4f6f9" stroke="#c9d1dc"/>
+<text x="34" y="1492" font-size="15" fill="#111" text-anchor="start" font-weight="700">What is wrong now</text>
+<text x="34" y="1514" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Both white wires and the braid are blobbed together, and at the OUT end the blob</text>
+<text x="34" y="1532" font-size="13" fill="#333" text-anchor="start" font-weight="normal">spills onto the pad row beside the 0 Ω link. OUT centre pin to OUT shell reads</text>
+<text x="34" y="1550" font-size="13" fill="#333" text-anchor="start" font-weight="normal">0.3 Ω instead of about 100 Ω. The detector's two leads are shorted, so the bridge</text>
+<text x="34" y="1568" font-size="13" fill="#333" text-anchor="start" font-weight="normal">cannot read the difference between the DUT and REF nodes. Everything measured today</text>
+<text x="34" y="1586" font-size="13" fill="#333" text-anchor="start" font-weight="normal">was leakage: 35 dB down, and louder with the load removed.</text>
+<rect x="20" y="1610" width="960" height="124" rx="8" fill="#f4f6f9" stroke="#c9d1dc"/>
+<text x="34" y="1632" font-size="15" fill="#111" text-anchor="start" font-weight="700">Which of the two wirings to use</text>
+<text x="34" y="1654" font-size="13" fill="#333" text-anchor="start" font-weight="normal">The pads decide. Unsolder both ends and clean the pads, then meter each bare pad:</text>
+<text x="34" y="1672" font-size="13" fill="#333" text-anchor="start" font-weight="normal">near 0 Ω to the DUT centre pin = DUT node; near 0 Ω to the REF pin = REF node;</text>
+<text x="34" y="1690" font-size="13" fill="#333" text-anchor="start" font-weight="normal">near 0 Ω to any SMA shell = ground. Two pads at the bridge end: use COAX-STYLE.</text>
+<text x="34" y="1708" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Three pads, one of them ground: use BALANCED-PAIR. Both give a working bridge;</text>
+<text x="34" y="1726" font-size="13" fill="#333" text-anchor="start" font-weight="normal">the only wrong wiring is any two of the three leads touching each other.</text>
+<rect x="20" y="1750" width="960" height="106" rx="8" fill="#f4f6f9" stroke="#c9d1dc"/>
+<text x="34" y="1772" font-size="15" fill="#111" text-anchor="start" font-weight="700">Coax-style, step by step</text>
+<text x="34" y="1794" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Bridge end: twist both white wires together, solder to the DUT-node pad.</text>
+<text x="34" y="1812" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Braid pigtail to the REF-node pad. No solder between the two pads.</text>
+<text x="34" y="1830" font-size="13" fill="#333" text-anchor="start" font-weight="normal">OUT end: both whites to the OUT-centre pad, braid to the OUT-shell pad.</text>
+<text x="34" y="1848" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Keep every joint clear of the four-pad row with the 0 Ω part.</text>
+<rect x="20" y="1872" width="960" height="106" rx="8" fill="#f4f6f9" stroke="#c9d1dc"/>
+<text x="34" y="1894" font-size="15" fill="#111" text-anchor="start" font-weight="700">Balanced-pair, step by step</text>
+<text x="34" y="1916" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Bridge end: white 1 to the REF-node pad, white 2 to the DUT-node pad,</text>
+<text x="34" y="1934" font-size="13" fill="#333" text-anchor="start" font-weight="normal">braid to the ground pad. If there is no ground pad there, leave the braid</text>
+<text x="34" y="1952" font-size="13" fill="#333" text-anchor="start" font-weight="normal">trimmed short and insulated at this end only.</text>
+<text x="34" y="1970" font-size="13" fill="#333" text-anchor="start" font-weight="normal">OUT end: white 1 to the OUT-shell pad, white 2 to the OUT-centre pad, braid to ground.</text>
+<rect x="20" y="1994" width="960" height="88" rx="8" fill="#f4f6f9" stroke="#c9d1dc"/>
+<text x="34" y="2016" font-size="15" fill="#111" text-anchor="start" font-weight="700">Pass check after soldering (meter on 200 Ω, nothing connected)</text>
+<text x="34" y="2038" font-size="13" fill="#333" text-anchor="start" font-weight="normal">OUT centre pin to OUT shell: about 100 Ω (was 0.3).    Input centre to REF centre: about 50 Ω.    Input centre to DUT centre: about 50 Ω.</text>
+<text x="34" y="2056" font-size="13" fill="#333" text-anchor="start" font-weight="normal">REF centre to DUT centre: about 100 Ω.    OUT centre to DUT centre: near 0 Ω.    OUT shell to REF centre: near 0 Ω (coax-style) or open (balanced).</text>
+<text x="34" y="2074" font-size="13" fill="#333" text-anchor="start" font-weight="normal">Then on the radio: open reference near -2 dB at 1.3 GHz, and the both-open run 25 dB or more below it. That drop is the bridge working.</text>
+</svg>

@@ -339,6 +339,23 @@ whether it was a one-off. station.json carries the standing chain again.
 
 ---
 
+## Block G - return-loss bridge (started 2026-10-22, BLOCKED on a rewire)
+
+The bridge as shipped has its detector leads shorted (OUT centre to shell 0.3 ohm, should be
+~100). Every run on 2026-10-22 measured leakage: DUT open read ~25 dB too low, and both ports
+open read 8-10 dB *louder* than one loaded. Rewire per `decoders/rf_bridge_rewire.svg`, then:
+
+1. **Meter check, nothing connected:** OUT centre to shell ~100 ohm, Input to REF ~50, Input to
+   DUT ~50, REF to DUT ~100.
+2. **Radio check, g14, no pad:** DUT open near **-2 dB at 1.3 GHz**; both open **25 dB or more
+   below** that. Fail either one and stop.
+3. Only then the three `marsad response` runs (`open`, `load`, `antenna`), whip first, UWB second.
+
+Also from 2026-10-22: `top` on the UWB locked all 22 hops to 2186.7 MHz in the evening, where
+the morning run dropped everything above 2171.5. The cold/warm PLL test is still owed.
+
+---
+
 ## Rules that apply to every run
 
 - Check the device index first. USB order is not guaranteed: `.\rtl-sdr\rtl_test.exe`

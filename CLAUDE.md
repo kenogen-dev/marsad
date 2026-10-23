@@ -803,6 +803,78 @@ line that marks the end of a pass **only once, at the very end**, not after ever
 passes are not separated in the file; the parser groups hops into passes by the frequency
 wrapping back down, as it does for rtl_power, and does not care.
 
+### The return-loss bridge arrived miswired (2026-10-22, 14:07-15:13): every reading so far is leakage
+
+First radio use of the bridge, XTR at g14, no pad, generator warm, notch and LaNA off the window,
+bridge OUT > DC block > 3 ft coax > bulkhead > XTR. Three short checks, nothing archived as a
+measurement of anything but the bridge.
+
+| Run | Bridge ports | Range | Block medians |
+|---|---|---|---|
+| `br-open-check` 14:07 | DUT open, REF on the load | 1850-2147, 25k | -39 to -41, i.e. the floor |
+| `br-open-LScheck` 15:05 | DUT open, REF on the load | LS, 50k | -22.7 at 1241-1291, falling to -38.5 by 2041 |
+| `br-test1-bothopen` 15:12 | DUT open, REF open | 1241-1541, 50k | -14.5 to -22.7 |
+
+**Two signs of a broken bridge, both pre-registerable from how a bridge works:**
+
+1. **The open reference is ~25 dB too low.** The same generator straight into the XTR through
+   36 dB of pad at g14 read -26.3 at 1241-1341 (`nsrc-D14-LS`), so unpadded it is near +10. A
+   working bridge costs ~6 dB each way, so DUT open should read about -2 dB at 1.3 GHz. It read
+   -22.7 to -27.6.
+2. **Both ports open is LOUDER than one port loaded, by 7.5-9.8 dB in every 50 MHz block.** With
+   DUT and REF identical the bridge balances and OUT should fall 25 dB or more. It rose.
+
+**Cause, found on the bench:** both white wires of the shielded pair and its braid are blobbed
+together at both ends, and at the OUT end the blob spills onto the pad row beside the 0 ohm link.
+OUT centre to OUT shell meters **0.3 ohm instead of about 100**. The detector's two leads are
+shorted, so the bridge cannot see the DUT-REF difference and what reaches OUT is leakage. The
+~100 MHz ripple in the open-port runs (peaks 1270-1280 and 1360-1380 MHz) is that leakage path,
+not anything about the ports.
+
+The fix is drawn in `decoders/rf_bridge_rewire.svg`: unsolder both ends, meter the bare pads,
+then **coax-style** wiring if the bridge end has two pads, **balanced-pair** if it has three.
+Pass check on the meter, nothing connected: OUT centre to shell ~100 ohm, Input to REF ~50,
+Input to DUT ~50, REF to DUT ~100. **Pass check on the radio, pre-registered:** DUT open near
+-2 dB at 1.3 GHz at g14, and both-open at least 25 dB below that. Until both pass, `marsad
+response` has nothing valid to work on and no antenna has a return-loss figure. **No run after
+the rewire is recorded yet.**
+
+Incidental: 1850-2147 at 25k reads ~3 dB below the LS-range run at 50k in the overlap. That is
+rtl_power's 128- against 64-point FFT, the -3.0 dB step in the fftw characterisation, not the
+bridge.
+
+### `top` on the UWB (2026-10-22, 18:45): this time the E4000 locked all the way to 2186.7 MHz
+
+`uwb-first`, rtl_power_fftw `top` preset, 1 h requested, 178 passes over 51 min, standing chain
+rebuilt after the bridge work with the UWB on the notch (**no DC block** in this chain; it had
+gone to the bridge). Fingerprint `... | N128 | r2.4M | o25 | c0.25 | rtl_power_fftw | xtr`.
+
+**All 22 planned hops recorded, 2147.302-2186.684 MHz, 2102 bins.** The log carries 24 `[E4K]
+PLL not locked` lines, but every centre from 2148.200 to 2185.800 MHz was tuned and produced data,
+so the retries succeeded. **This morning (07:51) every centre from 2171.476 up failed three times
+and was dropped** - also with the dongle warm, after ten hours running. So "it only locks to 2187
+when cold" is not the explanation: the top of the PLL range moved by at least 15 MHz within one
+day at similar warmth. Whether it is temperature in a finer sense, the time since power-up, or
+marginal locking that sometimes wins is open. A cold `rtl_test -t` and a `top 5m` back to back,
+then both again after an hour, is still the test.
+
+| Block | median (fftw scale) |
+|---|---|
+| 2147-2155 | -59.41 |
+| 2155-2160 | -59.15 |
+| 2160-2170 | -60.91 |
+| 2170-2180 | -59.36 |
+| 2180-2187 | **-63.00** |
+
+Whole-run median floor -60.8 dB, the same as the morning's `fftwtop`. 2147-2160 sits ~1.6 dB over
+2160-2170, consistent with the AWS downlink ending at 2155, as in the morning. The top 7 MHz falls
+3.6 dB below its neighbour, which looks like the tuner rolling off at the edge of its range rather
+than anything received. **Nothing real above 2155**: all four detections are hop-centre artefacts
+(2164.30, 2166.08, 2180.44, 2182.23 MHz).
+
+Note: the report header says "90 L, whips 60 mm" for this run. It is the known stale-header
+problem of `--non-interactive` runs; `chain_order` (UWB biconical) is the truth.
+
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
 The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and
