@@ -2308,6 +2308,15 @@ Ready-made ranges:
 
 ## Later roadmap (don't start unless asked)
 
+- **Pinned 2026-10-22: the outdoor box.** Antenna, Flamingo+ notch and LaNA together outside
+  the window in a small weatherproof box, LaNA still powered through the coax by the XTR's
+  bias-tee, so the 3 ft coax carries amplified signal and its loss costs nothing. Block E
+  measured outside at +3-5 dB in the signal-carrying bands; this is the largest measured gain
+  not yet banked. Needs a real mount, not suction cups on sun-warmed glass.
+- **Pinned 2026-10-22: a dish or horn for the hydrogen line.** The `h1` preset (one hop on
+  1420.4058 MHz, 2048 bins, 60 s, v5) exists, but the 21 cm line needs a directional antenna
+  aimed at the sky; an omni such as the UWB will almost certainly show nothing. Research
+  horn and small-dish designs before building.
 - rtl_433 config/logging for 915 MHz sensors.
 - URH workflow for bursts found in surveys (own devices only).
 - SatDump for Meteor-M LRPT (137.9 MHz; needs a 137 MHz V-dipole), later GOES/HRPT with a dish.

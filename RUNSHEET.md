@@ -357,6 +357,36 @@ the morning run dropped everything above 2171.5. The cold/warm PLL test is still
 
 ---
 
+## Block H - rtl_power_fftw scans (started 2026-10-22)
+
+### H1. Scale check: is the 3.3 dB mismatch the sample rate? (pre-registered 2026-10-22, 21:35)
+
+This morning rtl_power_fftw at 2.4 MS/s read **-26.16 dB** against rtl_power's 50k scale on the
+PCS downlink block, where the programs' own arithmetic predicts -29.5. rtl_power ran the dongle
+at 2.7586 MS/s. Four 2 min runs back to back, same chain, g29, PCS downlink 1930-1990 MHz:
+
+| # | Tag | Engine | Rate | Bins |
+|---|---|---|---|---|
+| A | `scale-A-rp50k` | rtl_power, 50k | 2.7586 MS/s (its own choice) | 43.10 kHz, FFT 64 |
+| B | `scale-B-fftw-r2759k` | rtl_power_fftw, `-b 64` | **2.758620 MS/s** | 43.10 kHz, **identical bin width to A** |
+| C | `scale-C-fftw-r2400k` | rtl_power_fftw, `-b 64` | 2.4 MS/s | 37.5 kHz, this morning's setting |
+| D | `scale-D-rp50k` | rtl_power, 50k | 2.7586 MS/s | repeat of A, the bracket |
+
+**Predictions, on the 1930-1990 block median (median over sweeps, then over the block):**
+
+- **A vs D within 0.3 dB**, or the band moved during the block and B/C cannot be read.
+- **C - A reproduces this morning's -26.2 within 0.5 dB**, or something else changed today.
+- **B - A is the answer.** Near **-30.1 dB** (the model at matched rate): the sample rate is the
+  whole story, and every fftw run at 2.4 MS/s is 3.3 dB "hot" relative to the model. Stays near
+  **-26.2**: the rate is not it, and the difference lives in the E4000's IF filter shape. In
+  between: both, split by where it lands.
+- **C - B** is the same question read inside one engine: the model says 0 dB (both are per-Hz);
+  +3.3 dB means the dongle delivers more per Hz at 2.4 MS/s than at 2.7586.
+
+Read with block medians by hand (`compare-runs` refuses a cross-engine pair by design).
+
+---
+
 ## Rules that apply to every run
 
 - Check the device index first. USB order is not guaranteed: `.\rtl-sdr\rtl_test.exe`
