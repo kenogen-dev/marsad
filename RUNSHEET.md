@@ -438,6 +438,13 @@ median excess over floor**, background per bin 0.28 +/- 0.42 dB:
 
 So B now separates **real vs made-in-chain**, not second- vs third-order. Noted, not hidden.
 
+**DONE 23:18. Not made in our chain; real-at-the-antenna consistent but not shown.** Line medians
+A -52.9, B (pad) -55.4, C -47.3. The bracket failed (A vs C 5.5 dB; C alone fell 8.7 dB in ten
+minutes), but B held the line in all 59 spectra at 4.6-11.5 dB over the floor, which no 20-30 dB
+intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, and also fits partial
+entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
+probe. Full table in CLAUDE.md "Block H2".
+
 ---
 
 ## Rules that apply to every run

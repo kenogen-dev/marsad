@@ -949,6 +949,50 @@ sample rate - which one is not settled and does not need to be. The working rule
 Untested: whether the 3.5 dB is the same at other frequencies or gains. A noise-generator pair at
 2.4 and 2.7586 MS/s on a flat input would show the rate effect across the whole band in two runs.
 
+### Block H2, 1633.47 MHz pad test (2026-10-22, 22:07-23:18): not made in our chain, and far less steady than thought
+
+Pre-registered in RUNSHEET H2 (amended after A, before B). One rtl_power_fftw hop on 1633.000 MHz,
+2048 bins = **1.17 kHz**, 2.4 MS/s, `-t 10`, g29, 10 min each, UWB on the standing chain. A: no pad
+(22:07). B: 10 dB attenuator between the notch's SMA adapter and the LaNA input (22:47). C: pad out
+again (23:09). The as-built stack without the pad is **notch > SMA adapter > LaNA**; A's chain text
+omitted the adapter and its sidecar carries a `chain_correction`.
+
+**The line is at 1633.4721 MHz in all three, one 1.17 kHz bin wide** (neighbours 3-4 dB down on
+each side, nothing beyond), so it is narrower than ~2 kHz. No mirror image at 1632.53.
+
+| Run | Line, median over 59 spectra | Range within the run | Excess over the local floor | Local floor |
+|---|---|---|---|---|
+| A, no pad | **-52.9** | -56.7 to -49.0 | 8.7 dB | -61.6 |
+| B, 10 dB pad | **-55.4** | -59.9 to -52.6 | 8.9 dB | **-64.3** |
+| C, no pad | **-47.3** | -51.4 to **-39.5** | 14.8 dB | -62.0 |
+
+**Scored against the predictions:**
+
+- **A and C agree within 3 dB: FAILED.** They differ by 5.5 dB, and C alone fell **8.7 dB in ten
+  minutes** (-41.0 at 23:09 to -49.7 at 23:18). The line's wander is not the "6 dB over an hour"
+  the deep tile suggested; it moves several dB within minutes.
+- **Made in our chain (second order -20, third order -30): REFUTED, and this half survives the
+  failed bracket.** Through the pad the line was present in every one of B's 59 spectra, 4.6 to
+  11.5 dB over the floor. A product of the LaNA would have fallen 20-30 dB below A and vanished.
+  The LaNA-intermod story for 1633.47 is closed, on top of the width argument (its supposed
+  1966.49 parent was never a narrow line).
+- **Real signal at the antenna, -10 dB: consistent but not shown.** B sits 2.5 dB below A, 8.1 dB
+  below C, about **5 dB below their mean**. With the line swinging +/-4 dB on a minute scale, that
+  is indistinguishable from -10. It also fits a signal partly entering **after** the pad (into the
+  LaNA, the coax or the cage), which a pad at the LaNA input cannot attenuate. Not separated.
+
+**Incidental, the floor:** the pad lowered the local floor at 1633 MHz by **2.4-2.7 dB**. So at 1.63
+GHz the LaNA's amplified noise (antenna noise plus its own) still lifts the floor 2-3 dB above the
+receiver's digital floor; cutting 10 dB ahead of it removes most of that. Consistent with cascade
+step 3's LaNA tilt (+0.6 dB at 1641-1741 terminated) plus the received noise of step 5.
+
+**What it now looks like:** a narrow (<2 kHz), frequency-locked, strongly fading tone that
+reaches the antenna inside the window but vanished with the antenna outside (Block E). The
+pattern points to **a device in the room or the building**, not the sky and not our chain. The
+fading (several dB in minutes) suggests either the source's own duty or a path that changes
+(people moving, a fan). The **Hunt mode** in the Probe tab exists for exactly this: walk a
+near-field probe round the room on the 5 MHz `hunt` tile around 1633.47 and listen for the tone.
+
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
 The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and
