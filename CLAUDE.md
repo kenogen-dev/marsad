@@ -2063,12 +2063,14 @@ URL. It is the intended way to compose a scan:
 
 `tools/antenna_bench.html` - the Antenna Bench, published as an Artifact at
 https://claude.ai/artifact/7R4r7UGerUnrjahnaUHqCJ (2026-10-22; it grew out of the Ground Plane Trim
-Bench the same day). Redeploy by publishing that file to the same URL. One page, nine antenna
+Bench the same day). Redeploy by publishing that file to the same URL. One page, eleven antenna
 types behind a picker: quarter-wave ground plane (the default, model unchanged), discone (no
 radials, no reflector; a 1000 MHz cutoff is a 75 mm cone that covers 1090, 1265 and 2130 together;
-its cut guide trims the first dip against 1.12 x cutoff, not the target), coaxial collinear, biquad
-with reflector, axial-mode helix, 137 MHz V-dipole, can antenna, 5-element Yagi and the station's
-own 60 mm whips. The knobs, the to-scale drawing and the predicted readouts share the first screen
+its cut guide trims the first dip against 1.12 x cutoff, not the target), J-pole (half-wave
+radiator on a quarter-wave stub, tap at 0.04 lambda for 50 ohm), coaxial collinear, biquad with
+reflector, axial-mode helix, quadrifilar helix (two half-turn loops split +/-2.5 %, loop =
+2 sqrt((pi D/2)^2 + H^2) + 2D, cardioid up, RHCP/LHCP), 137 MHz V-dipole, can antenna, 5-element
+Yagi and the station's own 60 mm whips. The knobs, the to-scale drawing and the predicted readouts share the first screen
 (owner's request 2026-10-22), with the SWR chart and cut guide directly under them. For each: dimensions from the target frequency, a to-scale drawing, a
 closed-form SWR model (said plainly in "How the bench thinks"), elevation pattern with azimuth
 beamwidth for the directional ones, the station bands within 15 percent of the target, a cut guide

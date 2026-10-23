@@ -713,7 +713,82 @@ TYPES.discone={
   plan(p,f0,M){const d=TYPES.discone.design(f0,p);return [`Cut ${p.N} cone wires to <b>${f1(d.L*1.08)} mm</b>, 8 percent long (predicted final ${f1(d.L)} mm for a ${p.flow} MHz cutoff), and a disc of <b>${f1(d.disc)} mm</b>. Solder the wires round the connector flange at ${p.ang}° included and the disc to the pin.`,`Stand it disc up on the bridge's RFOUT port, clear of the bench by a hand's width; the sweep below shows the cutoff as the first dip, and from there the SWR should stay under 2 to the top of the sweep.`]},
   howto:[["Resonance.","A discone has a cutoff, not a resonance: below it the cone is too short and the feed goes capacitive; just above it there is a first dip, taken here at 1.12 times c/(4 × slant). That dip is what the cut guide trims against, so the guide reads the measured dip against the design dip rather than the target."],["Match.","Above the first dip the bench draws 50 Ω with a ripple of about ±22 percent in resistance and ±14 Ω of reactance, repeating every 2.5× in frequency, growing when the disc is away from 0.7 × the cone bottom and past six times the cutoff. That is the shape measured discones show, not a derivation; the bridge will draw the real one."],["Pattern.","A dipole's figure at the cutoff, leaning down the cone as frequency rises (a discone's high-band lobe points below the horizon). Gain 2.1 dBi throughout; the discone buys bandwidth, never gain."]]
 };
-const ORDER=["gp","discone","coco","biquad","helix","vdip","can","yagi","dipole"];
+
+/* 10. J-pole: an end-fed half wave on a quarter-wave matching stub. No radials, no reflector. */
+TYPES.jpole={
+  id:"jpole",short:"J-pole",name:"J-pole",word:"cut",
+  lede:"A half-wave radiator standing on a quarter-wave stub that does the matching: two parallel tubes or wires joined at the bottom, the coax tapped a little way up. No radials, no reflector, a touch more gain than the ground plane, and at 1090 MHz the whole thing is two hundred millimetres of brass.",
+  f0:{def:1090,min:100,max:2187},presets:[["1090 ADS-B",1090],["1265 radar",1265],["137.5 NOAA / Meteor",137.5]],
+  knobs:[["long","Long element",20,2400,0.5,1,"mm"],["short","Short element, the stub",10,800,0.5,1,"mm"],["sp","Spacing between the two",2,80,0.5,1,"mm"],["tap","Feed tap above the bottom",1,120,0.5,1,"mm"],["d","Tube or wire diameter",0.5,12,0.1,1,"mm"],["K","End-effect factor",0.90,0.99,0.005,3,""]],
+  init:{long:0,short:0,sp:0,tap:0,d:3.2,K:0.95},
+  help:[["Long element.","Three quarters of a wave times the end-effect factor: the half-wave radiator on top of the quarter-wave stub. The part above the stub's tip is what resonates, and the top is where you cut."],["Short element.","A quarter wave, the other leg of the stub. Set it once; a stub off its length drags the dip and spoils the match."],["Spacing.","About a thirtieth of a wave between the two legs. Closer is fine; wider makes the stub radiate."],["Feed tap.","The coax joins both legs a little above the shorted bottom, where a shorted stub's impedance climbs from zero. About 0.04 λ up is 50 Ω; sliding the tap is the match adjustment, not a cut."],["Diameter.","Brass tube or brazing rod. Thicker is broader; a J-pole is narrow enough that it helps."]],
+  trim:{key:"long",label:"long element"},
+  pill:p=>`${p.d.toFixed(1)} mm, ${f1(p.sp)} mm apart`,
+  design(f0,p){const L=lam(f0);return {long:r5(0.75*L*p.K),short:r5(0.25*L*p.K),sp:r5(L/35),tap:r5(0.04*L)}},
+  model(p,f0){const Lr=Math.max(5,p.long-p.short);const fr=p.K*C0/(2*Lr/1000)/1e6;const fst=p.K*C0/(4*p.short/1000)/1e6;const fres=(2*fr+fst)/3;
+    const tapOpt=0.04*lam(fres);const R0=clamp(50*Math.pow(p.tap/tapOpt,1.6),8,300);
+    const z=mkZ(seriesZ(fres,R0,bwSlope(0.07,Math.max(R0,50))),fres);
+    return {...z,fres,R0,G:2.3,mmPerMHz:Lr/fres,feedNote:`tap ${f1(p.tap)} mm up; ${f1(tapOpt)} mm is 50 Ω`,gainNote:"half-wave radiator, omnidirectional",
+      cutFor:fm=>Lr*(1-fm/f0),
+      rows:[["Radiator",`${f1(Lr)} mm`,`long minus short; resonates at ${f0_(fr)} MHz alone`],["Stub resonates at",`${f0_(fst)} MHz`,Math.abs(fst-fr)/fr<0.02?"matches the radiator":"pulls the dip toward it"],["Tap for 50 Ω",`${f1(tapOpt)} mm`,"above the bottom bar, both legs"],["Overall height",`${f1(p.long)} mm`,"the long element"]],
+      guideRows:[["Stub, leave at",`${f1(0.25*lam(f0)*p.K)} mm`,"λ/4 at target; the long element does the tuning"],["Tap, slide to",`${f1(tapOpt)} mm`,"if the dip is right but the SWR is not"]]};
+  },
+  pattern(p,f0,M){const kh=2*Math.PI*Math.max(5,p.long-p.short)/2/lam(f0);return {omni:true,el:el=>wireE(kh,Math.PI/2-el),note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon: a half-wave dipole's figure, stood on end. The stub radiates little. Put a choke (a few turns of the coax, or ferrite) just below the bottom bar or the feedline becomes a third element and tilts this.`}},
+  draw(p,f0,M){const H=360;const sc=Math.min(1.5,290/p.long);const cx=250,yb=H-40;const xl=cx-p.sp*sc/2-4,xr=cx+p.sp*sc/2+4;let s="";
+    const w=Math.max(2.5,p.d*0.9);
+    s+=`<line x1="${xl}" x2="${xr}" y1="${yb}" y2="${yb}" stroke="var(--accent)" stroke-width="${w}" stroke-linecap="round"/>`;
+    s+=`<line x1="${xl}" x2="${xl}" y1="${yb}" y2="${yb-p.long*sc}" stroke="var(--accent)" stroke-width="${w}" stroke-linecap="round"/>`;
+    s+=`<line x1="${xr}" x2="${xr}" y1="${yb}" y2="${yb-p.short*sc}" stroke="var(--accent)" stroke-width="${w}" stroke-linecap="round"/>`;
+    const yt=yb-p.tap*sc;s+=`<circle cx="${xl}" cy="${yt}" r="3.5" fill="var(--ink)"/><circle cx="${xr}" cy="${yt}" r="3.5" fill="var(--ink)"/><path d="M${xr+4},${yt} h30 v${yb-yt+30}" fill="none" stroke="var(--muted)" stroke-width="2"/><text x="${xr+40}" y="${yt+4}">coax, tap ${f1(p.tap)} mm up</text>`;
+    s+=`<text x="${xl-10}" y="${yb-p.long*sc/2}" text-anchor="end">long ${f1(p.long)} mm</text>`;
+    s+=`<text x="${xr+10}" y="${yb-p.short*sc-8}">stub ${f1(p.short)} mm</text>`;
+    s+=`<text x="${cx}" y="${yb+18}" text-anchor="middle">${f1(p.sp)} mm apart, shorted here</text>`;
+    s+=`<line x1="${xl-50}" x2="${xl-50}" y1="${yb-p.long*sc}" y2="${yb-p.short*sc}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${xl-56}" y="${yb-(p.long+p.short)/2*sc+4}" text-anchor="end">radiator ${f1(Math.max(5,p.long-p.short))}</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · front view, radiator above the stub</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Two tubes soldered to a short bar at the bottom. The coax centre goes to one leg and the braid to the other at the tap height; which leg gets the centre matters little, but choke the coax right below the bar. Everything below the tap is the matching section, everything above the stub tip is the antenna.",
+  chain:p=>`J-pole (long element ${f1(p.long)} mm, stub ${f1(p.short)} mm, ${f1(p.sp)} mm apart, fed ${f1(p.tap)} mm above the bottom bar, ${p.d.toFixed(1)} mm tube, vertical in free air, no radials)`,
+  plan(p,f0,M){const d=TYPES.jpole.design(f0,p);return [`Cut the long element to <b>${f1(d.long*1.06)} mm</b>, 6 percent long (predicted final ${f1(d.long)} mm), the stub to <b>${f1(d.short)} mm</b>, and join them <b>${f1(d.sp)} mm</b> apart with a bar at the bottom. Tap the coax <b>${f1(d.tap)} mm</b> up.`,`Stand it on the bridge's RFOUT port through a short choked jumper, in free air. Trim the top of the long element for the dip; slide the tap for the match.`]},
+  howto:[["Resonance.","The radiator is the long element minus the stub, a half wave times the end-effect factor; the stub is a quarter wave. The bench puts the dip at a two-to-one blend of the radiator's and the stub's own resonances, because a mis-cut stub pulls the dip as a real J-pole's does."],["Match.","A shorted quarter-wave stub presents zero ohms at the bar and rises toward its open tip; the bench takes 50 Ω at 0.04 λ up and lets the resistance scale as the tap distance to the power 1.6, a curve fit, not a transmission-line solution. 2:1 bandwidth 7 percent, the usual J-pole figure."],["Pattern.","A half-wave dipole on end: omnidirectional, strongest at the horizon, 2.3 dBi. The stub and the coax below it are assumed not to radiate, which is only true with a choke."]]
+};
+
+/* 11. Quadrifilar helix: two half-turn loops, circular polarisation, no ground plane. */
+TYPES.qfh={
+  id:"qfh",short:"QFH",name:"Quadrifilar helix (QFH)",word:"cut",
+  lede:"Two bent loops of tube, a quarter turn apart and sized a few percent either side of a wavelength, feeding each other in quadrature. The result is circular polarisation from horizon to overhead with no ground plane and nothing to point: the weather-satellite antenna, and at 1620 MHz a palm-sized Iridium one.",
+  f0:{def:137.5,min:100,max:2187},presets:[["137.5 NOAA / Meteor",137.5],["1620 Iridium",1620],["1545 Inmarsat",1545]],
+  knobs:[["Lm","Loop length, mean of the two",50,4000,1,0,"mm"],["split","Split between the loops",0,6,0.1,1,"%"],["rho","Height over diameter",1,3,0.05,2,""],["d","Tube or wire diameter",0.5,16,0.1,1,"mm"],["sense","Polarisation",null],["Kq","Loop factor",0.95,1.05,0.005,3,""]],
+  selects:{sense:[["RHCP","Right-hand (RHCP): NOAA, Meteor, Iridium, Inmarsat"],["LHCP","Left-hand (LHCP)"]]},
+  init:{Lm:0,split:2.5,rho:2.0,d:9.5,sense:"RHCP",Kq:1.0},
+  help:[["Loop length.","Each loop is a closed path: up one helical element, across the top, down the other, across the bottom. The mean of the two is one wavelength times the loop factor, and it is the trim."],["Split.","The larger loop is this much longer than the mean and the smaller this much shorter. The size difference is what puts the two loops 90° apart in phase; 2.5 percent is the classic figure."],["Height over diameter.","Taller and thinner gives a rounder pattern toward the horizon; 2 is the usual compromise, 1 is squat and overhead-heavy."],["Diameter.","Half-inch copper water pipe (12.7 mm) at 137 MHz, 3 mm wire at 1.6 GHz. It barely changes the numbers; it sets how the thing is built."],["Polarisation.","Wind the loops the other way for the other hand. NOAA, Meteor-M, Iridium and Inmarsat are all right-hand; a wrong-handed QFH loses the satellite by 20 dB."]],
+  trim:{key:"Lm",label:"loops"},
+  pill:p=>`${p.sense}, ${p.d.toFixed(1)} mm tube`,
+  geom(p){const k=2*Math.sqrt((Math.PI/2)**2+p.rho*p.rho)+2;const L1=p.Lm*(1+p.split/100),L2=p.Lm*(1-p.split/100);const D1=L1/k,D2=L2/k;return {L1,L2,D1,D2,H1:p.rho*D1,H2:p.rho*D2,el1:Math.sqrt((Math.PI*D1/2)**2+(p.rho*D1)**2),el2:Math.sqrt((Math.PI*D2/2)**2+(p.rho*D2)**2)}},
+  design(f0,p){return {Lm:Math.round(lam(f0)*p.Kq)}},
+  model(p,f0){const g=TYPES.qfh.geom(p);const fres=p.Kq*C0/(p.Lm/1000)/1e6;const R0=40;const z=mkZ(seriesZ(fres,R0,bwSlope(0.08,50)),fres);
+    return {...z,fres,R0,G:2.5,g,mmPerMHz:p.Lm/fres,feedNote:"two loops in parallel, coax up one tube as the balun",gainNote:"overhead, circular; about −9 dB at the horizon",
+      rows:[["Large loop",`${f0_(g.D1)} × ${f0_(g.H1)} mm`,`${f0_(g.L1)} mm of tube, elements ${f0_(g.el1)} mm`],["Small loop",`${f0_(g.D2)} × ${f0_(g.H2)} mm`,`${f0_(g.L2)} mm of tube, elements ${f0_(g.el2)} mm`],["Tube, total",`${f0_(g.L1+g.L2)} mm`,`${p.d.toFixed(1)} mm diameter`],["Beamwidth",`~130°`,`cardioid, ${p.sense}`]],
+      guideRows:[["Split, keep at",`${p.split.toFixed(1)} %`,"trim both loops by the same fraction so the phasing survives"]]};
+  },
+  pattern(p,f0,M){return {omni:true,bore:"up",el:el=>{const v=0.55+0.45*Math.sin(el);return v*v},note:()=>`A cardioid: strongest overhead, about 9 dB down at the horizon and falling away below it. That is the point of the shape: a satellite pass is heard from rise to set without pointing. Nothing underneath it is needed, so a mast or a window ledge is fine.`}},
+  draw(p,f0,M){const g=M.g;const H=360;const sc=Math.min(2.0,270/g.H1,200/g.D1);const cx=230,yb=H-40;let s="";const sg=p.sense==="RHCP"?1:-1;
+    const loop=(D,Hh,col,phase)=>{let f="",b="";const r=D/2*sc;for(const side of [0,1]){let prev=null;for(let i=0;i<=40;i++){const t=i/40;const ang=sg*Math.PI*t+side*Math.PI+phase;const x=cx+r*Math.cos(ang),y=yb-Hh*sc*t;const dep=Math.sin(ang);const pt=[x.toFixed(1),y.toFixed(1)];if(prev){const seg=`M${prev[0]},${prev[1]} L${pt[0]},${pt[1]} `;if(dep>=0)f+=seg;else b+=seg}prev=pt}}
+      const x0=cx+r*Math.cos(phase),x1=cx+r*Math.cos(phase+Math.PI);
+      return `<path d="${b}" stroke="${col}" stroke-width="${Math.max(1.5,p.d*0.25)}" fill="none" opacity=".35" stroke-dasharray="4 3"/><path d="${f}" stroke="${col}" stroke-width="${Math.max(2,p.d*0.3)}" fill="none" stroke-linecap="round"/><line x1="${x0}" x2="${x1}" y1="${yb}" y2="${yb}" stroke="${col}" stroke-width="${Math.max(2,p.d*0.3)}"/><line x1="${cx+r*Math.cos(sg*Math.PI+phase)}" x2="${cx+r*Math.cos(sg*Math.PI+phase+Math.PI)}" y1="${yb-Hh*sc}" y2="${yb-Hh*sc}" stroke="${col}" stroke-width="${Math.max(2,p.d*0.3)}"/>`};
+    s+=loop(g.D1,g.H1,"var(--accent)",0);s+=loop(g.D2,g.H2,"var(--sim)",Math.PI/2);
+    s+=`<line x1="${cx}" x2="${cx}" y1="${yb-g.H1*sc-6}" y2="${yb+16}" stroke="var(--muted)" stroke-dasharray="2 4" opacity=".6"/>`;
+    s+=`<text x="${cx+g.D1/2*sc+14}" y="${yb-g.H1*sc*0.75}" style="fill:var(--accent)">large loop ${f0_(g.D1)} × ${f0_(g.H1)} mm</text>`;
+    s+=`<text x="${cx+g.D1/2*sc+14}" y="${yb-g.H1*sc*0.75+16}" style="fill:var(--sim)">small loop ${f0_(g.D2)} × ${f0_(g.H2)} mm</text>`;
+    s+=`<text x="${cx+g.D1/2*sc+14}" y="${yb-g.H1*sc*0.75+32}">${p.sense}, half a turn each</text>`;
+    s+=`<text x="${cx}" y="${yb+30}" text-anchor="middle">feed at the top, coax down inside one element</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · side view; dashed is the far side</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Each loop is one length of tube bent into a half-turn helix with a horizontal run across the top and bottom. The two loops cross at 90° and are fed in parallel at the top; the coax runs down inside one of the large loop's elements, which makes the balun. Nothing beneath the antenna is part of it.",
+  chain:p=>{const g=TYPES.qfh.geom(p);return `quadrifilar helix (two half-turn loops of ${p.d.toFixed(1)} mm tube, large ${f0_(g.L1)} mm as ${f0_(g.D1)}x${f0_(g.H1)} mm, small ${f0_(g.L2)} mm as ${f0_(g.D2)}x${f0_(g.H2)} mm, ${p.sense}, coax up one element as the balun, vertical, no ground plane)`},
+  plan(p,f0,M){const d=TYPES.qfh.design(f0,p);const g=TYPES.qfh.geom({...p,Lm:d.Lm*1.03});return [`Bend the large loop from <b>${f0_(g.L1)} mm</b> of tube and the small from <b>${f0_(g.L2)} mm</b>, 3 percent long (predicted final ${f0_(d.Lm*(1+p.split/100))} and ${f0_(d.Lm*(1-p.split/100))} mm), the large as ${f0_(g.D1)} across by ${f0_(g.H1)} tall, the small as ${f0_(g.D2)} by ${f0_(g.H2)}, both wound <b>${p.sense}</b>.`,`Cross them at 90°, feed in parallel at the top, run the coax down inside a large-loop element, and stand it on a wooden stool with the bridge's RFOUT on a short jumper. Trim both loops by the same fraction, at the horizontal runs.`]},
+  howto:[["Resonance.","Each loop resonates when its closed path is close to one wavelength; the larger loop is above and the smaller below by the split, which is what gives the 90° phasing with no phasing line. The bench puts the dip at the mean loop length times the loop factor, and the geometry (diameter, height, element length) follows from the half-turn and the height-to-diameter ratio: loop = 2·√((πD/2)² + H²) + 2D."],["Match.","Two loops in parallel, taken as 40 Ω with an 8 percent 2:1 bandwidth, the figures the classic 137 MHz builds report. Nothing here models the infinite balun or the tube's own reactance."],["Pattern.","A cardioid pointing up, 2.5 dBic overhead and about 9 dB down at the horizon, circular in the sense the loops are wound. The real pattern depends on the split being right; a QFH with the loops the same size is linearly polarised and lopsided."]]
+};
+const ORDER=["gp","discone","jpole","coco","biquad","helix","qfh","vdip","can","yagi","dipole"];
 
 /* ---------- state ---------- */
 const S={type:"gp",B:{},log:[]};
@@ -853,7 +928,7 @@ function guide(T,B,M){const f0=M.goal||B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim
   $("cutRo").innerHTML=rows.map(([k,v,s])=>`<div><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
   const steps=T.plan(B.p,f0,M);
   steps.push(`Run the antenna command below (5 minutes), then <span class="mono">marsad response</span>, and paste atlas.json into the measured box. The ${tr?"dip":"SWR curve"} fills in beside the chart.`);
-  if(tr)steps.push(`Cut what the guide says, measure again. Expect two or three rounds; at ${(1/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz per millimetre a half-millimetre is ${(0.5/M.mmPerMHz).toFixed(M.mmPerMHz>1?1:0)} MHz.`);
+  if(tr)steps.push(`Cut what the guide says, measure again. Expect two or three rounds; at ${(1/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz per millimetre a half-millimetre is ${(0.5/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz.`);
   steps.push(tr?`When the dip sits within ${fT(f0*0.004)} MHz of ${fF(f0)}, stop. Record the final lengths in the log, then score it the way the Predicted panel says.`:`When the SWR is under 2:1 across the band, record it in the log and score it the way the Predicted panel says.`);
   $("plan").innerHTML=steps.map(t=>`<li>${t}</li>`).join("");
 }
