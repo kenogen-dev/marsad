@@ -872,14 +872,14 @@ bridge.
 rebuilt after the bridge work with the UWB on the notch (**no DC block** in this chain; it had
 gone to the bridge). Fingerprint `... | N128 | r2.4M | o25 | c0.25 | rtl_power_fftw | xtr`.
 
-**All 22 planned hops recorded, 2147.302-2186.684 MHz, 2102 bins.** The log carries 24 `[E4K]
-PLL not locked` lines, but every centre from 2148.200 to 2185.800 MHz was tuned and produced data,
-so the retries succeeded. **This morning (07:51) every centre from 2171.476 up failed three times
-and was dropped** - also with the dongle warm, after ten hours running. So "it only locks to 2187
-when cold" is not the explanation: the top of the PLL range moved by at least 15 MHz within one
-day at similar warmth. Whether it is temperature in a finer sense, the time since power-up, or
-marginal locking that sometimes wins is open. A cold `rtl_test -t` and a `top 5m` back to back,
-then both again after an hour, is still the test.
+**All 22 planned hops appear in the data, 2147.302-2186.684 MHz, 2102 bins - but not in every
+pass.** *Corrected 2026-10-23:* this paragraph first read the run as "all hops locked, so warmth
+is not the explanation". That was a whole-run reading and it was wrong. Read pass by pass (see
+"The owner's first real run" in the rtl_power_fftw characterisation section), every hop locked
+at the start and the top ones dropped out one at a time as the dongle warmed, from 2185.80 after
+3 passes to 2173.27 after ~45 min. The upper lock limit falls with warm-up, which reconciles the
+cold `rtl_test -t` (2187) with the warm morning run (2170.6). The 24 `PLL not locked` lines are
+those drop-outs.
 
 | Block | median (fftw scale) |
 |---|---|
