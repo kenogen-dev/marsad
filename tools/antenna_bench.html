@@ -1,0 +1,896 @@
+<title>Antenna Bench</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a workbench. Knobs in a sticky column; beside them the predicted numbers, the chart the bridge
+   produces and the cut guide; below, the antenna drawn to scale, its pattern, the bands, the log, the commands.
+   Palette: cool slate neutrals (the aluminium cage) with a copper accent (the wire). */
+:root{
+  --bg:#edf0f3; --surface:#ffffff; --sunk:#e1e6ec; --ink:#1a2028; --muted:#5a6572; --line:#cfd6de;
+  --accent:#b25a22; --accent-soft:#f6e6da;
+  --sim:#2b5bc9; --sim-soft:#dfe7fb;
+  --good:#1f7a47; --warn:#9a6209; --bad:#b1372a;
+  --f-display:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171d; --surface:#1a2129; --sunk:#0e1216; --ink:#e6eaef; --muted:#9aa6b3; --line:#2c3640;
+  --accent:#e2905a; --accent-soft:#3a2617; --sim:#86a6ff; --sim-soft:#1d2a4a;
+  --good:#5fcf8c; --warn:#e8b35c; --bad:#f08a7c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12171d; --surface:#1a2129; --sunk:#0e1216; --ink:#e6eaef; --muted:#9aa6b3; --line:#2c3640;
+  --accent:#e2905a; --accent-soft:#3a2617; --sim:#86a6ff; --sim-soft:#1d2a4a;
+  --good:#5fcf8c; --warn:#e8b35c; --bad:#f08a7c; color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:1rem;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 72px}
+.wrap{max-width:1140px;margin:0 auto;display:grid;gap:22px}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;line-height:1.1;margin:0;text-wrap:balance}
+h1{font-size:clamp(2rem,5vw,2.9rem);letter-spacing:-.01em}
+h2{font-size:1.45rem}
+h3{font-size:1.1rem}
+h4{margin:0;font-family:var(--f-mono);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+p{margin:0}
+.lede{color:var(--muted);max-width:66ch;font-size:1.08rem}
+.eyebrow{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:.86rem}
+a{color:var(--sim)}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header{display:grid;gap:10px}
+.topline{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--line);border-radius:999px;padding:.2rem .7rem;font-size:.84rem;background:var(--surface)}
+.pill b{font-family:var(--f-mono);font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block}
+.dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+
+section{display:grid;gap:14px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:clamp(14px,2.4vw,22px);min-width:0}
+.bench{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr);gap:18px;align-items:start}
+@media (max-width:860px){.bench{grid-template-columns:1fr}}
+.drawing{background:var(--sunk);border-radius:10px;padding:10px;min-width:0}
+.drawing svg{width:100%;height:auto;display:block;max-width:100%}
+.drawing svg text{font-family:var(--f-mono);font-size:11px;fill:var(--muted)}
+.knobs{display:grid;gap:12px}
+.knob{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:baseline}
+.knob label{font-family:var(--f-mono);font-size:.7rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.knob .val{font-family:var(--f-mono);font-size:.9rem;font-variant-numeric:tabular-nums}
+.knob .sl{grid-column:1/-1;display:flex;gap:8px;align-items:center}
+.knob input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
+.num{width:5.4rem;background:var(--sunk);border:1px solid var(--line);border-radius:6px;padding:.25rem .45rem;font-family:var(--f-mono);font-size:.88rem;font-variant-numeric:tabular-nums}
+select.num,select.pick{width:100%;font-family:var(--f-body);font-size:.92rem}
+select.pick{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:.45rem .5rem;font-weight:600;color:var(--ink)}
+.note{font-size:.84rem;color:var(--muted)}
+.ro{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ro>div{background:var(--surface);padding:.55rem .7rem;min-width:0}
+.ro .k{font-family:var(--f-mono);font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.ro .v{font-family:var(--f-mono);font-size:1.08rem;margin-top:.1rem;font-variant-numeric:tabular-nums}
+.ro .s{font-size:.78rem;color:var(--muted)}
+.v.good{color:var(--good)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
+
+.chart svg{width:100%;height:auto;display:block;max-width:100%}
+.chart svg text{font-family:var(--f-mono);font-size:10.5px}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;font-size:.82rem;color:var(--muted);align-items:center}
+.sw{display:inline-block;width:16px;height:0;border-top:2.5px solid currentColor;vertical-align:middle;margin-right:6px}
+.sw.dash{border-top-style:dashed}
+.readout{font-family:var(--f-mono);font-size:.82rem;min-height:1.4em;color:var(--muted);font-variant-numeric:tabular-nums}
+.polar svg{width:100%;height:auto;display:block;max-width:100%}
+.polar svg text{font-family:var(--f-mono);font-size:10px;fill:var(--muted)}
+textarea{width:100%;background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:.5rem .6rem;font-family:var(--f-mono);font-size:.8rem;min-height:3.4em;resize:vertical}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:.4rem .8rem;font-weight:600;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:.4rem;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.btn.sm{padding:.25rem .6rem;font-size:.82rem}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip{display:inline-block;font-family:var(--f-mono);font-size:.7rem;padding:1px 7px;border-radius:4px;background:var(--sunk);color:var(--muted)}
+.chip.good{color:var(--good)} .chip.warn{color:var(--warn)} .chip.bad{color:var(--bad)}
+.verdict{border-left:4px solid var(--accent);padding:.5rem 0 .5rem 1rem;font-size:1.05rem}
+.verdict b{font-family:var(--f-display);font-size:1.25rem;font-weight:600}
+.score{border-left:4px solid var(--sim);padding:.4rem 0 .4rem 1rem;font-size:.92rem;color:var(--muted);margin-top:10px}
+.score b{color:var(--ink)}
+.steps{margin:0;padding-left:1.2rem;display:grid;gap:.45rem}
+.cmd{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:.6rem .7rem;font-family:var(--f-mono);font-size:.76rem;white-space:pre-wrap;word-break:break-word;max-height:16em;overflow:auto}
+details{border:1px solid var(--line);border-radius:10px;padding:.6rem .9rem;background:var(--surface)}
+details>summary{cursor:pointer;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+details[open]>summary{margin-bottom:.6rem}
+.howto{columns:2 300px;column-gap:28px;font-size:.95rem}
+.howto p{break-inside:avoid;margin:0 0 .8rem}
+.empty{border:1px dashed var(--line);border-radius:10px;padding:1rem;color:var(--muted);text-align:center}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:.88rem;z-index:40}
+.work{display:grid;grid-template-columns:minmax(280px,330px) minmax(0,1fr);gap:18px;align-items:start}
+.work .knobs{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+@media (max-width:900px){.work{grid-template-columns:1fr}.work .knobs{position:static;max-height:none}}
+.knobs.compact{gap:9px}
+.knobs.compact .knob{gap:1px 10px}
+.knobs.compact details{padding:.4rem .7rem}
+.stack{display:grid;gap:14px;min-width:0}
+.ro.tight>div{padding:.4rem .6rem}
+.ro.tight .v{font-size:.98rem}
+.measgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:700px){.measgrid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Marsad · antenna bench</div>
+  <h1>Antenna Bench</h1>
+  <p class="lede" id="lede"></p>
+  <div class="topline">
+    <span class="pill">Target <b id="pTarget">2130 MHz</b></span>
+    <span class="pill" id="pRx"><span class="dot" id="pRxDot"></span><span id="pRxText">XTR, device 0</span></span>
+    <span class="pill" id="pThird"><b id="pWire">14 AWG copper</b></span>
+  </div>
+</header>
+
+<!-- WORKBENCH: knobs beside what they change -->
+<section class="work">
+  <div class="panel knobs compact">
+    <div class="knob"><label for="type">Antenna</label><span></span>
+      <span class="sl"><select class="pick" id="type" aria-label="Antenna type"></select></span></div>
+    <div class="row" id="presets"></div>
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h2 id="knobTitle">Lengths and target</h2><span class="note">drag, or type</span></div>
+    <div class="knob"><label for="kF0">Target frequency</label><span class="val" id="vF0"></span>
+      <span class="sl"><input type="range" id="kF0" min="300" max="2187" step="1" value="2130"><input class="num" id="nF0" inputmode="decimal" aria-label="Target frequency in MHz"></span></div>
+    <div id="knobList" style="display:grid;gap:9px"></div>
+    <div class="row"><button class="btn sm" id="bStart" type="button">Start-long lengths</button><button class="btn sm" id="bFinal" type="button">Predicted final lengths</button></div>
+    <details><summary>What each knob means</summary>
+      <div style="display:grid;gap:.5rem" class="note" id="knobHelp"></div>
+    </details>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Predicted</h2><span class="note">from the lengths beside it</span></div>
+      <div class="ro tight" id="ro" style="margin-top:8px"></div>
+      <div class="score" id="score"></div>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Predicted and measured</h2>
+        <div class="legend"><span style="color:var(--sim)"><span class="sw"></span>predicted</span><span style="color:var(--accent)"><span class="sw"></span>measured (bridge)</span><span style="color:var(--accent)"><span class="sw dash"></span>bridge floor, at most this</span></div></div>
+      <div class="chart" style="margin-top:8px"><div id="swrChart"></div><div class="readout" id="hover">Move over the chart to read it.</div></div>
+      <div class="measgrid" style="margin-top:10px">
+        <div style="display:grid;gap:8px">
+          <h4>Measured curve from <span class="mono">marsad response</span></h4>
+          <textarea id="measText" style="min-height:2.6em" placeholder="Paste the atlas.json that marsad response wrote, then press Overlay"></textarea>
+          <div class="row"><input type="file" id="measFile" accept=".json,application/json" hidden><button class="btn sm" id="bFile" type="button">Open file…</button><button class="btn sm" id="bClear" type="button" hidden>Remove</button><button class="btn sm primary" id="bOverlay" type="button">Overlay</button></div>
+          <span class="note" id="measNote">Nothing measured yet. The model alone is a guide to the first cut, never to the last.</span>
+          <div class="knob"><label for="nDip">Measured dip from the bridge</label><span class="val" id="vDip"></span>
+            <span class="sl"><input type="range" id="kDip" min="1500" max="2400" step="1" value="1950"><input class="num" id="nDip" inputmode="decimal" aria-label="Measured dip frequency in MHz"></span>
+            <p class="note">Filled in from the measured curve when one is loaded; type it if you read it off the live view.</p></div>
+        </div>
+        <div style="display:grid;gap:10px">
+          <h4 id="guideTitle">Cut guide</h4>
+          <div class="verdict" id="verdict"></div>
+          <div class="ro tight" id="cutRo"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- THE ANTENNA AND ITS PATTERN -->
+<section>
+  <div class="bench">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>The antenna, as built</h2><span class="note">Drawn to scale</span></div>
+      <div class="drawing" style="margin-top:10px"><svg id="draw" viewBox="0 0 520 360" role="img" aria-label="Drawing of the antenna with element lengths"></svg></div>
+      <p class="note" style="margin-top:8px" id="drawNote"></p>
+    </div>
+    <div class="panel polar">
+      <h2 id="polarTitle">Elevation pattern, predicted</h2>
+      <div id="polar" style="margin-top:10px"></div>
+      <p class="note" id="polarNote"></p>
+    </div>
+  </div>
+</section>
+
+<!-- BANDS -->
+<section>
+  <div class="panel">
+    <h2>What it hears in the station's bands</h2>
+    <p class="note" style="margin-top:4px" id="bandsNote"></p>
+    <div class="scroll" style="margin-top:10px"><table id="bands"></table></div>
+  </div>
+</section>
+
+<!-- PLAN -->
+<section>
+  <div class="panel">
+    <h2>Plan from here</h2>
+    <ol class="steps" id="plan" style="margin-top:10px"></ol>
+    <p class="note" style="margin-top:8px" id="planNote">Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.</p>
+  </div>
+</section>
+
+<!-- CUT LOG -->
+<section>
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h2 id="logTitle">Cut log</h2><button class="btn sm primary" id="bLog" type="button">Record this cut</button></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px;align-items:center">
+      <input class="num" id="logNote" style="width:100%" placeholder="Note for this entry, e.g. cut 2, vertical 36.0, radials left">
+      <span class="note" id="logStatus"></span>
+    </div>
+    <p class="note" style="margin-top:6px" id="logFilter"></p>
+    <div class="scroll" style="margin-top:10px"><div id="logBody"></div></div>
+  </div>
+</section>
+
+<!-- COMMANDS -->
+<section>
+  <div class="panel" style="display:grid;gap:12px">
+    <h2>The runs for this cut, ready to paste</h2>
+    <p class="note" id="cmdNote"></p>
+    <details><summary>Level check and references (once per sweep, per session)</summary><div class="cmd" id="cmdRefs"></div></details>
+    <details open><summary>Antenna run for this cut</summary><div class="cmd" id="cmdAnt"></div></details>
+    <details><summary>Turn the three runs into the curve</summary><div class="cmd" id="cmdResp"></div></details>
+    <div class="row"><button class="btn sm" id="bCopyAnt" type="button">Copy the antenna run</button><button class="btn sm" id="bCopyResp" type="button">Copy the response command</button></div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section>
+  <div class="panel">
+    <h2>How the bench thinks</h2>
+    <div class="howto" style="margin-top:10px" id="howto"></div>
+  </div>
+</section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(()=>{
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const C0=299792458;
+const lam=f=>C0/(f*1e6)*1000;                        // mm
+const RAD=Math.PI/180;
+function toast(t){const e=$("toast");e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,2600)}
+const f0_=x=>x.toFixed(0), fF=x=>String(Math.round(x*10)/10), fT=x=>x<10?x.toFixed(1):x.toFixed(0), f1=x=>(Math.round(x*10)/10).toFixed(1), f2=x=>x.toFixed(2);
+const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
+const r5=x=>Math.round(x*2)/2;
+
+/* ---------- shared electrical helpers ---------- */
+// Reflection against 50 ohm from a series R + jX.
+function gammaRX(R,X){const gr=R-50,hr=R+50,dd=hr*hr+X*X;const Gr=(gr*hr+X*X)/dd,Gi=(X*hr-gr*X)/dd;return Math.hypot(Gr,Gi)}
+// Build swr/ml/bandwidth from an impedance function Zf(f) -> [R,X].
+function mkZ(Zf,fres){
+  const gam=f=>{const [R,X]=Zf(f);return Math.min(gammaRX(R,X),0.999)};
+  const swr=f=>{const g=gam(f);return (1+g)/(1-g)};
+  const ml=f=>{const g=gam(f);return -10*Math.log10(1-g*g)};
+  const st=fres>=500?1:0.1;let lo=fres,hi=fres;
+  if(swr(fres)<=1.98){while(swr(lo-st)<=2&&lo>fres*0.5)lo-=st;while(swr(hi+st)<=2&&hi<fres*1.6)hi+=st}
+  return {Z:Zf,gam,swr,ml,bwLo:lo,bwHi:hi};
+}
+// Series-resonant style impedance: R grows with f^2 as the element gets electrically longer, X is a straight line in f/fres.
+const seriesZ=(fres,R0,slope)=>f=>{const u=f/fres-1;return [Math.min(3*R0,Math.max(4,R0*(f/fres)**2)),slope*u]};
+// Reactance slope of a thin wire of length L (mm) and radius a (mm): (pi/2) * Za, Za = 60(ln(2L/a) - 1).
+const wireSlope=(L,a)=>(Math.PI/2)*60*(Math.log(2*L/a)-1);
+// Slope from a wanted 2:1 fractional bandwidth at R0 = 50: X = 35.4 ohm at the band edge.
+const bwSlope=(frac,R0)=>2*(0.708/frac)*R0;
+// A cos^n beam with half-power width hpbw (deg) and a front-to-back ratio fb (dB), angle a from boresight.
+function beam(hpbw,fb){const n=3/(-10*Math.log10(Math.cos(hpbw/2*RAD)));const back=Math.pow(10,-fb/10);
+  return a=>{a=Math.abs(a);if(a<=90)return Math.max(Math.pow(Math.cos(a*RAD),n),1e-5);return Math.max(back*Math.pow(Math.cos((180-a)*RAD),n),1e-5)}}
+// Pattern of a straight wire of half-length h (mm) measured from its axis, angle th from the axis.
+const wireE=(kh,th)=>{const st=Math.sin(th);if(st<1e-6)return 0;const v=(Math.cos(kh*Math.cos(th))-Math.cos(kh))/st;return v*v};
+
+/* ---------- receiver and sweep rules ---------- */
+function rig(f0){
+  if(f0>1766)return {rx:"xtr",label:"XTR",gain:14,floor:-38.1,dc:true,pad:false,
+    tail:`> DC block > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, foam support) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC`,
+    head:dut=>`noise generator (9 V, heatsink, no pad) > SWR bridge 10-3000 MHz (RFIN from the generator, RFOUT ${dut}, built-in 50 ohm reference, DET to the receiver)`,
+    antHead:`SWR bridge 10-3000 MHz (RFOUT from the antenna, RFIN from the noise generator at 9 V with heatsink and no pad, built-in 50 ohm reference, DET to the receiver)`,
+    cond:"printer unplugged, v5 unplugged so XTR is device 0, monitors and PC on"};
+  return {rx:"v5",label:"v5",gain:15.7,floor:-35.9,dc:false,pad:true,
+    tail:`> 3 ft RG316 coax > SMA bulkhead (at cage) > v5 (in copper cage, lid on) > 6 in USB extension (white, no ferrite) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC`,
+    head:dut=>`noise generator (9 V, heatsink) > 10 dB pad > SWR bridge 10-3000 MHz (RFIN from the pad, RFOUT ${dut}, built-in 50 ohm reference, DET to the receiver)`,
+    antHead:`SWR bridge 10-3000 MHz (RFOUT from the antenna, RFIN from the 10 dB pad on the noise generator at 9 V with heatsink, built-in 50 ohm reference, DET to the receiver)`,
+    cond:"printer unplugged, XTR unplugged so v5 is device 0, no notch in the chain, monitors and PC on"};
+}
+function sweep(f0){const g=rig(f0);let lo=Math.round(f0*0.85),hi=Math.round(f0*1.15);
+  if(g.rx==="xtr"){lo=Math.max(lo,1241);hi=Math.min(hi,2148)}else{lo=Math.max(lo,24);hi=Math.min(hi,1766)}
+  if(hi-lo<20){lo=Math.max(24,Math.round(f0-10));hi=Math.round(f0+10)}
+  const bin=(hi-lo)>=80?"25k":"10k";return {lo,hi,bin,txt:`${lo}M:${hi}M:${bin}`}}
+
+/* ---------- bands the station knows ---------- */
+const CATALOGUE=[
+  ["FM broadcast",88,108,"notched at the station; saturates an unfiltered front end"],
+  ["Airband",118,137,"AM voice; the notch takes 5–8 dB off 118–120"],
+  ["NOAA APT / Meteor LRPT",137,138,"137.1, 137.62, 137.9125 (NOAA), 137.9 (Meteor-M); the V-dipole's target"],
+  ["2 m amateur",144,148,"local repeaters; a steady yardstick"],
+  ["Marine VHF / NOAA WX",156,163,"162.4–162.55 weather radio, always on"],
+  ["Military air UHF",225,400,"the milair preset"],
+  ["ISM 900",902,928,"915 MHz sensors, paging"],
+  ["ADS-B",1089,1091,"1090 MHz; the whip gives 1856 DF17/min on the XTR"],
+  ["23 cm / ARSR radar",1240,1300,"1265.44 MHz: 5 RPM chirped radar, 164 events/h on burst23"],
+  ["Hydrogen line",1420,1421,"1420.4058 MHz; the h1 preset on the v5"],
+  ["Inmarsat downlink",1525,1559,"L-band geostationary; 1545 preset"],
+  ["GPS L1",1574,1577,"spread spectrum, below the floor; not a peak"],
+  ["Iridium",1616,1626.5,"bursts from LEO; the helix's target"],
+  ["GOES HRIT / LRIT",1690,1698,"1694.1 HRIT, 1691 LRIT; needs a dish or a long helix"],
+  ["AWS-3 uplink",1760,1770,"handsets, daytime only"],
+  ["PCS uplink",1850,1910,"handsets near the window; strong by day, not a target"],
+  ["DECT",1920,1930,"always-on beacon"],
+  ["PCS downlink",1930,1995,"base stations, always on; the station's yardstick block"],
+  ["AWS / PCS downlink",2110,2147.5,"the target band; 2147.48 is rtl_power's ceiling"],
+  ["Top slice",2147.5,2187,"rtl_power_fftw only; UWB has never been measured here"]];
+function bandsFor(f0){const lo=f0*0.85,hi=f0*1.2;return CATALOGUE.filter(b=>b[2]>=lo&&b[1]<=hi)}
+
+/* ---------- how the station will score it ---------- */
+function scoreFor(T,f0){
+  if(Math.abs(f0-1090)<=40)return `<b>ADS-B frames.</b> <span class="mono">tools/adsb_check.py</span> for 10 minutes on the XTR at gain 29, read on the DF17 count per minute against the whip's <b>1856/min</b>. Sixty-second runs swing 6× with nothing touched, so bracket A/B/A and never trust one short run.`;
+  if(f0>=2040&&f0<=2187)return `<b>The 2.1 GHz plateau.</b> One hour on the <span class="mono">deep</span> tile <span class="mono">2049M:2148M:25k -g 42 -i 30</span>, scored inside the run: downlink 2124–2147 over the empty 2049–2099. The whip reads <b>+5.8 dB</b>, the UWB <b>+8.0 dB</b>; beating 8 is the bar.`;
+  if(Math.abs(f0-1265)<=25)return `<b>The radar.</b> One hour on the <span class="mono">burst23</span> preset (1263–1267 MHz, <span class="mono">-i 2</span>): peak level and events per hour on the 1265.44 MHz ARSR against the whip's <b>−21.0 dB peak</b> and <b>164 events</b>. Point it where the peak is highest; that is the bearing.`;
+  if(f0>=1500&&f0<=1720)return `<b>Satellite bursts.</b> One hour on a <span class="mono">deep</span> tile <span class="mono">1600M:1701M:25k -g 29 -i 30</span>: Iridium occupancy in 1616–1626.5 against the whip's run of the same tile${T.id==="helix"?" (the whip hears the 1633.47 carrier and little else there)":""}. Inmarsat at 1525–1559 and GOES at 1691–1694 are the same test on their own tiles.`;
+  if(f0>=100&&f0<=200)return `<b>A 137 MHz survey.</b> <span class="mono">marsad run custom 15m --freq 136M:139M:5k --gain 29 --integration 5</span> during a NOAA or Meteor-M pass, on the v5 behind the notch. The station has never recorded this band, so the first run is the baseline and the second antenna is judged against it, pass for pass.`;
+  return `<b>A deep tile.</b> One hour on a 101 MHz <span class="mono">deep</span> tile around ${f0_(f0)} MHz with this antenna, then the same tile with the whip, read on the median level of whatever is steady there. No yardstick exists yet at this frequency.`;
+}
+
+/* ---------- the eight antennas ---------- */
+const TYPES={};
+
+/* 1. Quarter-wave ground plane: the original bench, unchanged. */
+TYPES.gp={
+  id:"gp",short:"Ground plane",name:"Quarter-wave ground plane",word:"cut",
+  lede:"One antenna, drawn to the lengths you type: a vertical element over four radials drooping away from it. The bench predicts where it is tuned, how well it matches, what it hears in the station's bands, and how many millimetres to cut once the bridge has measured the real dip.",
+  f0:{def:2130,min:300,max:2187},presets:[["2130 downlink",2130],["1090 ADS-B",1090],["1265 radar",1265]],
+  knobs:[["h","Vertical element",10,150,0.5,1,"mm"],["r","Radials, each of four",10,150,0.5,1,"mm"],["droop","Droop below horizontal",0,90,1,0,"°"],["d","Wire diameter",0.5,3.5,0.01,2,"mm"],["K","End-effect factor",0.90,0.99,0.005,3,""],["stub","Feed stub above the flange",0,8,0.5,1,"mm"]],
+  init:{h:100,r:100,droop:45,d:1.63,K:0.95,stub:3},
+  help:[["Target.","Design frequency. 2130 sits in the middle of the 2110–2155 MHz cellular downlink, inside rtl_power's reach."],["Droop.","Flat radials give about 36 Ω; 45° brings the feed near 50 Ω; straight down makes a dipole at 73 Ω."],["Wire.","14 AWG is 1.63 mm, 16 AWG 1.29 mm, 12 AWG 2.05 mm. Thicker wire resonates a touch shorter and matches over a wider band."],["End effect.","Real wire resonates shorter than a quarter wave. 0.95 is the usual figure for bare wire; the bridge will tell you yours, and the cut guide uses the measurement, not this."],["Feed stub.","The centre pin and solder joint radiate too. Counted as extra vertical length."]],
+  trim:{key:"h",label:"vertical"},
+  pill:p=>`${p.d.toFixed(2)} mm wire`,
+  model(p,f0){
+    const a=p.d/2,heff=p.h+p.stub,w=Math.sin(p.droop*RAD)**2;
+    const Lres=(heff+w*p.r)/(1+w);const fres=p.K*C0/(4*Lres/1000)/1e6;const Rres=36+37*w;
+    const slope=wireSlope(heff,a);const lamT=lam(f0);
+    const Lfinal=p.K*lamT/4,hFinal=Math.max(5,Lfinal*(1+w)-w*p.r-p.stub),rRec=1.05*p.K*lamT/4;
+    const D0=5.15-3.0*w;const z=mkZ(seriesZ(fres,Rres,slope),fres);
+    return {...z,fres,R0:Rres,G:D0,w,heff,Lres,hFinal,rRec,mmPerMHz:Lres/fres,
+      feedNote:`${p.droop}° droop`,gainNote:"peak, near the horizon",
+      cutFor:fm=>Lres*(1-fm/f0)*(1+w),
+      rows:[],guideRows:[["Radials, leave at",`${f1(rRec)} mm`,"1.05 × quarter wave at target; set once"]]};
+  },
+  design(f0,p,M){const M2=TYPES.gp.model({...p,r:M.rRec},f0);return {h:r5(M2.hFinal),r:r5(M.rRec)}},
+  pattern(p,f0,M){const kh=2*Math.PI*M.heff/lam(f0),w=M.w;
+    const mono=el=>el<0?0:wireE(kh,Math.PI/2-el),dip=el=>wireE(kh,Math.PI/2-el);
+    return {omni:true,el:el=>(1-w)*mono(el)+w*dip(el),note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon. Flat radials push it up; droop brings it back toward the horizon and fills in below. A window mount adds its own shape on top.`}},
+  draw(p,f0,M){
+    const sc=1.9,cx=260,cy=215;const P=(x,y,z)=>[cx+(x-y)*0.87*sc,cy+(x+y)*0.5*sc-z*sc];
+    const h=p.h,r=p.r,dr=p.droop*RAD;let s="";
+    s+=`<ellipse cx="${cx}" cy="${cy+2}" rx="${Math.max(30,r*0.9*sc)}" ry="${Math.max(12,r*0.45*sc)}" fill="var(--line)" opacity=".35"/>`;
+    const fp=6.35;const q=[P(-fp,-fp,0),P(fp,-fp,0),P(fp,fp,0),P(-fp,fp,0)];
+    s+=`<polygon points="${q.map(pp=>pp.join(",")).join(" ")}" fill="var(--muted)" opacity=".55"/>`;
+    const dirs=[[1,0],[0,1],[-1,0],[0,-1]];const back=[],front=[];let maxY=cy+40;
+    dirs.forEach(([ux,uy],i)=>{const ex=ux*r*Math.cos(dr),ey=uy*r*Math.cos(dr),ez=-r*Math.sin(dr);const a=P(ux*fp,uy*fp,-1.6),b=P(ex,ey,ez);maxY=Math.max(maxY,b[1]);
+      const line=`<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}" stroke-linecap="round"/>`;(i===2||i===3?back:front).push(line)});
+    s+=back.join("");const t=P(0,0,h+p.stub);
+    s+=`<line x1="${cx}" y1="${cy}" x2="${t[0].toFixed(1)}" y2="${t[1].toFixed(1)}" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}" stroke-linecap="round"/>`;
+    s+=front.join("");s+=`<rect x="${cx-7}" y="${cy+2}" width="14" height="${12*sc*0.5}" fill="var(--muted)" opacity=".5"/>`;
+    s+=`<text x="${cx+10}" y="${(cy-(h+p.stub)*sc/2).toFixed(1)}">vertical ${f1(h)} mm</text>`;
+    const rb=P(r*Math.cos(dr),0,-r*Math.sin(dr));s+=`<text x="${(rb[0]+8).toFixed(1)}" y="${(rb[1]+4).toFixed(1)}">radial ${f1(r)} mm</text>`;
+    s+=`<text x="${cx-250}" y="${cy-(h+p.stub)*sc-6}" style="fill:var(--accent)">${p.droop}° droop</text>`;
+    const vh=Math.max(300,Math.ceil(maxY)+24);s+=`<text x="12" y="${vh-8}">scale ${(10*sc).toFixed(0)} px = 10 mm · flange 12.7 mm</text>`;
+    return {svg:s,h:vh}},
+  drawNote:"Vertical soldered to the centre pin; the four radials leave the underside of the flange, 90° apart, bent down at the droop angle. Lengths are measured from the flange face.",
+  chain:p=>`ground-plane antenna (14 AWG copper, vertical ${f1(p.h)} mm, 4 radials ${f1(p.r)} mm at ${p.droop} deg, on the SMA flange)`,
+  plan(p,f0,M){const hF=TYPES.gp.model({...p,r:Math.min(p.r,M.rRec)},f0).hFinal;const startH=Math.max(hF*1.10,5),st=[];
+    if(p.h>startH+0.5)st.push(`Coarse cut: take the vertical from ${f1(p.h)} to <b>${f1(startH)} mm</b> and each radial to <b>${f1(M.rRec)} mm</b>. The predicted final vertical is ${f1(hF)} mm; stopping 10 percent long puts the first dip near ${f0_(f0/1.10)} MHz, inside the sweep.`);
+    else if(p.r>M.rRec+0.5)st.push(`Cut each radial to <b>${f1(M.rRec)} mm</b> and then leave them; the vertical does the fine tuning.`);
+    st.push(`Bend the radials to ${p.droop}° and screw the antenna onto the bridge's RFOUT port in free air.`);return st},
+  howto:[["Resonance.","A wire over a ground resonates when it is close to a quarter wavelength long, shortened by the end-effect factor because current spreads over the wire's thickness and the tip adds capacitance. The radials share in setting the resonance in proportion to how far they droop: flat, they are a mirror and the vertical alone decides; straight down, the pair is a dipole and both halves decide."],["Match.","At resonance the feed looks like a pure resistance, about 36 Ω with flat radials rising toward 73 Ω as they droop. Off resonance a reactance appears, growing with the detuning at a rate set by how thin the wire is relative to its length."],["Pattern.","A quarter-wave vertical over a perfect ground puts its energy toward the horizon with about 5 dBi of directivity; a dipole has 2 dBi. The drooping radials are in between and fill in below the horizon. The bench blends the two by the droop angle."]]
+};
+
+/* 2. Coaxial collinear. */
+const COAX={rg174:{vf:0.66,od:2.8,label:"RG-174 / RG-58 (solid PE, VF 0.66)"},rg316:{vf:0.70,od:2.5,label:"RG-316 (PTFE, VF 0.70)"},rg6:{vf:0.82,od:6.9,label:"RG-6 foam (VF 0.82)"}};
+TYPES.coco={
+  id:"coco",short:"CoCo",name:"Coaxial collinear (CoCo)",word:"cut",
+  lede:"A stack of half-wave coax sections, each crossed over to the next so they radiate in phase, with a quarter-wave whip on top and a quarter-wave sleeve at the bottom to keep the feedline out of it. Gain comes from the count; the whip is the only thing you trim.",
+  f0:{def:1090,min:300,max:2187},presets:[["1090 ADS-B",1090],["978 UAT",978],["1265 radar",1265]],
+  knobs:[["N","Half-wave sections",2,16,1,0,""],["coax","Coax",null],["Lsec","Section length, as cut",20,400,0.5,1,"mm"],["whip","Top whip",10,300,0.5,1,"mm"],["sleeve","Decoupling sleeve",10,300,0.5,1,"mm"],["K","Whip end-effect factor",0.90,0.99,0.005,3,""]],
+  selects:{coax:Object.entries(COAX).map(([k,v])=>[k,v.label])},
+  init:{N:8,coax:"rg174",Lsec:0,whip:0,sleeve:0,K:0.95},
+  help:[["Sections.","Each is a half wave in the coax, so its physical length is 0.5 × λ × velocity factor. Eight at 1090 MHz is a 0.9 m stick."],["Coax.","Velocity factor sets the section length: 0.66 for solid-polyethylene RG-174 or RG-58, 0.70 for PTFE RG-316, 0.82 for foam RG-6. Get it wrong by 3 percent and the beam tilts."],["Whip.","A bare quarter wave on top, the only part cut after assembly. It carries the fine tuning because the sections cannot be shortened once soldered."],["Sleeve.","A quarter-wave tube over the feed coax, shorted at its bottom, so the outside of the feedline stops being part of the antenna."]],
+  trim:{key:"whip",label:"whip"},
+  pill:p=>`${COAX[p.coax].label.split(" (")[0]}, ${p.N} sections`,
+  design(f0,p){const L=lam(f0),c=COAX[p.coax];return {Lsec:r5(0.5*L*c.vf),whip:r5(0.25*L*p.K),sleeve:r5(0.25*L)}},
+  model(p,f0){
+    const c=COAX[p.coax];const fph=c.vf*C0/(2*p.Lsec/1000)/1e6;const fw=p.K*C0/(4*p.whip/1000)/1e6;
+    const al=p.N/(p.N+2);const fres=(1-al)*fw+al*fph;const R0=50;
+    const frac=0.12/Math.sqrt(p.N);const z=mkZ(seriesZ(fres,R0,bwSlope(frac,R0)),fres);
+    const G=2.1+10*Math.log10(p.N/2);const tot=p.sleeve+p.N*p.Lsec+p.whip;
+    return {...z,fres,R0,G,fph,fw,al,tot,mmPerMHz:p.whip/((1-al)*fw),
+      feedNote:"sleeve-fed, nominal",gainNote:`2.1 + 10·log(N/2), N = ${p.N}`,
+      cutFor:fm=>p.whip*(1-fm/f0)/(1-al),
+      rows:[["Section length",`${f1(0.5*lam(f0)*c.vf)} mm`,`design, 0.5 λ × ${c.vf}`],["Sections phase at",`${f0_(fph)} MHz`,`${f0_(fph-f0)>=0?"+":""}${f0_(fph-f0)} MHz from target, as cut`],["Overall length",`${f0_(tot)} mm`,`sleeve + ${p.N} × section + whip`]],
+      guideRows:[["Sections, as cut",`${f1(p.Lsec)} mm`,`phase at ${f0_(fph)} MHz; not trimmable`]]};
+  },
+  pattern(p,f0,M){const L=lam(f0),c=COAX[p.coax];const k=2*Math.PI/L;const kh=k*(L/4);const dl=2*Math.PI*p.Lsec/(c.vf*L)-Math.PI;
+    return {omni:true,el:el=>{const th=Math.PI/2-el;const e=wireE(kh,th);const psi=k*p.Lsec*Math.cos(th)-dl;const s2=Math.sin(psi/2);const af=Math.abs(s2)<1e-6?1:Math.sin(p.N*psi/2)/(p.N*s2);return e*af*af},
+      note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon. In phase, the sections squeeze the beam toward the horizon, about ${f0_(50/Math.sqrt(p.N)*1.6)}° wide at N = ${p.N}; a section cut for the wrong velocity factor tilts it, which is what the ${f0_(M.fph)} MHz phasing figure watches.`}},
+  draw(p,f0,M){const c=COAX[p.coax];const H=360;const sc=Math.min(2.2,(H-56)/M.tot);const x=170;let y=H-26;let s="";
+    const w=Math.max(4,c.od*sc);
+    s+=`<line x1="${x}" x2="${x}" y1="${y}" y2="${y+18}" stroke="var(--muted)" stroke-width="${w}"/><text x="${x+14}" y="${y+14}">feed coax</text>`;
+    const ys=y-p.sleeve*sc;s+=`<rect x="${x-w*1.1}" y="${ys}" width="${w*2.2}" height="${p.sleeve*sc}" fill="none" stroke="var(--ink)" stroke-width="1.5"/><text x="${x+w*1.1+10}" y="${(y+ys)/2+4}">sleeve ${f1(p.sleeve)} mm</text>`;
+    y=ys;for(let i=0;i<p.N;i++){const y2=y-p.Lsec*sc;s+=`<rect x="${x-w/2}" y="${y2}" width="${w}" height="${p.Lsec*sc}" fill="${i%2?"var(--accent)":"var(--accent-soft)"}" stroke="var(--accent)" stroke-width="1"/>`;
+      if(i<p.N-1)s+=`<path d="M${x-w/2-3},${y2-2} L${x+w/2+3},${y2+2} M${x+w/2+3},${y2-2} L${x-w/2-3},${y2+2}" stroke="var(--ink)" stroke-width="1.2" fill="none"/>`;y=y2}
+    s+=`<text x="${x+w/2+12}" y="${(y+ys)/2+4}">${p.N} × ${f1(p.Lsec)} mm, crossed</text>`;
+    const yw=y-p.whip*sc;s+=`<line x1="${x}" x2="${x}" y1="${y}" y2="${yw}" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round"/><text x="${x+12}" y="${(y+yw)/2+4}">whip ${f1(p.whip)} mm</text>`;
+    s+=`<line x1="${x-70}" x2="${x-70}" y1="${yw}" y2="${H-26}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${x-150}" y="${(yw+H-26)/2+4}">${f0_(M.tot)} mm</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · ${esc(c.label.split(" (")[0])} ${c.od} mm o.d.</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Each section's braid joins the next section's centre conductor and vice versa. The whip is the top section's centre conductor bared; the sleeve slides over the feed coax and is soldered to its braid at the bottom end only.",
+  chain:p=>`coaxial collinear (${p.N} half-wave sections of ${COAX[p.coax].label.split(" (")[0]} at ${f1(p.Lsec)} mm, whip ${f1(p.whip)} mm, sleeve ${f1(p.sleeve)} mm, vertical in free air)`,
+  plan(p,f0,M){const st=[];const d=TYPES.coco.design(f0,p);
+    st.push(`Cut ${p.N} sections to <b>${f1(d.Lsec)} mm</b> each, measured braid-end to braid-end; the velocity factor is the whole game, so measure one section on the bridge before cutting eight. Cut the sleeve to <b>${f1(d.sleeve)} mm</b>.`);
+    if(p.whip>d.whip*1.1+0.5)st.push(`Leave the whip at <b>${f1(d.whip*1.1)} mm</b> to start, 10 percent long. The predicted final whip is ${f1(d.whip)} mm.`);
+    st.push(`Hang it vertical and clear of metal, sleeve end on the bridge's RFOUT port.`);return st},
+  howto:[["Resonance.","The sections set the phasing and cannot be trimmed, so the bench reads the bridge's dip as the whip's quarter-wave resonance pulled toward the sections' own frequency, in proportion N/(N+2). That makes the whip a weak lever on a long stack, which is also true of the real antenna."],["Match.","Fed through the sleeve the CoCo is taken as 50 Ω at resonance, with a 2:1 bandwidth of about 12 percent divided by the square root of the section count; eight sections give about 4 percent. That is an engineering rule, not a derivation."],["Pattern.","A collinear array of half-wave dipoles spaced one section apart, each fed with the phase the coax and the crossover give it at the frequency in question. Gain is taken as 2.1 + 10·log(N/2) dBi, the textbook figure that real builds reach only when every section is right."]]
+};
+
+/* 3. Biquad with reflector. */
+TYPES.biquad={
+  id:"biquad",short:"Biquad",name:"Biquad with reflector",word:"cut",
+  lede:"Two quarter-wave squares joined at a corner, standing an eighth of a wave in front of a flat reflector. Ten dBi from a single bent wire, 50 Ω at the right spacing, and a bandwidth wide enough that the first cut is usually the last.",
+  f0:{def:2130,min:300,max:2187},presets:[["2130 downlink",2130],["1090 ADS-B",1090],["1620 Iridium",1620]],
+  knobs:[["side","Square side, each of eight",10,300,0.5,1,"mm"],["sp","Spacing to reflector",3,120,0.5,1,"mm"],["refl","Reflector, square",20,600,1,0,"mm"],["d","Wire diameter",0.5,3.5,0.01,2,"mm"],["K","Loop factor",0.95,1.08,0.005,3,""]],
+  init:{side:0,sp:0,refl:0,d:1.63,K:1.0},
+  help:[["Side.","Each of the eight sides is a quarter wave, so each square's perimeter is one wavelength. The side sets the resonance."],["Spacing.","An eighth of a wave in front of the reflector gives about 50 Ω. Closer lowers the resistance and sharpens the match; further raises it."],["Reflector.","At least half a wave square; three quarters is where the gain stops improving. 110 mm at 2130 MHz."],["Loop factor.","Full-wave loops resonate within a few percent of a wavelength of wire, either side depending on thickness and corners. 1.00 to start; the bridge sets it."]],
+  trim:{key:"side",label:"square side"},
+  pill:p=>`${p.refl} mm reflector, ${p.d.toFixed(2)} mm wire`,
+  design(f0,p){const L=lam(f0);return {side:r5(L/4),sp:r5(L/8),refl:Math.round(Math.max(L/2,0.78*L)/5)*5}},
+  model(p,f0){const L=lam(f0);const fres=p.K*C0/(4*p.side/1000)/1e6;const R0=clamp(50*p.sp/(L/8),10,120);
+    const z=mkZ(seriesZ(fres,R0,bwSlope(0.10,R0)),fres);const pen=3*clamp((0.75*L-p.refl)/(0.25*L),0,1);const G=10.5-pen;
+    return {...z,fres,R0,G,hp:60,mmPerMHz:p.side/fres,feedNote:`spacing ${f1(p.sp)} mm = ${(p.sp/L).toFixed(3)} λ`,gainNote:pen>0?`reflector ${p.refl} mm is under 0.75 λ, −${pen.toFixed(1)} dB`:"boresight, both planes ~60° wide",
+      rows:[["Reflector",`${p.refl} mm`,`${(p.refl/L).toFixed(2)} λ; 0.5 λ is ${f0_(L/2)} mm`],["Wire, total",`${f0_(8*p.side)} mm`,"eight sides"]],
+      guideRows:[["Spacing, set at",`${f1(L/8)} mm`,"λ/8 for 50 Ω; move it, not the wire, if the dip is deep but the SWR is not"]]};
+  },
+  pattern(p,f0,M){const b=beam(60,15);return {omni:false,dir:b,bore:"out",azBW:60,note:()=>`A 60° beam straight out from the reflector, about 15 dB down behind it. Point the reflector's back at the room; the window frame sits inside the beam and will shape it.`}},
+  draw(p,f0,M){const H=330;const sc=Math.min(2.4,290/Math.max(p.refl,2.9*p.side));let s="";
+    const cx=175,cy=165,a=p.side/Math.SQRT2*sc,R=p.refl*sc;
+    s+=`<rect x="${cx-R/2}" y="${cy-R/2}" width="${R}" height="${R}" fill="var(--line)" opacity=".5"/>`;
+    const dia=(x0)=>`M${x0-a},${cy} L${x0},${cy-a} L${x0+a},${cy} L${x0},${cy+a} Z`;
+    s+=`<path d="${dia(cx-a)} ${dia(cx+a)}" fill="none" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}" stroke-linejoin="round"/>`;
+    s+=`<circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>`;
+    s+=`<text x="${cx-a}" y="${cy-a-8}" text-anchor="middle">side ${f1(p.side)} mm</text><text x="${cx}" y="${cy+R/2+16}" text-anchor="middle">reflector ${p.refl} mm square</text>`;
+    const sx=400,sy=cy;const spx=p.sp*sc;
+    s+=`<line x1="${sx}" x2="${sx}" y1="${sy-R/2}" y2="${sy+R/2}" stroke="var(--muted)" stroke-width="4"/>`;
+    s+=`<line x1="${sx+spx}" x2="${sx+spx}" y1="${sy-a}" y2="${sy+a}" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}"/>`;
+    s+=`<line x1="${sx}" x2="${sx+spx}" y1="${sy}" y2="${sy}" stroke="var(--ink)" stroke-width="1.5"/>`;
+    s+=`<text x="${sx+spx/2}" y="${sy-a-10}" text-anchor="middle">${f1(p.sp)} mm</text><text x="${sx}" y="${sy+R/2+16}" text-anchor="middle">side view</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · front view, then side</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Feed at the centre junction: coax braid to one square, centre conductor to the other, the coax coming straight back through a hole in the reflector. The far corners of the two squares pass close but must not touch.",
+  chain:p=>`biquad (two ${f1(p.side)} mm squares of ${p.d.toFixed(2)} mm wire, ${f1(p.sp)} mm in front of a ${p.refl} mm square reflector, fed at the centre junction)`,
+  plan(p,f0,M){const d=TYPES.biquad.design(f0,p);const st=[];
+    st.push(`Bend eight sides of <b>${f1(d.side*1.05)} mm</b> (5 percent long: a loop has no tip to cut, so the slack is at the feed gap) and stand them <b>${f1(d.sp)} mm</b> off a <b>${d.refl} mm</b> reflector.`);
+    st.push(`Screw the feed onto the bridge's RFOUT port with the reflector facing away from everything metal.`);return st},
+  howto:[["Resonance.","Each square is a full-wave loop: it resonates when its perimeter, four sides, is close to one wavelength. The loop factor plays the role the end effect plays on a straight wire, and for loops it can sit either side of 1."],["Match.","Taken as 50 Ω at λ/8 in front of the reflector and scaling with the spacing, which is how a loop over a plane behaves to first order. The 2:1 bandwidth is set at 10 percent, the figure biquads reliably show."],["Pattern.","A cos-power beam 60° wide in both planes with 15 dB front-to-back, 10.5 dBi over a reflector of 0.75 λ or more and 3 dB less at a half-wave one. Closed-form, not solved."]]
+};
+
+/* 4. Axial-mode helix. */
+TYPES.helix={
+  id:"helix",short:"Helix",name:"Axial-mode helix",word:"run",
+  lede:"A spring of wire about a wavelength round, over a ground plate, radiating a circularly polarised beam along its axis. Nothing gets trimmed: the bandwidth is enormous, the impedance is set by the circumference, and the gain knob is how many turns you wind.",
+  f0:{def:1620,min:300,max:2187},presets:[["1620 Iridium",1620],["1545 Inmarsat",1545],["1691 GOES",1691]],
+  knobs:[["cl","Circumference, in wavelengths",0.75,1.33,0.01,2,"λ"],["pitch","Pitch angle",10,16,0.5,1,"°"],["N","Turns",5,12,1,0,""],["plate","Ground plate diameter",50,600,1,0,"mm"],["sense","Winding",null],["match","Feed",null],["d","Wire diameter",0.5,4,0.01,2,"mm"]],
+  selects:{sense:[["RHCP","Right-hand (RHCP): Iridium, Inmarsat, GOES"],["LHCP","Left-hand (LHCP)"]],match:[["strip","Quarter-wave copper strip match to 50 Ω"],["direct","Fed direct, no match"]]},
+  init:{cl:1.0,pitch:13,N:7,plate:0,sense:"RHCP",match:"strip",d:1.63},
+  help:[["Circumference.","Axial mode holds from 0.75 to 1.33 wavelengths; 1.0 is the middle. The feed resistance is about 140 × C/λ ohms."],["Pitch.","12 to 14° is the classic figure; spacing between turns is C × tan(pitch)."],["Turns.","Each turn adds about 1.5 dB at first; past ten the law flattens and the beam gets hard to point. Iridium is all-sky, so fewer turns and a wider beam see more passes."],["Winding.","Looking from behind the plate along the axis, a right-hand helix advances clockwise. Iridium, Inmarsat and GOES are all right-hand circular; wind the wrong way and you lose 20 dB, not 3."],["Feed.","A strip of copper over the first quarter turn, tapering from the feed, works as a quarter-wave transformer from 140 Ω down to 50."]],
+  trim:null,
+  pill:p=>`${p.N} turns ${p.sense}`,
+  design(f0,p){const L=lam(f0);return {plate:Math.round(0.75*L/5)*5}},
+  model(p,f0){const L=lam(f0);const C=p.cl*L,D=C/Math.PI,S=C*Math.tan(p.pitch*RAD),ax=p.N*S;
+    const R0=140*p.cl;const Rf=f=>140*C/lam(f);const Xf=f=>{const c=C/lam(f);const out=c<0.75?0.75-c:c>1.33?c-1.33:0;return Math.sign(c-1)*out/0.1*300};
+    let Zf;if(p.match==="strip"){const Zt=Math.sqrt(50*R0);Zf=f=>{const t=Math.tan(Math.PI/2*f/f0);const R=Rf(f),X=Xf(f);
+        // Zin = Zt (ZL + jZt t)/(Zt + jZL t), ZL = R + jX
+        const nr=R,ni=X+Zt*t,dr=Zt-X*t,di=R*t;const dd=dr*dr+di*di;return [Zt*(nr*dr+ni*di)/dd,Zt*(ni*dr-nr*di)/dd]}}
+    else Zf=f=>[Rf(f),Xf(f)];
+    const z=mkZ(Zf,f0);const G=11.8+10*Math.log10(p.cl*p.cl*(S/L)*p.N);const hp=52/(p.cl*Math.sqrt(p.N*S/L));const ar=(2*p.N+1)/(2*p.N);
+    return {...z,fres:f0,R0,G,hp,ax,C,D,S,mmPerMHz:0,feedNote:p.match==="strip"?`140 × C/λ = ${f0_(R0)} Ω, strip-matched to 50`:"140 × C/λ, no match",gainNote:`Kraus; real builds read 2–4 dB less`,
+      rows:[["Diameter",`${f1(D)} mm`,`circumference ${f1(C)} mm`],["Turn spacing",`${f1(S)} mm`,`${p.pitch}° pitch`],["Axial length",`${f0_(ax)} mm`,`${p.N} turns`],["Beamwidth",`${f0_(hp)}°`,`axial ratio ${ar.toFixed(2)}:1, ${p.sense}`],["Axial mode holds",`${f0_(0.75*C0/(C/1000)/1e6)}–${f0_(1.33*C0/(C/1000)/1e6)} MHz`,"0.75 to 1.33 λ round"]],
+      guideRows:[["Plate, at least",`${f0_(0.75*L)} mm`,"0.75 λ across"],["Strip length",`${f1(L/4)} mm`,"λ/4 at target, if the match reads high"]]};
+  },
+  pattern(p,f0,M){const b=beam(M.hp,12);return {omni:false,dir:a=>b(a-90),bore:"up",azBW:M.hp,note:()=>`Boresight along the axis, here drawn pointing up: a ${f0_(M.hp)}° beam with about 12 dB behind the plate. For Iridium leave it vertical; for GOES tilt the plate to the satellite's elevation and the pattern turns with it.`}},
+  draw(p,f0,M){const H=360;const sc=Math.min(1.6,290/Math.max(M.ax,p.plate*0.6,M.D*2));const cx=260,yb=H-40;let s="";
+    s+=`<line x1="${cx-p.plate*sc/2}" x2="${cx+p.plate*sc/2}" y1="${yb}" y2="${yb}" stroke="var(--muted)" stroke-width="5"/><text x="${cx+p.plate*sc/2+8}" y="${yb+4}">plate ${p.plate} mm</text>`;
+    const sg=p.sense==="RHCP"?1:-1;let front="",back="";let prev=null;const n=Math.round(p.N*36);
+    for(let i=0;i<=n;i++){const ph=i/36*2*Math.PI;const x=cx+sg*M.D/2*sc*Math.sin(ph),y=yb-M.S*sc*ph/(2*Math.PI);const pt=[x.toFixed(1),y.toFixed(1)];
+      if(prev){const seg=`M${prev[0]},${prev[1]} L${pt[0]},${pt[1]} `;if(Math.cos(ph-Math.PI/72)>=0)front+=seg;else back+=seg}prev=pt}
+    s+=`<path d="${back}" stroke="var(--accent)" stroke-width="${Math.max(1.5,p.d*1.2)}" fill="none" opacity=".4" stroke-dasharray="4 3"/><path d="${front}" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}" fill="none" stroke-linecap="round"/>`;
+    const top=yb-M.ax*sc;s+=`<line x1="${cx+M.D/2*sc+22}" x2="${cx+M.D/2*sc+22}" y1="${top}" y2="${yb}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${cx+M.D/2*sc+30}" y="${(top+yb)/2+4}">${f0_(M.ax)} mm, ${p.N} turns</text>`;
+    s+=`<line x1="${cx-M.D/2*sc}" x2="${cx+M.D/2*sc}" y1="${top-14}" y2="${top-14}" stroke="var(--muted)"/><text x="${cx}" y="${top-20}" text-anchor="middle">D ${f1(M.D)} mm</text>`;
+    s+=`<text x="${cx-M.D/2*sc-10}" y="${yb-M.S*sc/2+4}" text-anchor="end">S ${f1(M.S)} mm</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · ${p.sense}, seen from the side</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Wire wound on a former (PVC pipe or foam), the first quarter turn running close to the plate with the matching strip under it, the feed through an SMA on the plate. Dashed is the far side of each turn.",
+  chain:p=>{const L=lam(cur().f0);const C=p.cl*L;return `axial-mode helix (${p.N} turns, ${p.sense}, circumference ${f1(C)} mm, pitch ${p.pitch} deg, spacing ${f1(C*Math.tan(p.pitch*RAD))} mm, ${p.plate} mm ground plate, ${p.match==="strip"?"quarter-wave copper strip match":"fed direct at "+f0_(140*p.cl)+" ohm"})`},
+  plan(p,f0,M){const st=[];st.push(`Wind <b>${p.N} turns</b> of ${f1(M.C)} mm circumference (a ${f1(M.D)} mm former) at ${f1(M.S)} mm per turn, <b>${p.sense}</b>, over a plate at least ${f0_(0.75*lam(f0))} mm across. Nothing here is cut to tune.`);
+    st.push(`Fit the ${f1(lam(f0)/4)} mm copper strip over the first quarter turn and mount the plate on the bridge's RFOUT port, axis pointing at the ceiling.`);return st},
+  howto:[["Resonance.","A helix in axial mode has no sharp resonance: the bench centres its curve on the target and lets the circumference-in-wavelengths wander with frequency, which is what the real antenna does. Axial mode is taken to hold from 0.75 to 1.33 λ round; outside that a reactance is ramped in to show the match collapsing."],["Match.","Feed resistance 140 × C/λ ohms (Kraus), real. With the strip the bench transforms it through a quarter-wave line of the geometric-mean impedance, so the curve shows the match's own bandwidth, not the helix's. Gain is the Kraus formula 11.8 + 10·log(C²·S·N/λ³), which measured helices miss by 2 to 4 dB; the beamwidth 52/(C/λ · √(N·S/λ)) is from the same source."],["Pattern.","A cos-power beam of that width along the axis with 12 dB behind the plate. Polarisation is circular and the sense matters more than any dimension here."]]
+};
+
+/* 5. V-dipole for 137 MHz. */
+TYPES.vdip={
+  id:"vdip",short:"V-dipole",name:"V-dipole, 137 MHz",word:"cut",
+  lede:"Two quarter-wave legs opened to 120° and laid flat, pointing north or south. The V fills in the overhead nulls a straight dipole has, so a weather satellite is heard from horizon to horizon; the legs are what you trim.",
+  f0:{def:137.5,min:100,max:500},presets:[["137.5 NOAA / Meteor",137.5],["137.1 NOAA 19",137.1],["137.9 Meteor-M",137.9]],
+  knobs:[["leg","Leg, each of two",200,900,1,0,"mm"],["ang","Angle between the legs",90,180,1,0,"°"],["hgt","Height above the roof or ground",0.2,3,0.05,2,"m"],["d","Rod diameter",1,12,0.1,1,"mm"],["K","End-effect factor",0.90,0.99,0.005,3,""]],
+  init:{leg:0,ang:120,hgt:0.55,d:3.2,K:0.95},
+  help:[["Legs.","A quarter wave each, times the end-effect factor: 518 mm at 137.5 MHz with 0.95. Aluminium rod or brazing rod; the only trim."],["Angle.","120° is the usual compromise: about 50 Ω and a pattern that stays within a few dB from 20° elevation to overhead. Straight (180°) is 73 Ω with a hole at the zenith."],["Height.","The ground or roof below makes an image. A quarter wave up (about 0.55 m) lifts the lobe overhead; a half wave up puts a null there instead."],["Rod.","Thicker rod matches over a wider band and resonates slightly shorter, as for any wire."]],
+  trim:{key:"leg",label:"leg"},
+  pill:p=>`${p.ang}° V, ${p.d.toFixed(1)} mm rod`,
+  design(f0,p){return {leg:Math.round(0.25*lam(f0)*p.K)}},
+  model(p,f0){const fres=p.K*C0/(4*p.leg/1000)/1e6;const R0=73*p.ang/180;const z=mkZ(seriesZ(fres,R0,wireSlope(p.leg,p.d/2)),fres);
+    return {...z,fres,R0,G:2.1,mmPerMHz:p.leg/fres,feedNote:`${p.ang}° between the legs`,gainNote:"free space; the ground below adds up to 6 dB toward the sky",
+      rows:[["Tip to tip",`${f0_(2*p.leg*Math.sin(p.ang/2*RAD))} mm`,`${p.ang}° opening`],["Height",`${p.hgt.toFixed(2)} m`,`${(p.hgt*1000/lam(f0)).toFixed(2)} λ above the ground`]],
+      guideRows:[["Angle, set at",`${p.ang}°`,"120° for ~50 Ω and an overhead fill"]]};
+  },
+  pattern(p,f0,M){const k=2*Math.PI/lam(f0);const h=p.hgt*1000;
+    return {omni:true,el:el=>{if(el<0)return 0;const dipav=1-0.5*Math.cos(el)**2;const g=2*Math.sin(k*h*Math.sin(el));return dipav*g*g},
+      bore:"up",note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon, with the ground ${p.hgt.toFixed(2)} m below making the image. A quarter wave up gives one broad lobe overhead; higher splits it. The V opening fills the dipole's own end nulls so the azimuth is close to even.`}},
+  draw(p,f0,M){const H=330;const sc=Math.min(0.45,250/p.leg);const cx=200,cy=70;let s="";const a=p.ang/2*RAD;
+    const ex1=cx-p.leg*sc*Math.sin(a),ex2=cx+p.leg*sc*Math.sin(a),ey=cy+p.leg*sc*Math.cos(a);
+    s+=`<line x1="${cx}" y1="${cy}" x2="${ex1}" y2="${ey}" stroke="var(--accent)" stroke-width="${Math.max(2.5,p.d)}" stroke-linecap="round"/><line x1="${cx}" y1="${cy}" x2="${ex2}" y2="${ey}" stroke="var(--accent)" stroke-width="${Math.max(2.5,p.d)}" stroke-linecap="round"/>`;
+    s+=`<circle cx="${cx}" cy="${cy}" r="4" fill="var(--ink)"/><text x="${cx+8}" y="${cy-8}">feed, choke under it</text>`;
+    s+=`<path d="M${cx-30*Math.sin(a)},${cy+30*Math.cos(a)} A30,30 0 0 0 ${cx+30*Math.sin(a)},${cy+30*Math.cos(a)}" fill="none" stroke="var(--muted)"/><text x="${cx}" y="${cy+30*Math.cos(a)+16}" text-anchor="middle">${p.ang}°</text>`;
+    s+=`<text x="${(cx+ex1)/2-10}" y="${(cy+ey)/2}" text-anchor="end">leg ${p.leg} mm</text><text x="${(cx+ex2)/2+10}" y="${(cy+ey)/2}">leg ${p.leg} mm</text>`;
+    s+=`<text x="${cx}" y="${ey+20}" text-anchor="middle">top view · tips ${f0_(2*p.leg*Math.sin(a))} mm apart</text>`;
+    const sx=430,gy=H-40,hp=Math.min(200,p.hgt*1000*0.12);s+=`<line x1="${sx-50}" x2="${sx+50}" y1="${gy}" y2="${gy}" stroke="var(--muted)" stroke-width="3"/><line x1="${sx}" x2="${sx}" y1="${gy}" y2="${gy-hp}" stroke="var(--muted)" stroke-dasharray="3 3"/><line x1="${sx-40}" x2="${sx+40}" y1="${gy-hp}" y2="${gy-hp}" stroke="var(--accent)" stroke-width="3"/><text x="${sx}" y="${gy-hp-8}" text-anchor="middle">${p.hgt.toFixed(2)} m up</text><text x="${sx}" y="${gy+16}" text-anchor="middle">side</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(100*sc).toFixed(0)} px = 100 mm (top view) · side view not to scale</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Legs in a horizontal plane, the open end of the V toward north or south so the pass runs across it. A few turns of the feed coax through a ferrite or a coil under the feed keep the feedline from becoming a third leg.",
+  chain:p=>`V-dipole (two ${p.leg} mm legs of ${p.d.toFixed(1)} mm rod at ${p.ang} deg, horizontal, fed at the apex)`,
+  plan(p,f0,M){const d=TYPES.vdip.design(f0,p);const st=[];st.push(`Cut two legs to <b>${f0_(d.leg*1.08)} mm</b>, 8 percent long (the predicted final is ${d.leg} mm), and open them to ${p.ang}°.`);
+    st.push(`Lay it flat on a dry wooden table or a box, well off the floor, feed on the bridge's RFOUT port through a short coax; at 137 MHz anything within a metre is part of the antenna.`);return st},
+  howto:[["Resonance.","Each leg is a quarter wave times the end-effect factor, exactly as the ground plane's vertical; the two legs are the two halves of a dipole bent toward each other."],["Match.","73 Ω straight, scaled by the included angle over 180°, so 120° gives 49 Ω. The reactance slope is the thin-wire one for a leg of this length and diameter."],["Pattern.","A horizontal dipole's shape averaged round the compass, times the ground image for horizontal polarisation at the set height. The V opening is credited with filling the end nulls. Nothing here knows about the roof, the gutter or the mast."]]
+};
+
+/* 6. Can (circular waveguide) antenna. */
+TYPES.can={
+  id:"can",short:"Can",name:"Can antenna",word:"cut",
+  lede:"A tin can is a short piece of circular waveguide: open at one end, a probe through the side a quarter guide-wavelength from the back. The diameter decides whether it works at all; the probe is what you trim.",
+  f0:{def:2130,min:800,max:2187},presets:[["2130 downlink",2130],["1620 Iridium",1620],["1265 radar",1265]],
+  knobs:[["D","Can inside diameter",50,300,0.5,1,"mm"],["len","Can length",50,600,1,0,"mm"],["probe","Probe length",5,120,0.5,1,"mm"],["pos","Probe from the back wall",5,300,0.5,1,"mm"],["d","Probe diameter",0.5,6,0.01,2,"mm"],["K","Probe end-effect factor",0.90,0.99,0.005,3,""]],
+  init:{D:0,len:0,probe:0,pos:0,d:1.63,K:0.95},
+  help:[["Diameter.","The lowest mode (TE11) only propagates above a cutoff set by the diameter; the next mode arrives at 1.31× that. Between 0.586 and 0.766 wavelengths across, the can carries one mode and works. The bench prints the millimetre range."],["Length.","At least three quarters of a guide wavelength, which is longer than three quarters of a free-space wavelength because the guide wavelength is stretched near cutoff."],["Probe.","A quarter wave of wire, free-space, on the connector's centre pin. Length tunes it; position matches it."],["Position.","A quarter guide-wavelength from the back wall, where the reflected wave adds in phase. Moving it changes the resistance seen at the connector."]],
+  trim:{key:"probe",label:"probe"},
+  pill:p=>`${f1(p.D)} mm can`,
+  design(f0,p){const L=lam(f0);const D=Math.round(0.68*L);const fc=1.8412*C0/(Math.PI*D/1000)/1e6;const lg=L/Math.sqrt(1-(fc/f0)**2);return {D,len:Math.round(0.8*lg),probe:r5(0.25*L*p.K),pos:r5(lg/4)}},
+  model(p,f0){const L=lam(f0);const fc=1.8412*C0/(Math.PI*p.D/1000)/1e6;const f2m=1.307*fc;const lg=f=>{const r=fc/f;return r>=1?Infinity:lam(f)/Math.sqrt(1-r*r)};
+    const fres=p.K*C0/(4*p.probe/1000)/1e6;const slope=wireSlope(p.probe,p.d/2);
+    const Zf=f=>{if(f<=fc*1.005)return [2,0];const R=Math.max(5,50*Math.sin(2*Math.PI*p.pos/lg(f))**2);const u=f/fres-1;return [Math.min(150,R*(f/fres)**2),slope*u]};
+    const z=mkZ(Zf,fres);const area=Math.PI*(p.D/2)**2;const G=10*Math.log10(0.5*4*Math.PI*area/(L*L));const hp=clamp(65*L/p.D,50,120);const lg0=lg(f0);
+    const ok=f0>fc*1.02&&f0<f2m;
+    return {...z,fres,R0:Math.max(5,50*Math.sin(2*Math.PI*p.pos/lg0)**2),G,hp,fc,f2m,lg0,mmPerMHz:p.probe/fres,feedNote:`probe ${f1(p.pos)} mm = ${(p.pos/lg0).toFixed(2)} λg from the back`,gainNote:`aperture ${f0_(area)} mm², 50 % efficient`,
+      rows:[["TE11 cutoff",`${f0_(fc)} MHz`,ok?`single mode to ${f0_(f2m)} MHz`:f0<=fc*1.02?"TARGET IS BELOW CUTOFF: the can is too narrow":"overmoded above "+f0_(f2m)+" MHz: the can is too wide"],["Diameter for target",`${f0_(0.586*L)}–${f0_(0.766*L)} mm`,`${f1(p.D)} mm is ${(p.D/L).toFixed(3)} λ`],["Guide wavelength",isFinite(lg0)?`${f0_(lg0)} mm`:"—",`λ ${f0_(L)} mm; λg/4 = ${isFinite(lg0)?f1(lg0/4):"—"} mm`],["Can length",`${p.len} mm`,isFinite(lg0)?(p.len>=0.75*lg0?`≥ 0.75 λg (${f0_(0.75*lg0)} mm)`:`short: wants ≥ ${f0_(0.75*lg0)} mm`):"—"],["Beamwidth",`${f0_(hp)}°`,"both planes, roughly"]],
+      guideRows:[["Probe, from the back",`${isFinite(lg0)?f1(lg0/4):"—"} mm`,"λg/4; slide it if the dip is deep but SWR is not"]]};
+  },
+  pattern(p,f0,M){const b=beam(M.hp,15);return {omni:false,dir:b,bore:"out",azBW:M.hp,note:()=>`A ${f0_(M.hp)}° beam out of the open end, 15 dB down behind. A wider can is a narrower beam; a longer can does not change it.`}},
+  draw(p,f0,M){const H=330;const sc=Math.min(1.6,380/p.len,220/p.D);const x0=70,cy=160;const Lp=p.len*sc,Dp=p.D*sc;let s="";
+    s+=`<rect x="${x0}" y="${cy-Dp/2}" width="${Lp}" height="${Dp}" fill="var(--line)" opacity=".35"/>`;
+    s+=`<line x1="${x0}" x2="${x0}" y1="${cy-Dp/2}" y2="${cy+Dp/2}" stroke="var(--ink)" stroke-width="4"/>`;
+    s+=`<line x1="${x0}" x2="${x0+Lp}" y1="${cy-Dp/2}" y2="${cy-Dp/2}" stroke="var(--muted)" stroke-width="2.5"/><line x1="${x0}" x2="${x0+Lp}" y1="${cy+Dp/2}" y2="${cy+Dp/2}" stroke="var(--muted)" stroke-width="2.5"/>`;
+    s+=`<line x1="${x0+Lp}" x2="${x0+Lp}" y1="${cy-Dp/2}" y2="${cy+Dp/2}" stroke="var(--muted)" stroke-dasharray="4 3"/>`;
+    const px=x0+p.pos*sc;s+=`<rect x="${px-7}" y="${cy-Dp/2-14}" width="14" height="14" fill="var(--muted)"/><line x1="${px}" x2="${px}" y1="${cy-Dp/2}" y2="${cy-Dp/2+p.probe*sc}" stroke="var(--accent)" stroke-width="${Math.max(2,p.d*1.6)}" stroke-linecap="round"/>`;
+    s+=`<text x="${px+10}" y="${cy-Dp/2+p.probe*sc/2+4}">probe ${f1(p.probe)} mm</text>`;
+    s+=`<line x1="${x0}" x2="${px}" y1="${cy+Dp/2+14}" y2="${cy+Dp/2+14}" stroke="var(--ink)"/><text x="${(x0+px)/2}" y="${cy+Dp/2+28}" text-anchor="middle">${f1(p.pos)} mm from the back</text>`;
+    s+=`<text x="${x0+Lp/2}" y="${cy-Dp/2-22}" text-anchor="middle">length ${p.len} mm</text>`;
+    s+=`<text x="${x0+Lp+8}" y="${cy+4}">D ${f1(p.D)} mm · open end →</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · cut-away, back wall at the left</text>`;
+    return {svg:s,h:H}},
+  drawNote:"An N or SMA bulkhead through the can wall, the probe soldered to its centre pin and pointing at the axis. The back wall must be solid and bonded all round; the open end faces the signal.",
+  chain:p=>`can antenna (${f1(p.D)} mm inside diameter, ${p.len} mm long, ${f1(p.probe)} mm probe ${f1(p.pos)} mm from the back wall, open end forward)`,
+  plan(p,f0,M){const d=TYPES.can.design(f0,p);const st=[];st.push(`Find a can between <b>${f0_(0.586*lam(f0))} and ${f0_(0.766*lam(f0))} mm</b> inside diameter and at least <b>${f0_(0.75*M.lg0)} mm</b> long; the ${f1(p.D)} mm one drawn gives a cutoff of ${f0_(M.fc)} MHz. Drill for the connector <b>${f1(d.pos)} mm</b> from the back wall.`);
+    st.push(`Fit a probe of <b>${f1(d.probe*1.1)} mm</b>, 10 percent long (predicted final ${f1(d.probe)} mm), and screw the can onto the bridge's RFOUT port facing the room's emptiest corner.`);return st},
+  howto:[["Resonance.","The probe is a quarter-wave monopole standing in the guide: its length sets the dip exactly as the ground plane's vertical does, with the same end-effect factor and thin-wire reactance. Below the can's TE11 cutoff the bench returns total reflection, because that is what a waveguide below cutoff does."],["Match.","Resistance 50 Ω × sin² of the probe's electrical distance from the back wall in guide wavelengths, so λg/4 is the match and the wall itself is a short. Guide wavelength λ/√(1 − (fc/f)²) with cutoff 1.8412·c/(π·D)."],["Pattern.","Aperture gain 10·log(0.5 × 4π × area / λ²), half efficient, and a beam of 65·λ/D degrees. A short open pipe is not a horn and the real pattern is lumpier than this."]]
+};
+
+/* 7. Five-element Yagi. */
+TYPES.yagi={
+  id:"yagi",short:"Yagi",name:"5-element Yagi",word:"cut",
+  lede:"A reflector, a driven element and three directors on a boom just under a wavelength long, pointed at one thing. Nine or ten dBi and a beam you can aim at the radar; the driven element is what you trim, and it wants a match.",
+  f0:{def:1265,min:300,max:2187},presets:[["1265 radar",1265],["1090 ADS-B",1090],["1620 Iridium",1620]],
+  knobs:[["de","Driven element, tip to tip",20,600,0.5,1,"mm"],["fcut","Parasitics cut for",300,2187,1,0,"MHz"],["d","Element diameter",1,8,0.1,1,"mm"],["match","Feed",null]],
+  selects:{match:[["none","Plain split dipole, about 25 Ω"],["hairpin","Hairpin or folded dipole, 50 Ω"]]},
+  init:{de:0,fcut:0,d:3.2,match:"none"},
+  help:[["Driven element.","0.473 λ tip to tip, split at the centre for the feed. The only element cut after the boom is drilled."],["Parasitics cut for.","The reflector (0.495 λ), directors (0.44, 0.44, 0.43 λ) and spacings (0.20, 0.15, 0.20, 0.25 λ) are cut once for this frequency. Set it to the target; it is here so a Yagi built for one band can be looked at on another."],["Element diameter.","3.2 mm (1/8 in) brazing rod or aluminium is typical at these frequencies."],["Feed.","A plain split driven element on a Yagi sits near 25 Ω, which is 2:1 on 50 Ω cable before anything is cut. A hairpin stub behind the feed or a folded dipole brings it to 50."]],
+  trim:{key:"de",label:"driven element"},
+  pill:p=>`${p.d.toFixed(1)} mm rod, ${p.match==="none"?"25 Ω":"matched"}`,
+  design(f0,p){return {de:r5(0.473*lam(f0)),fcut:f0}},
+  geom(p){const L=lam(p.fcut||1);return {len:[0.495*L,p.de,0.44*L,0.44*L,0.43*L],sp:[0,0.20*L,0.35*L,0.55*L,0.80*L],boom:0.80*L}},
+  model(p,f0){const fres=0.473*C0/(p.de/1000)/1e6;const R0=p.match==="none"?25:50;const z=mkZ(seriesZ(fres,R0,bwSlope(0.04,50)),fres);
+    const off=Math.abs(f0-p.fcut)/f0;const pen=clamp(off/0.05,0,1)*4;const G=9.5-pen;const g=TYPES.yagi.geom(p);
+    return {...z,fres,R0,G,hp:50,g,mmPerMHz:p.de/fres,feedNote:p.match==="none"?"split dipole, no match":"with hairpin or folded dipole",gainNote:pen>0?`parasitics cut for ${p.fcut}, −${pen.toFixed(1)} dB off that`:"E-plane 50°, H-plane 60°",
+      rows:[["Reflector",`${f1(g.len[0])} mm`,`0.495 λ at ${p.fcut}`],["Directors",`${f1(g.len[2])} / ${f1(g.len[3])} / ${f1(g.len[4])} mm`,"0.44 / 0.44 / 0.43 λ"],["Spacings",`${f1(g.sp[1])} / ${f1(g.sp[2]-g.sp[1])} / ${f1(g.sp[3]-g.sp[2])} / ${f1(g.sp[4]-g.sp[3])} mm`,`boom ${f0_(g.boom)} mm`],["Front to back",`~18 dB`,"five elements, these spacings"]],
+      guideRows:[["Match",p.match==="none"?"25 Ω, 2:1 at best":"50 Ω","a hairpin is the fix, not the saw"]]};
+  },
+  pattern(p,f0,M){const b=beam(50,18);return {omni:false,dir:b,bore:"out",azBW:60,note:()=>`A 50° beam along the boom (60° in the other plane), 18 dB down behind the reflector. Horizontal elements see the radar's horizontal polarisation; the pattern is the aiming aid.`}},
+  draw(p,f0,M){const H=330;const g=M.g;const sc=Math.min(2.0,440/g.boom,260/g.len[0]);const x0=40,cy=165;let s="";
+    s+=`<line x1="${x0}" x2="${x0+g.boom*sc}" y1="${cy}" y2="${cy}" stroke="var(--muted)" stroke-width="4"/>`;
+    const names=["reflector","driven","dir 1","dir 2","dir 3"];
+    g.len.forEach((l,i)=>{const x=x0+g.sp[i]*sc;const col=i===1?"var(--ink)":"var(--accent)";s+=`<line x1="${x}" x2="${x}" y1="${cy-l*sc/2}" y2="${cy+l*sc/2}" stroke="${col}" stroke-width="${Math.max(2,p.d*1.2)}" stroke-linecap="round"/>`;
+      s+=`<text x="${x}" y="${cy-l*sc/2-8}" text-anchor="middle">${f1(l)}</text><text x="${x}" y="${cy+l*sc/2+16}" text-anchor="middle">${names[i]}</text>`;
+      if(i>0)s+=`<text x="${(x0+g.sp[i-1]*sc+x)/2}" y="${cy-6}" text-anchor="middle" font-size="9">${f1(g.sp[i]-g.sp[i-1])}</text>`});
+    s+=`<circle cx="${x0+g.sp[1]*sc}" cy="${cy}" r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/>`;
+    s+=`<text x="${x0+g.boom*sc+8}" y="${cy+4}">→ forward</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · top view, lengths in mm, parasitics cut for ${p.fcut} MHz</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Parasitic elements through a non-metallic boom (or bonded to a metal one with a boom correction the bench does not apply). The driven element is split at the centre and insulated from the boom; the feed coax runs back along the boom.",
+  chain:p=>{const g=TYPES.yagi.geom(p);return `5-element Yagi (reflector ${f1(g.len[0])}, driven ${f1(p.de)}, directors ${f1(g.len[2])}/${f1(g.len[3])}/${f1(g.len[4])} mm of ${p.d.toFixed(1)} mm rod, spacings ${f1(g.sp[1])}/${f1(g.sp[2]-g.sp[1])}/${f1(g.sp[3]-g.sp[2])}/${f1(g.sp[4]-g.sp[3])} mm, parasitics cut for ${p.fcut} MHz, ${p.match==="none"?"split driven element, no match":"hairpin or folded dipole match"}, boom horizontal)`},
+  plan(p,f0,M){const d=TYPES.yagi.design(f0,p);const g=TYPES.yagi.geom({...p,fcut:f0});const st=[];
+    st.push(`Cut the reflector to <b>${f1(g.len[0])} mm</b> and the directors to <b>${f1(g.len[2])} / ${f1(g.len[3])} / ${f1(g.len[4])} mm</b>; drill the boom at <b>0, ${f1(g.sp[1])}, ${f1(g.sp[2])}, ${f1(g.sp[3])}, ${f1(g.sp[4])} mm</b>. These are set once.`);
+    st.push(`Make the driven element <b>${f1(d.de*1.08)} mm</b> tip to tip, 8 percent long (predicted final ${f1(d.de)} mm), split at the centre${p.match==="none"?"; expect the bridge to show about 2:1 at the dip until a hairpin goes on":" with the hairpin or folded section"}.`);
+    st.push(`Point it at the ceiling corner furthest from metal and put the feed on the bridge's RFOUT port.`);return st},
+  howto:[["Resonance.","The driven element alone sets the dip, at 0.473 λ tip to tip (the end effect is already inside that number). The parasitics pull it a little in reality; the bench ignores that and lets the bridge find it."],["Match.","25 Ω for a plain split dipole between a reflector and a close director, 50 Ω with a hairpin or folded dipole, and a 2:1 bandwidth of 4 percent, which is what a five-element design with these spacings gives. The gain, 9.5 dBi, is the published figure for this element set and loses up to 4 dB when the parasitics were cut for a frequency 5 percent away."],["Pattern.","A 50° cos-power beam along the boom with 18 dB front-to-back. Real Yagis have sidelobes the bench does not draw."]]
+};
+
+/* 8. Plain half-wave dipole: the station's whips. */
+TYPES.dipole={
+  id:"dipole",short:"Dipole",name:"Half-wave dipole (the whips)",word:"cut",
+  lede:"The station's own antenna: two whips on the window mount, 60 mm each at 90°, measured more often than anything else here. It is on the bench so its numbers sit beside the others, and so a whip length can be checked against the archive before anything is built.",
+  f0:{def:1250,min:300,max:2187},presets:[["1250 (60 mm whips)",1250],["1090 ADS-B",1090],["2130 downlink",2130]],
+  knobs:[["arm","Whip, each of two",10,150,0.5,1,"mm"],["ang","Angle between the whips",90,180,1,0,"°"],["d","Whip diameter",0.5,4,0.01,2,"mm"],["K","End-effect factor",0.90,0.99,0.005,3,""]],
+  init:{arm:60,ang:90,d:2.0,K:0.95},
+  help:[["Whip.","Per whip, not tip to tip; the sidecars record it the same way. 60 mm is the measured optimum at L/S band: −16.6 dB on 1799.98 MHz, against −20.7 at 50 mm and −24.5 at 100 mm."],["Angle.","90° is the standing L; 180° is a straight dipole at 73 Ω. The mount allows either."],["Diameter.","The telescoping whips are about 2 mm at the base."]],
+  trim:{key:"arm",label:"whip"},
+  pill:p=>`${f1(p.arm)} mm whips at ${p.ang}°`,
+  design(f0,p){return {arm:r5(0.25*lam(f0)*p.K)}},
+  model(p,f0){const fres=p.K*C0/(4*p.arm/1000)/1e6;const R0=73*p.ang/180;const z=mkZ(seriesZ(fres,R0,wireSlope(p.arm,p.d/2)),fres);
+    return {...z,fres,R0,G:2.1,mmPerMHz:p.arm/fres,feedNote:`${p.ang}° between the whips`,gainNote:"broadside to the whips",
+      rows:[["Archive, 1799.98 MHz",p.arm===60?"−16.6 dB":p.arm===50?"−20.7 dB":p.arm===75?"−17.6 dB":p.arm===100?"−24.5 dB":"—","median over sweeps, LS fingerprint, 60 mm chain"],["Archive, 2.1 GHz plateau","+5.8 dB","downlink over empty, 60 mm; UWB +8.0"],["Archive, ADS-B","1856 /min","DF17 on the XTR, 60 mm at 90°"]],
+      guideRows:[["Tip to tip",`${f0_(2*p.arm*Math.sin(p.ang/2*RAD))} mm`,"as mounted"]]};
+  },
+  pattern(p,f0,M){const kh=2*Math.PI*p.arm/lam(f0);return {omni:true,el:el=>wireE(kh,Math.PI/2-el),note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon for the vertical whip; the horizontal one of the L fills in overhead and adds a horizontal component. The glass, the frame and the LaNA box sit in the near field.`}},
+  draw(p,f0,M){const H=330;const sc=Math.min(2.2,240/p.arm);const cx=260,cy=230;let s="";const a=p.ang*RAD;
+    s+=`<rect x="${cx-9}" y="${cy-4}" width="18" height="22" fill="var(--muted)" opacity=".5"/>`;
+    s+=`<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy-p.arm*sc}" stroke="var(--accent)" stroke-width="${Math.max(2.5,p.d*1.6)}" stroke-linecap="round"/>`;
+    const x2=cx-p.arm*sc*Math.sin(a),y2=cy-p.arm*sc*Math.cos(a);
+    s+=`<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}" stroke="var(--accent)" stroke-width="${Math.max(2.5,p.d*1.6)}" stroke-linecap="round"/>`;
+    s+=`<text x="${cx+10}" y="${cy-p.arm*sc/2}">whip ${f1(p.arm)} mm</text><text x="${(cx+x2)/2}" y="${(cy+y2)/2-10}" text-anchor="middle">whip ${f1(p.arm)} mm</text>`;
+    s+=`<path d="M${cx},${cy-26} A26,26 0 0 0 ${cx-26*Math.sin(a)},${cy-26*Math.cos(a)}" fill="none" stroke="var(--muted)"/><text x="${cx-34*Math.sin(a/2)}" y="${cy-34*Math.cos(a/2)+4}" text-anchor="middle">${p.ang}°</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · the suction mount holds the feed</text>`;
+    return {svg:s,h:H}},
+  drawNote:"The window suction-cup mount with its two telescoping whips, one vertical and one horizontal in the standing 90° L. Whip length is per whip from the mount's body.",
+  chain:p=>`dipole (two ${f1(p.arm)} mm whips at ${p.ang} deg, on the window suction mount, fed at the centre)`,
+  plan(p,f0,M){const d=TYPES.dipole.design(f0,p);return [`Set both whips to <b>${f1(d.arm)} mm</b> (the telescoping whips slide, so there is nothing to cut), ${p.ang}° apart.`,`Put the mount's SMA on the bridge's RFOUT port in free air. This is also the only antenna here with four archive points to check the bridge against: 60 mm should dip near ${f0_(0.95*C0/(0.24)/1e6)} MHz.`]},
+  howto:[["Resonance.","A quarter wave per whip times the end-effect factor, the same arithmetic as the ground plane's vertical with the droop set to 90°."],["Match.","73 Ω straight, scaled by the angle between the whips, and the thin-wire reactance slope for the whip's length and diameter."],["Pattern.","A straight dipole's figure, taken for the vertical whip; the L's horizontal whip is not modelled separately. The archive numbers in the readouts are measured, not predicted, and outrank everything else on this page."]]
+};
+const ORDER=["gp","coco","biquad","helix","vdip","can","yagi","dipole"];
+
+/* ---------- state ---------- */
+const S={type:"gp",B:{},log:[]};
+function bundle(id){if(!S.B[id]){const T=TYPES[id];const b={p:{...T.init},f0:T.f0.def,dip:Math.round(T.f0.def*0.0915)*10,meas:null,dipFromMeas:false};
+    // dimensions that start at 0 are "design from the target"
+    const need=Object.keys(b.p).filter(k=>b.p[k]===0);if(need.length){const d=T.design(b.f0,b.p,id==="gp"?T.model(b.p,b.f0):null);for(const k of need)if(d[k]!=null)b.p[k]=d[k]}
+    S.B[id]=b}return S.B[id]}
+const cur=()=>bundle(S.type);
+const T_=()=>TYPES[S.type];
+
+/* ---------- knob column ---------- */
+function buildKnobs(){const T=T_(),B=cur();
+  $("type").innerHTML=ORDER.map(id=>`<option value="${id}"${id===S.type?" selected":""}>${esc(TYPES[id].name)}</option>`).join("");
+  $("presets").innerHTML=T.presets.map(([l,f])=>`<button class="btn sm" type="button" data-f0="${f}">${esc(l)}</button>`).join("");
+  $("kF0").min=T.f0.min;$("kF0").max=T.f0.max;
+  $("knobList").innerHTML=T.knobs.map(([key,label,min,max,step,dec,unit])=>{
+    if(min===null){const opts=T.selects[key];return `<div class="knob"><label for="k_${key}">${esc(label)}</label><span></span><span class="sl"><select class="num" id="k_${key}" data-key="${key}">${opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select></span></div>`}
+    return `<div class="knob"><label for="k_${key}">${esc(label)}</label><span class="val" id="v_${key}"></span><span class="sl"><input type="range" id="k_${key}" data-key="${key}" min="${min}" max="${max}" step="${step}"><input class="num" id="n_${key}" data-key="${key}" inputmode="decimal" aria-label="${esc(label)}"></span></div>`}).join("");
+  $("knobHelp").innerHTML=T.help.map(([b,t])=>`<p><b>${esc(b)}</b> ${esc(t)}</p>`).join("");
+  $("bStart").hidden=!T.trim;$("bFinal").textContent=T.trim?"Predicted final lengths":"Design dimensions";
+  $("knobTitle").textContent=T.trim?"Lengths and target":"Dimensions and target";
+  for(const el of $("knobList").querySelectorAll("input[type=range]"))el.addEventListener("input",()=>{cur().p[el.dataset.key]=+el.value;render()});
+  for(const el of $("knobList").querySelectorAll("input.num"))el.addEventListener("change",()=>{const v=parseFloat(el.value);const k=$("k_"+el.dataset.key);if(!isFinite(v)){sync();return}cur().p[el.dataset.key]=clamp(v,+k.min,+k.max);render()});
+  for(const el of $("knobList").querySelectorAll("select"))el.addEventListener("change",()=>{cur().p[el.dataset.key]=el.value;render()});
+}
+function sync(){const T=T_(),B=cur();
+  $("kF0").value=B.f0;if(document.activeElement!==$("nF0"))$("nF0").value=fF(B.f0);$("vF0").textContent=`${fF(B.f0)} MHz`;$("kF0").step=B.f0<500?0.1:1;
+  for(const [key,label,min,max,step,dec,unit] of T.knobs){const v=B.p[key];const k=$("k_"+key),n=$("n_"+key),vv=$("v_"+key);
+    if(min===null){if(k)k.value=v;continue}
+    if(k)k.value=v;if(n&&document.activeElement!==n)n.value=dec?(+v).toFixed(dec):String(Math.round(v));
+    if(vv){const txt=dec?(+v).toFixed(dec):String(Math.round(v));vv.textContent=unit==="°"?txt+"°":unit?txt+" "+unit:txt}}
+  const kd=$("kDip");kd.min=Math.round(B.f0*0.5);kd.max=Math.round(B.f0*1.5);kd.step=B.f0<500?0.1:1;kd.value=B.dip;if(document.activeElement!==$("nDip"))$("nDip").value=fF(B.dip);$("vDip").textContent=`${fF(B.dip)} MHz`;
+}
+$("type").addEventListener("change",()=>{S.type=$("type").value;buildKnobs();render();window.scrollTo({top:0,behavior:"smooth"})});
+$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(!B.dipFromMeas)B.dip=Math.round(B.f0*0.0915)*10;render();toast(`${b.textContent}: design dimensions set`)});
+$("kF0").addEventListener("input",()=>{cur().f0=+$("kF0").value;render()});
+$("nF0").addEventListener("change",()=>{const v=parseFloat($("nF0").value);if(!isFinite(v)){sync();return}cur().f0=clamp(v,+$("kF0").min,+$("kF0").max);render()});
+$("kDip").addEventListener("input",()=>{const B=cur();B.dip=+$("kDip").value;B.dipFromMeas=false;render()});
+$("nDip").addEventListener("change",()=>{const B=cur();const v=parseFloat($("nDip").value);if(!isFinite(v)){sync();return}B.dip=Math.round(clamp(v,+$("kDip").min,+$("kDip").max)*10)/10;B.dipFromMeas=false;render()});
+$("bStart").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(T.trim)B.p[T.trim.key]=r5(B.p[T.trim.key]*1.10);render();toast("Start-long lengths set")};
+$("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);render();toast(T.trim?"Predicted final lengths set":"Design dimensions set")};
+
+/* ---------- readouts ---------- */
+function cls(swr){return swr<=1.5?"good":swr<=2.5?"warn":"bad"}
+function readouts(T,B,M){const f0=B.f0;const sT=M.swr(f0),mlT=M.ml(f0),off=M.fres-f0;
+  const rows=[];
+  if(T.trim)rows.push(["Predicted resonance",`${fF(M.fres)} MHz`,`${Math.round(off*10)>=0?"+":"−"}${fT(Math.abs(off))} MHz from target`,Math.abs(off)<f0*0.01?"good":Math.abs(off)<f0*0.04?"warn":"bad"]);
+  rows.push(["Feed at resonance",`${f0_(M.R0)} Ω`,M.feedNote,""]);
+  rows.push(["SWR at target",`${sT<50?f2(sT):"»10"} : 1`,`${mlT.toFixed(2)} dB mismatch loss`,cls(sT)]);
+  rows.push(["2:1 band",M.bwHi>M.bwLo?`${f0_(M.bwLo)}–${f0_(M.bwHi)}`:"none",M.bwHi>M.bwLo?`${((M.bwHi-M.bwLo)/M.fres*100).toFixed(1)}% of resonance`:"never under 2:1 as drawn",""]);
+  rows.push(["Pattern gain",`${M.G.toFixed(1)} dBi`,M.gainNote,""]);
+  if(T.trim)rows.push(["Trim rate",`${(1/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz/mm`,`${(M.mmPerMHz*10).toFixed(2)} mm per 10 MHz on the ${T.trim.label}`,""]);
+  for(const r of M.rows)rows.push([r[0],r[1],r[2],r[3]||""]);
+  $("ro").innerHTML=rows.map(([k,v,s,c])=>`<div><div class="k">${k}</div><div class="v ${c||""}">${v}</div><div class="s">${s}</div></div>`).join("");
+  $("score").innerHTML=`How the station will score it · ${scoreFor(T,f0)}`;
+  $("pTarget").textContent=`${fF(f0)} MHz`;const g=rig(f0);
+  const ok=f0<=2147.48;$("pRxDot").className="dot"+(ok?"":" warn");$("pRxText").textContent=`${g.label}, device 0, ${g.dc?"DC block":"10 dB pad"}${ok?"":" · rtl_power_fftw only above 2147.48"}`;
+  $("pWire").textContent=T.pill(B.p);$("lede").textContent=T.lede;
+}
+
+/* ---------- SWR chart ---------- */
+function swrChart(T,B,M){const W=640,H=300,L=44,R=12,Tp=14,Bm=34;const f0=B.f0;const mp=B.meas?B.meas.points:[];
+  let fx0=f0*0.82,fx1=f0*1.1;fx0=Math.min(fx0,M.fres-0.04*f0);fx1=Math.max(fx1,M.fres+0.04*f0);
+  for(const p of mp){fx0=Math.min(fx0,p.f);fx1=Math.max(fx1,p.f)}
+  const X=f=>L+(f-fx0)/(fx1-fx0)*(W-L-R),Y=s=>Tp+(1-Math.log10(clamp(s,1,10)))*(H-Tp-Bm);
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="SWR against frequency, predicted and measured">`;
+  for(const [n,lo,hi] of CATALOGUE){if(hi<fx0||lo>fx1)continue;s+=`<rect x="${X(Math.max(lo,fx0)).toFixed(1)}" y="${Tp}" width="${(X(Math.min(hi,fx1))-X(Math.max(lo,fx0))).toFixed(1)}" height="${H-Tp-Bm}" fill="var(--sunk)"/>`}
+  s+=`<rect x="${L}" y="${Y(2)}" width="${W-L-R}" height="${Y(1)-Y(2)}" fill="var(--sim-soft)" opacity=".55"/>`;
+  for(const v of [1,1.5,2,3,5,10]){s+=`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L-5}" y="${Y(v)+3.5}" text-anchor="end" fill="var(--muted)">${v}</text>`}
+  const span=fx1-fx0;const step=span>600?100:span>250?50:span>120?20:span>60?10:span>25?5:1;
+  for(let f=Math.ceil(fx0/step)*step;f<=fx1;f+=step){s+=`<line x1="${X(f)}" x2="${X(f)}" y1="${H-Bm}" y2="${H-Bm+4}" stroke="var(--line)"/><text x="${X(f)}" y="${H-10}" text-anchor="middle" fill="var(--muted)">${f}</text>`}
+  if(f0>=fx0&&f0<=fx1)s+=`<line x1="${X(f0)}" x2="${X(f0)}" y1="${Tp}" y2="${H-Bm}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${X(f0)+4}" y="${Tp+10}" fill="var(--muted)">target</text>`;
+  if(fx0<=2147.48&&2147.48<=fx1)s+=`<line x1="${X(2147.48)}" x2="${X(2147.48)}" y1="${Tp}" y2="${H-Bm}" stroke="var(--bad)" stroke-dasharray="2 4" opacity=".7"/>`;
+  let d="";const n=200;for(let i=0;i<=n;i++){const f=fx0+span*i/n;d+=(i?"L":"M")+X(f).toFixed(1)+","+Y(M.swr(f)).toFixed(1)}
+  s+=`<path d="${d}" fill="none" stroke="var(--sim)" stroke-width="2.2"/>`;
+  if(mp.length){let dd="",c0=null,prev="";const flush=()=>{if(dd)s+=`<path d="${dd}" fill="none" stroke="var(--accent)" stroke-width="2.2"${c0==="ok"?"":' stroke-dasharray="5 4"'}/>`;dd=""};
+    for(let i=0;i<mp.length;i++){const p=mp[i],fl=p.flag==="ok"?"ok":"at",c=X(p.f).toFixed(1)+","+Y(p.swr).toFixed(1);if(fl!==c0){flush();c0=fl;dd=(i>0?"M"+prev+"L":"M")+c}else dd+="L"+c;prev=c}flush();
+    const best=mp.filter(p=>p.flag==="ok").concat(mp).reduce((a,b)=>b.swr<a.swr?b:a);
+    s+=`<circle cx="${X(best.f)}" cy="${Y(best.swr)}" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`}
+  const fr=M.fres;if(T.trim&&fr>=fx0&&fr<=fx1)s+=`<circle cx="${X(fr)}" cy="${Y(M.swr(fr))}" r="4.5" fill="var(--sim)" stroke="var(--surface)" stroke-width="2"/>`;
+  s+=`<rect x="${L}" y="${Tp}" width="${W-L-R}" height="${H-Tp-Bm}" fill="transparent"/><line id="hoverLine" x1="0" x2="0" y1="${Tp}" y2="${H-Bm}" stroke="var(--ink)" opacity="0"/>`;
+  s+=`<text x="${W-R}" y="${H-1}" text-anchor="end" fill="var(--muted)">MHz · SWR on 50 Ω · shaded: station bands</text></svg>`;
+  $("swrChart").innerHTML=s;
+  const svg=$("swrChart").querySelector("svg"),hl=svg.querySelector("#hoverLine");
+  svg.addEventListener("mousemove",e=>{const r=svg.getBoundingClientRect();const px=(e.clientX-r.left)/r.width*W;if(px<L||px>W-R){hl.setAttribute("opacity","0");return}
+    const f=fx0+(px-L)/(W-L-R)*span;hl.setAttribute("x1",px);hl.setAttribute("x2",px);hl.setAttribute("opacity",".45");
+    let m="";if(mp.length){let best=null,bd=1e9;for(const p of mp){const dd=Math.abs(p.f-f);if(dd<bd){bd=dd;best=p}}if(best&&bd<span/60)m=` · measured ${f2(best.swr)}:1${best.flag==="ok"?"":" (at most)"}`}
+    $("hover").textContent=`${f.toFixed(span<60?1:0)} MHz · predicted ${f2(Math.min(M.swr(f),99))}:1, ${M.ml(f).toFixed(2)} dB loss${m}`});
+  svg.addEventListener("mouseleave",()=>{hl.setAttribute("opacity","0");$("hover").textContent="Move over the chart to read it."});
+}
+
+/* ---------- polar ---------- */
+function polar(T,B,M){const S_=230,c=115,Rr=92;const pat=T.pattern(B.p,B.f0,M);
+  const fn=pat.omni?a=>{const el=a>90?180-a:a<-90?-180-a:a;return pat.el(el*RAD)}:pat.dir;
+  const N=360,vals=[];let mx=0;for(let i=0;i<=N;i++){const a=-180+i;const v=fn(a);vals.push(v);mx=Math.max(mx,v)}
+  const db=vals.map(v=>10*Math.log10(Math.max(v/(mx||1),1e-6)));
+  let s=`<svg viewBox="0 0 ${S_} ${S_}" role="img" aria-label="Pattern in the vertical plane">`;
+  for(const k of [0,10,20,30]){const rr=Rr*(30-k)/30;if(rr>0)s+=`<circle cx="${c}" cy="${c}" r="${rr}" fill="none" stroke="var(--line)"/><text x="${c+3}" y="${c-rr+10}">${-k}</text>`}
+  s+=`<line x1="${c-Rr}" x2="${c+Rr}" y1="${c}" y2="${c}" stroke="var(--line)"/><line x1="${c}" x2="${c}" y1="${c-Rr}" y2="${c+Rr}" stroke="var(--line)"/>`;
+  s+=`<rect x="${c-Rr-4}" y="${c}" width="${2*Rr+8}" height="${Rr+4}" fill="var(--sunk)" opacity=".6"/>`;
+  let d="";for(let i=0;i<=N;i++){const a=(-180+i)*RAD;const rr=Rr*Math.max(0,(db[i]+30)/30);const x=c+rr*Math.cos(a),y=c-rr*Math.sin(a);d+=(d?"L":"M")+x.toFixed(1)+","+y.toFixed(1)}
+  s+=`<path d="${d}Z" fill="var(--sim-soft)" fill-opacity=".7" stroke="var(--sim)" stroke-width="1.6"/>`;
+  const right=pat.omni?"horizon":pat.bore==="out"?"forward":"horizon";
+  s+=`<text x="${c+Rr-2}" y="${c-4}" text-anchor="end">${right}</text><text x="${c}" y="${c-Rr-3}" text-anchor="middle">up</text><text x="4" y="${S_-4}">dB below peak · ${M.G.toFixed(1)} dBi peak</text>${pat.azBW?`<text x="4" y="12">${f0_(pat.azBW)}° wide in azimuth</text>`:""}</svg>`;
+  $("polar").innerHTML=s;
+  let pk=0;for(let i=0;i<=180;i++){const j=i+90;if(db[j]>db[pk+90])pk=i}
+  $("polarTitle").textContent=pat.omni?"Elevation pattern, predicted":"Vertical-plane pattern, predicted";
+  $("polarNote").textContent=pat.note(pk-90);
+}
+
+/* ---------- bands ---------- */
+function bands(T,B,M){const list=bandsFor(B.f0);
+  const rows=list.map(([n,lo,hi,note])=>{const fc=(lo+hi)/2;const sw=M.swr(fc),ml=M.ml(fc),g=M.G-ml;
+    let mrow="";if(B.meas){const near=B.meas.points.filter(p=>p.f>=lo&&p.f<=hi&&p.flag==="ok");if(near.length){const m=near.reduce((a,b)=>a+b.swr,0)/near.length;const gm=Math.min((m-1)/(m+1),0.999);mrow=`${f2(m)}:1, ${(-10*Math.log10(1-gm*gm)).toFixed(2)} dB`}}
+    return `<tr><td><b>${esc(n)}</b><div class="small muted">${esc(note)}</div></td><td class="n">${lo}–${hi}</td><td class="n"><span class="chip ${cls(sw)}">${sw<50?f2(sw):"»10"}:1</span></td><td class="n">${ml.toFixed(2)} dB</td><td class="n">${g.toFixed(1)} dBi</td><td class="n">${mrow||'<span class="muted">—</span>'}</td></tr>`});
+  $("bands").innerHTML=`<thead><tr><th>Band</th><th>MHz</th><th>SWR, predicted</th><th>Mismatch loss</th><th>Pick-up, predicted</th><th>Measured SWR, loss</th></tr></thead><tbody>${rows.join("")||'<tr><td colspan="6" class="muted">No station band within 15 percent of this target.</td></tr>'}</tbody>`;
+  const pat=T.pattern(B.p,B.f0,M);
+  $("bandsNote").textContent=`Predicted from the dimensions above. Mismatch loss is what the antenna throws away by not being 50 Ω at that frequency; pick-up is pattern gain minus that loss, for a signal arriving ${pat.omni?"near the horizon":pat.bore==="up"?"from overhead, on the axis":"on boresight"}. ${B.f0>2040?"The whip measured 2.3 dB behind the UWB on the 2110–2147 downlink; the bridge will say where this one lands.":"Bands within 15 percent of the target are shown."}`;
+}
+
+/* ---------- cut guide and plan ---------- */
+function guide(T,B,M){const f0=B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim;
+  $("guideTitle").textContent=tr?"Cut guide":"What the dip means";$("logTitle").textContent=tr?"Cut log":"Run log";$("bLog").textContent=tr?"Record this cut":"Record this run";
+  $("planNote").textContent=tr?"Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.":"Nothing on this antenna is cut to tune it. If the bridge disagrees with the page, the match or the winding sense is the first suspect, not a dimension.";
+  let verdict,cut=0,cls2="",rows=[];
+  if(!tr){const sw=B.meas?B.meas.points.filter(p=>p.flag==="ok").reduce((a,b)=>b.swr<a.swr?b:a,{swr:99}).swr:null;
+    verdict=`<b>No trim.</b> A helix has no dimension to shorten; the match strip is the only thing that reads as a dip. ${sw!=null?`Best measured SWR ${f2(sw)}:1 at ${f0_(fm)} MHz${sw<=2?": good enough, stop.":": lengthen or shorten the strip, or slide it toward the feed."}`:"Overlay the bridge's curve and read the SWR across the band rather than looking for a dip."}`;cls2=sw==null?"":sw<=2?"good":"warn";
+    rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of target`]].concat(M.guideRows||[])}
+  else{const dimNow=B.p[tr.key];const full=M.cutFor?M.cutFor(fm):dimNow*(1-ratio);
+    if(Math.abs(ratio-1)<=0.004){verdict=`<b>On target.</b> The dip is within ${fT(f0*0.004)} MHz of ${fF(f0)}. Stop cutting.`;cls2="good"}
+    else if(ratio<1){cut=full>2?0.7*full:full;verdict=`<b>Too long.</b> The dip is ${fT(f0-fm)} MHz below the target, so the ${tr.label} is about ${f1(full)} mm too long. Cut <b>${f1(cut)} mm</b> off the ${tr.label}${full>2?" now and measure again; that is 70 percent of the way, so the last step stays small":""}.`;cls2=full>5?"bad":"warn"}
+    else{verdict=`<b>Too short.</b> The dip is ${fT(fm-f0)} MHz above the target. Wire does not grow back; the fix is a new ${tr.label} about ${f1(-full)} mm longer, or accept the higher resonance (it still covers the band if the 2:1 edge reaches ${fF(f0)}).`;cls2="bad"}
+    const newD=Math.max(1,dimNow-cut);
+    rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of target`],["Full correction",`${f1(full)} mm`,`on the ${tr.label}, from 1/length scaling`],["This cut",`${f1(cut)} mm`,`${tr.label} ${f1(dimNow)} → ${f1(newD)} mm`]].concat(M.guideRows||[])}
+  $("verdict").innerHTML=verdict;$("verdict").style.borderLeftColor=cls2==="good"?"var(--good)":cls2==="warn"?"var(--warn)":cls2==="bad"?"var(--bad)":"var(--accent)";
+  $("cutRo").innerHTML=rows.map(([k,v,s])=>`<div><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+  const steps=T.plan(B.p,f0,M);
+  steps.push(`Run the antenna command below (5 minutes), then <span class="mono">marsad response</span>, and paste atlas.json into the measured box. The ${tr?"dip":"SWR curve"} fills in beside the chart.`);
+  if(tr)steps.push(`Cut what the guide says, measure again. Expect two or three rounds; at ${(1/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz per millimetre a half-millimetre is ${(0.5/M.mmPerMHz).toFixed(M.mmPerMHz>1?1:0)} MHz.`);
+  steps.push(tr?`When the dip sits within ${fT(f0*0.004)} MHz of ${fF(f0)}, stop. Record the final lengths in the log, then score it the way the Predicted panel says.`:`When the SWR is under 2:1 across the band, record it in the log and score it the way the Predicted panel says.`);
+  $("plan").innerHTML=steps.map(t=>`<li>${t}</li>`).join("");
+}
+
+/* ---------- commands ---------- */
+function logFor(id){return S.log.filter(r=>(r.antenna||"gp")===id)}
+function commands(T,B){const f0=B.f0,g=rig(f0),sw=sweep(f0);const n=logFor(T.id).length;const tag=`br-${T.id}-${T.word}${n}`;
+  const base=`.venv/Scripts/python.exe -m marsad run custom`;
+  const common=`--freq ${sw.txt} --gain ${g.gain} --integration 10 --receiver ${g.rx} --device 0 --non-interactive`;
+  const refTag=`${g.rx}-${sw.lo}-${sw.hi}`;
+  const refChain=dut=>`"${g.head(dut)} ${g.tail}"`;
+  const refs=[
+    `${base} 2m ${common} --tag br-open-check-${refTag} --chain ${refChain("open with nothing attached")} --conditions "bridge level check, RFOUT open, generator on for 10 min, notch and LaNA off the window, ${g.cond}"`,
+    `${base} 5m ${common} --skip-warmup 1 --tag br-open-${refTag} --chain ${refChain("open with nothing attached")} --conditions "bridge open reference, RFOUT open, generator on throughout, nothing touched since br-open-check-${refTag}, ${g.cond}"`,
+    `${base} 5m ${common} --skip-warmup 1 --tag br-load-${refTag} --chain ${refChain("terminated with the 50 ohm load")} --conditions "bridge load reference, 50 ohm load on RFOUT, generator on throughout, only the RFOUT port touched since br-open-${refTag}, ${g.cond}"`];
+  $("cmdRefs").textContent=refs.join("\n\n");
+  const ant=`${base} 5m ${common} --skip-warmup 1 --tag ${tag} --chain "${T.chain(B.p)} > ${g.antHead} ${g.tail}" --conditions "bridge antenna run, ${T.short.toLowerCase()} ${T.word} ${n}, held in free air on the RFOUT port, generator on throughout, only the RFOUT port touched since the last run, ${g.cond}"`;
+  $("cmdAnt").textContent=ant;
+  const resp=`.venv/Scripts/python.exe -m marsad response --open br-open-${refTag} --load br-load-${refTag} --antenna ${tag} --name "${T.short} ${fF(f0)} ${T.word} ${n}" --f0 ${fF(f0)} --rx-floor-db ${g.floor}`;
+  $("cmdResp").textContent=resp;commands.ant=ant;commands.resp=resp;
+  $("cmdNote").textContent=g.rx==="xtr"
+    ?`Above 1766 MHz only the XTR reaches, so the bridge sits on it: generator straight on RFIN, the antenna (or the open, or the 50 Ω load for the references) on RFOUT, DET through the DC block to the 3 ft coax; the 50 Ω reference is built into the board. The XTR's bias-tee is always on, so the DC block is not optional. Gain 14 and no pad put the open reference near −13 dB on this generator; the 2 minute check confirms it. Sweep ${sw.lo}–${sw.hi} MHz. The references are named for the receiver and the sweep because they serve every antenna measured on that sweep while the generator stays on.`
+    :`At ${f0_(f0)} MHz the v5 covers the sweep with no PLL gap, so the bridge goes on it: a 10 dB pad between the generator and RFIN (the v5 has less headroom than the XTR at this gain), the antenna on RFOUT, DET straight to the 3 ft coax. No DC block: the v5 has no bias-tee (0.1 mV measured). Gain 15.7 from the R860 ladder. Unplug the XTR so the v5 is device 0, or pass the index rtl_test reports. Sweep ${sw.lo}–${sw.hi} MHz. The references are named for the receiver and the sweep because they serve every antenna measured on that sweep while the generator stays on.`;
+}
+function copy(t,label){const done=()=>toast(label+" copied");if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(()=>{fallback(t);done()})}else{fallback(t);done()}}
+function fallback(t){const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy")}catch(e){}ta.remove()}
+$("bCopyAnt").onclick=()=>copy(commands.ant,"Antenna run");$("bCopyResp").onclick=()=>copy(commands.resp,"Response command");
+
+/* ---------- how it thinks ---------- */
+const COMMON_HOWTO=[["The cut.","Resonance scales as one over length. If the bridge finds the dip 100 MHz below a 2130 MHz target, the trimmed element is about 100/2130 of its length too long, and that is the cut. The bench takes 70 percent of it on any cut over 2 mm so that the last step is small and only ever goes up. Each antenna names which dimension carries the cut."],["What the models are not.","Closed forms and thin-wire approximations, not field solvers. The Antenna Atlas's Wire Lab solves the currents properly, but for wires in one plane. This page exists because the bridge measures the real antenna and the model only has to be good enough to say how far to cut, or whether to bother."],["The measurement.","Three five-minute runs through the SWR bridge with the noise generator: nothing on RFOUT (the 0 dB reference), a 50 Ω load (the bridge's own floor), then the antenna. marsad response turns them into return loss and SWR at every bin and writes the file the box above reads. Open and load serve every antenna measured on the same sweep in the same session as long as the generator stays on."]];
+function howto(T){$("howto").innerHTML=T.howto.concat(COMMON_HOWTO).map(([b,t])=>`<p><b>${esc(b)}</b> ${esc(t)}</p>`).join("")}
+
+/* ---------- measured import ---------- */
+function measParse(text){let o;try{o=JSON.parse(text)}catch(e){throw new Error("That is not JSON. Paste the whole atlas.json file.")}
+  if(!o||!Array.isArray(o.points))throw new Error("No points list in it. The file should be the atlas.json that marsad response writes.");
+  let pts=o.points.map(p=>{const f=+p.f,rl=+p.rl;let swr=+p.swr;if(!(swr>=1)&&isFinite(rl)){const g=Math.pow(10,-Math.max(rl,0)/20);swr=g<0.999?(1+g)/(1-g):99}return {f,swr:Math.min(Math.max(swr,1),99),flag:p.flag==="at-least"?"at-least":"ok"}}).filter(p=>isFinite(p.f)&&p.f>0&&isFinite(p.swr)).sort((a,b)=>a.f-b.f);
+  if(pts.length<2)throw new Error("Fewer than two usable points in it.");
+  if(pts.length>900){const n=pts.length,keep=new Set();for(let i=0;i<n;i+=n/800)keep.add(Math.floor(i));let bi=0;pts.forEach((p,i)=>{if(p.flag==="ok"&&p.swr<pts[bi].swr)bi=i});keep.add(bi);keep.add(n-1);pts=pts.filter((p,i)=>keep.has(i))}
+  return {name:String(o.name||"measured").slice(0,80),when:String(o.when||"").slice(0,40),points:pts}}
+function measSet(m){const B=cur();B.meas=m;$("bClear").hidden=!m;
+  if(m){const ok=m.points.filter(p=>p.flag==="ok");const best=(ok.length?ok:m.points).reduce((a,b)=>b.swr<a.swr?b:a);B.dip=Math.round(best.f);B.dipFromMeas=true}
+  else B.dipFromMeas=false;
+  render()}
+function measNoteText(B){const m=B.meas;if(!m)return "Nothing measured yet. The model alone is a guide to the first cut, never to the last.";
+  const ok=m.points.filter(p=>p.flag==="ok");const best=(ok.length?ok:m.points).reduce((a,b)=>b.swr<a.swr?b:a);
+  return `${m.name}${m.when?" · "+m.when.slice(0,16).replace("T"," "):""} · best ${f2(best.swr)}:1 at ${best.f.toFixed(0)} MHz · ${m.points.length} points`}
+$("bOverlay").onclick=()=>{const t=$("measText").value.trim();if(!t){toast("Paste the atlas.json text first, or open the file.");return}try{measSet(measParse(t));$("measText").value="";toast("Measured curve drawn")}catch(e){toast(e.message)}};
+$("bFile").onclick=()=>$("measFile").click();
+$("measFile").onchange=()=>{const f=$("measFile").files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{measSet(measParse(String(r.result)));toast("Measured curve drawn")}catch(e){toast(e.message)}};r.readAsText(f);$("measFile").value=""};
+$("bClear").onclick=()=>measSet(null);
+
+/* ---------- cut log (db) ---------- */
+let db=null;
+function dimsText(r){const id=r.antenna||"gp";const T=TYPES[id];let dims=r.dims;
+  if(!dims&&id==="gp")dims={h:r.vertical_mm,r:r.radial_mm,droop:r.droop};
+  if(!dims||!T)return "—";
+  return T.knobs.filter(k=>dims[k[0]]!=null).map(k=>{const v=dims[k[0]];const dec=k[5];return `${esc(k[1].split(",")[0].toLowerCase())} ${typeof v==="number"?(dec?v.toFixed(dec):Math.round(v)):esc(v)}${k[6]&&k[6]!=="°"?" "+k[6]:k[6]||""}`}).join(" · ")}
+function renderLog(){const T=T_();const el=$("logBody");const mine=logFor(T.id);const other=S.log.length-mine.length;
+  $("logFilter").textContent=`Showing the ${T.short} entries${other?`; ${other} other ${other===1?"entry belongs to another antenna and appears":"entries belong to other antennas and appear"} when selected`:""}.`;
+  if(!mine.length){el.innerHTML=`<div class="empty">No ${T.word}s recorded yet for this antenna. Each entry keeps every dimension, the target, the measured dip and a note, so the whole trim is reproducible. Press "Record this ${T.word}" after each measurement.</div>`;return}
+  el.innerHTML=`<table><thead><tr><th>#</th><th>When</th><th>Dimensions</th><th>Target</th><th>Measured dip</th><th>Best SWR</th><th>Note</th><th></th></tr></thead><tbody>${mine.map((r,i)=>`<tr><td class="n">${i}</td><td class="n">${esc(String(r.when||"").slice(0,16).replace("T"," "))}</td><td class="small">${dimsText(r)}</td><td class="n">${esc(r.f0)}</td><td class="n">${r.dip_mhz?esc(r.dip_mhz)+" MHz":"—"}</td><td class="n">${r.swr?f2(+r.swr)+":1":"—"}</td><td>${esc(r.note||"")}</td><td>${db&&r.id?`<button class="btn sm" data-del="${esc(r.id)}" type="button">Delete</button>`:""}</td></tr>`).join("")}</tbody></table>`}
+$("logBody").addEventListener("click",async e=>{const b=e.target.closest("[data-del]");if(!b||!db)return;if(!b.dataset.armed){b.dataset.armed="1";b.textContent="Confirm";setTimeout(()=>{delete b.dataset.armed;b.textContent="Delete"},3000);return}
+  try{await db.doc("cuts/"+b.dataset.del).delete();toast("Deleted")}catch(err){toast("Delete failed.")}});
+$("bLog").onclick=async()=>{const T=T_(),B=cur();let swr=null;if(B.meas){const ok=B.meas.points.filter(p=>p.flag==="ok");if(ok.length)swr=+ok.reduce((a,b)=>b.swr<a.swr?b:a).swr.toFixed(2)}
+  const row={when:new Date().toISOString(),antenna:T.id,dims:{...B.p},f0:B.f0,dip_mhz:B.dipFromMeas||$("nDip").value?B.dip:null,swr,note:$("logNote").value.trim()};
+  if(T.id==="gp"){row.vertical_mm=B.p.h;row.radial_mm=B.p.r;row.droop=B.p.droop}
+  if(db){try{await db.collection("cuts").add(row);$("logNote").value="";toast("Recorded")}catch(err){toast(err?.code==="quota_exceeded"?"Storage is full. Delete an old entry first.":"Couldn't save. You may only have view access.")}}
+  else{S.log.push(row);$("logNote").value="";renderLog();commands(T,B);toast("Recorded for this visit only")}};
+
+/* ---------- render ---------- */
+function render(){const T=T_(),B=cur();const M=T.model(B.p,B.f0);sync();
+  const dr=T.draw(B.p,B.f0,M);const svg=$("draw");svg.setAttribute("viewBox",`0 0 520 ${dr.h}`);svg.innerHTML=dr.svg;$("drawNote").textContent=T.drawNote;
+  readouts(T,B,M);swrChart(T,B,M);polar(T,B,M);bands(T,B,M);guide(T,B,M);commands(T,B);howto(T);renderLog();
+  $("bClear").hidden=!B.meas;$("measNote").textContent=measNoteText(B)}
+buildKnobs();render();
+
+(async()=>{const Cl=window.claude;if(!Cl?.use){$("logStatus").textContent="Saving needs the claude.ai viewer; entries made here last for this visit.";return}
+  const d=await Cl.use("db");if(!d){$("logStatus").textContent="Sign in to keep the cut log.";return}
+  db=d;$("logStatus").textContent="Saved with the page.";
+  d.collection("cuts").onSnapshot(snap=>{S.log=snap.docs.map(x=>({...x.data(),id:x.id})).sort((a,b)=>String(a.when).localeCompare(String(b.when)));renderLog();commands(T_(),cur())},()=>{$("logStatus").textContent="Cut log unavailable right now."});
+})();
+})();
+</script>

@@ -2061,6 +2061,27 @@ URL. It is the intended way to compose a scan:
 - Warns on the 2^31 ceiling, the PLL gap, a sub-retune-floor `-i`, a hop centre landing on a
   target frequency, non-standard crop/FIR, and a terminated run whose tag does not say so.
 
+`tools/antenna_bench.html` - the Antenna Bench, published as an Artifact at
+https://claude.ai/artifact/7R4r7UGerUnrjahnaUHqCJ (2026-10-22; it grew out of the Ground Plane Trim
+Bench the same day). Redeploy by publishing that file to the same URL. One page, eight antenna
+types behind a picker: quarter-wave ground plane (the default, model unchanged), coaxial collinear,
+biquad with reflector, axial-mode helix, 137 MHz V-dipole, can antenna, 5-element Yagi and the
+station's own 60 mm whips. For each: dimensions from the target frequency, a to-scale drawing, a
+closed-form SWR model (said plainly in "How the bench thinks"), elevation pattern with azimuth
+beamwidth for the directional ones, the station bands within 15 percent of the target, a cut guide
+that names the dimension to trim and its mm-per-MHz, and the `marsad run` / `marsad response`
+commands with full `--chain` and `--conditions`. **The receiver follows the frequency:** above
+1766 MHz the XTR at gain 14 behind the DC block (`--rx-floor-db -38.1`); at or below it the v5 at
+gain 15.7 with a 10 dB pad between generator and RFIN and no DC block (`--rx-floor-db -35.9`). The
+open and load references are tagged by receiver and sweep (`br-open-xtr-1811-2148`) because they
+serve every antenna measured on that sweep. A "how the station will score it" line per target:
+ADS-B by `adsb_check.py` DF17/min against the whip's 1856, 2.1 GHz by the within-run plateau on the
+2049 tile (whip +5.8, UWB +8.0), the helix by Iridium occupancy on a 1600-1701 tile, the Yagi by the
+radar on `burst23`, the V-dipole by a 137 MHz survey. The cut log (artifact db collection `cuts`)
+carries an `antenna` field and a `dims` snapshot; entries without one read as ground plane; the view
+filters by the selected type. Measured overlay from `marsad response` atlas.json works for every
+type. The Antenna Atlas is a separate artifact and is not touched by this page.
+
 `tools/spur_stats.py` - the pre-registered statistic for comparing configurations: mean level
 of a harmonic family above the whole-band median, and for two runs the **paired** difference
 with its standard error. Pairing cancels the large line-to-line spread and leaves only what
