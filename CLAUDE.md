@@ -898,6 +898,57 @@ than anything received. **Nothing real above 2155**: all four detections are hop
 Note: the report header says "90 L, whips 60 mm" for this run. It is the known stale-header
 problem of `--non-interactive` runs; `chain_order` (UWB biconical) is the truth.
 
+### Block H1, the fftw scale check (2026-10-22, 21:46-22:01): the 3.3 dB was the sample rate
+
+Pre-registered in RUNSHEET Block H1. Four 2 min runs back to back, rig untouched, UWB on the
+standing chain, g29, PCS downlink 1930-1990 MHz: A rtl_power 50k, B rtl_power_fftw `-b 64` at
+**2.758620 MS/s** (the rate rtl_power picks for this span, giving **43.1034 kHz bins and 29 hops,
+identical to A**), C rtl_power_fftw `-b 64` at 2.4 MS/s (this morning's setting), D = A again.
+Logs confirm both rates; no dropped samples.
+
+**The bracket failed over the whole block and held where it mattered.** D read 1.45 dB below A
+overall, against a 0.3 dB limit. Sweep by sweep the drop is entirely in **1950-1990** (A -24.3
+to -25.8, D -26.2 to -27.3, flat inside each run), while **1930-1950 did not move** (D-A -0.01
+and -0.18 dB). The rig was untouched, the lower carriers held and the upper ones fell together:
+the network shedding load at 22:00, not the station. So the verdict is read on 1930-1950, where
+the bracket holds, and checked against the mean of A and D over the rest.
+
+| 10 MHz block | D - A | B - A | C - A | C - B |
+|---|---|---|---|---|
+| **1930-1940** | **-0.01** | **-29.87** | **-26.16** | **+3.71** |
+| **1940-1950** | **-0.18** | **-29.62** | **-26.30** | **+3.33** |
+| 1950-1990, against mean(A,D) | -1.4 to -2.0 | -29.5 to -30.4 | -22.8 to -26.0 | +4.1 to +6.9 |
+| whole block, against mean(A,D) | -1.45 | **-29.93** | **-25.48** | +4.46 |
+
+**Against the predictions:**
+
+- B - A, matched rate and identical bins: **-29.6 to -29.9 dB** in the stable blocks, model
+  **-30.1**. Within 0.5 dB, and the 3.3 dB discrepancy is gone. **The two programs agree with
+  their source code once the dongle runs at the same rate.**
+- C - A reproduces this morning's **-26.2** to 0.1 dB (-26.16, -26.30). Nothing changed today.
+- C - B, inside one engine where the model says 0: **+3.3 to +3.7 dB**. The dongle delivers about
+  3.5 dB more per Hz at 2.4 MS/s than at 2.7586 MS/s, for the same signal. That is the whole of
+  the morning's discrepancy, now measured directly rather than inferred.
+- 1950-1990 is noisier (C - B up to +6.9 at 1980-1990) because that half was changing under the
+  runs; it is consistent with the stable blocks once A and D are averaged, but it decides nothing.
+
+**What it means.** The engines are fine; the **sample rate changes the level the dongle hands
+over**, by about 3.5 dB between 2.4 and 2.7586 MS/s on the XTR at 1.93 GHz, g29. Somewhere in
+the RTL2832U's decimation or the E4000's rate-dependent IF filter, which librtlsdr sets from the
+sample rate - which one is not settled and does not need to be. The working rules:
+
+- **rtl_power_fftw at 2.758620 MS/s reads rtl_power's 50k scale minus ~29.8 dB** (the model's
+  10*log10(64) - 48.2 = -30.1, plus ~0.3 measured). At 2.4 MS/s it is minus ~26.2. Measured
+  only at 1.93 GHz, g29, XTR.
+- **Never compare two fftw runs at different sample rates on level**, even with the same bin
+  width. The fingerprint already carries `r2.4M` / `r2.76M`, so `compare` refuses them; this is
+  the measured reason it must.
+- Where a run has to be laid beside rtl_power data, use **2.758620 MS/s and `-b 64`** over the
+  same span: the hop plan and bin width then match rtl_power's exactly.
+
+Untested: whether the 3.5 dB is the same at other frequencies or gains. A noise-generator pair at
+2.4 and 2.7586 MS/s on a flat input would show the rate effect across the whole band in two runs.
+
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
 The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and

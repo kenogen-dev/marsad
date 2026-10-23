@@ -385,6 +385,15 @@ at 2.7586 MS/s. Four 2 min runs back to back, same chain, g29, PCS downlink 1930
 
 Read with block medians by hand (`compare-runs` refuses a cross-engine pair by design).
 
+**DONE 21:46-22:01. Answer: the sample rate.** Read on 1930-1950, where A and D agree to 0.2 dB
+(1950-1990 fell 1.4-2.0 dB between A and D as the network shed load at 22:00):
+**B - A -29.6 to -29.9** (model -30.1), **C - A -26.2/-26.3** (morning -26.2), **C - B +3.3 to
++3.7**. The dongle hands over ~3.5 dB more per Hz at 2.4 MS/s than at 2.7586. Never compare fftw
+levels across sample rates; to sit beside rtl_power data use `-b 64 --rate 2758620`. Full table
+in CLAUDE.md "Block H1".
+
+### H2. 1633.47 MHz at 1.17 kHz bins, then the 10 dB pad - NEXT
+
 ---
 
 ## Rules that apply to every run
