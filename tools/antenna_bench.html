@@ -128,6 +128,13 @@ details[open]>summary{margin-bottom:.6rem}
 .ro.tight .v{font-size:.98rem}
 .measgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
 @media (max-width:700px){.measgrid{grid-template-columns:1fr}}
+.zbox{position:relative;overflow:hidden}
+.zbox svg{user-select:none;-webkit-user-select:none}
+.zbox.dragging svg{cursor:grabbing!important}
+.zbar{position:absolute;top:6px;right:6px;display:flex;gap:4px;align-items:center}
+.zbar button{width:26px;height:26px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font-family:var(--f-mono);font-size:.9rem;line-height:1;cursor:pointer;padding:0}
+.zbar button:hover{border-color:var(--accent)}
+.zbar span{font-family:var(--f-mono);font-size:.66rem;color:var(--muted);background:var(--surface);border-radius:4px;padding:1px 5px;opacity:.9}
 .solve{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
 .solve table{min-width:0;font-size:.82rem}
 .solve th,.solve td{padding:.3rem .35rem}
@@ -172,7 +179,7 @@ details[open]>summary{margin-bottom:.6rem}
     <div class="panel">
       <div class="row" style="justify-content:space-between;align-items:baseline"><h2>As built, and what it predicts</h2><span class="note">drawn to scale · numbers follow the knobs</span></div>
       <div class="live" style="margin-top:8px">
-        <div><div class="drawing"><svg id="draw" viewBox="0 0 520 360" role="img" aria-label="Drawing of the antenna with element lengths"></svg></div><p class="note" style="margin-top:6px" id="drawNote"></p></div>
+        <div><div class="drawing zbox" id="drawBox"><svg id="draw" viewBox="0 0 520 360" role="img" aria-label="Drawing of the antenna with element lengths"></svg></div><p class="note" style="margin-top:6px" id="drawNote"></p></div>
         <div class="ro tight" id="ro"></div>
       </div>
       <div class="score" id="score"></div>
@@ -212,7 +219,7 @@ details[open]>summary{margin-bottom:.6rem}
     </div>
     <div class="panel polar">
       <h2 id="polarTitle">Elevation pattern, predicted</h2>
-      <div id="polar" style="margin-top:10px"></div>
+      <div class="zbox" id="polarBox" style="margin-top:10px"><div id="polar"></div></div>
       <p class="note" id="polarNote"></p>
     </div>
   </div>
@@ -1061,7 +1068,7 @@ function polar(T,B,M){const S_=230,c=115,Rr=92;const pat=T.pattern(B.p,B.f0,M);
   s+=`<path d="${d}Z" fill="var(--sim-soft)" fill-opacity=".7" stroke="var(--sim)" stroke-width="1.6"/>`;
   const right=pat.omni?"horizon":pat.bore==="out"?"forward":"horizon";
   s+=`<text x="${c+Rr-2}" y="${c-4}" text-anchor="end">${right}</text><text x="${c}" y="${c-Rr-3}" text-anchor="middle">up</text><text x="4" y="${S_-4}">dB below peak · ${M.G.toFixed(1)} dBi peak</text>${pat.azBW?`<text x="4" y="12">${f0_(pat.azBW)}° wide in azimuth</text>`:""}</svg>`;
-  $("polar").innerHTML=s;
+  $("polar").innerHTML=s;zoomApply("polarBox");
   let pk=0;for(let i=0;i<=180;i++){const j=i+90;if(db[j]>db[pk+90])pk=i}
   $("polarTitle").textContent=pat.omni?"Elevation pattern, predicted":"Vertical-plane pattern, predicted";
   $("polarNote").textContent=pat.note(pk-90);
@@ -1165,9 +1172,42 @@ $("bLog").onclick=async()=>{const T=T_(),B=cur();let swr=null;if(B.meas){const o
   if(db){try{await db.collection("cuts").add(row);$("logNote").value="";toast("Recorded")}catch(err){toast(err?.code==="quota_exceeded"?"Storage is full. Delete an old entry first.":"Couldn't save. You may only have view access.")}}
   else{S.log.push(row);$("logNote").value="";renderLog();commands(T,B);toast("Recorded for this visit only")}};
 
+/* ---------- zoom and pan on the drawing and the pattern ---------- */
+// Each view is a zoom factor and a centre in the picture's own units, so it survives the re-render every knob causes.
+// Drag pans; pinch or Ctrl+wheel zooms about the pointer (a trackpad pinch arrives as Ctrl+wheel); double-click zooms in,
+// Shift+double-click out; the buttons work everywhere. A plain wheel still scrolls the page, and so does a touch at 1×.
+const VIEW={};
+const svgIn=id=>$(id).querySelector("svg");
+function zoomBase(svg){if(!svg.dataset.base)svg.dataset.base=svg.getAttribute("viewBox");return svg.dataset.base.split(/[\s,]+/).map(Number)}
+function zoomApply(id){const svg=svgIn(id),v=VIEW[id];if(!svg||!v)return;const [x,y,w,h]=zoomBase(svg);
+  if(v.k<=1.001){v.k=1;v.cx=x+w/2;v.cy=y+h/2}
+  const vw=w/v.k,vh=h/v.k;v.cx=clamp(v.cx,x+vw/2,x+w-vw/2);v.cy=clamp(v.cy,y+vh/2,y+h-vh/2);
+  svg.setAttribute("viewBox",`${(v.cx-vw/2).toFixed(2)} ${(v.cy-vh/2).toFixed(2)} ${vw.toFixed(2)} ${vh.toFixed(2)}`);
+  svg.style.touchAction=v.k>1?"none":"pan-x pan-y";svg.style.cursor=v.k>1?"grab":"zoom-in";
+  const bar=$(id).querySelector(".zbar");bar.querySelector("span").textContent=v.k>1?`${v.k.toFixed(1)}×`:"pinch or +";bar.querySelector("[data-z=r]").disabled=v.k===1}
+function zoomAt(id,f,px,py){const v=VIEW[id];const k2=clamp(v.k*f,1,8);if(px!=null){v.cx=px-(px-v.cx)*v.k/k2;v.cy=py-(py-v.cy)*v.k/k2}v.k=k2;zoomApply(id)}
+function zoomInit(id){const box=$(id);VIEW[id]={k:1,cx:0,cy:0};
+  box.insertAdjacentHTML("beforeend",`<div class="zbar"><span></span><button type="button" data-z="i" title="Zoom in" aria-label="Zoom in">+</button><button type="button" data-z="o" title="Zoom out" aria-label="Zoom out">−</button><button type="button" data-z="r" title="Back to the whole picture" aria-label="Reset zoom">⟲</button></div>`);
+  box.querySelector(".zbar").addEventListener("click",e=>{const b=e.target.closest("[data-z]");if(!b)return;const z=b.dataset.z;if(z==="r"){VIEW[id].k=1;zoomApply(id)}else zoomAt(id,z==="i"?1.5:1/1.5)});
+  const pt=(svg,e)=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse())};
+  box.addEventListener("wheel",e=>{const svg=svgIn(id);if(!(e.ctrlKey||e.metaKey)||!svg||!svg.contains(e.target))return;e.preventDefault();const p=pt(svg,e);zoomAt(id,Math.exp(-e.deltaY*0.0025),p.x,p.y)},{passive:false});
+  box.addEventListener("dblclick",e=>{const svg=svgIn(id);if(!svg||!svg.contains(e.target))return;const p=pt(svg,e);zoomAt(id,e.shiftKey?0.5:2,p.x,p.y)});
+  const ptr=new Map();let last=null;
+  box.addEventListener("pointerdown",e=>{const svg=svgIn(id);if(!svg||!svg.contains(e.target))return;
+    // at 1× a lone touch belongs to the page's scroll; a mouse has nothing to pan yet
+    if(VIEW[id].k<=1&&ptr.size===0&&e.pointerType!=="touch")return;
+    ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});if(VIEW[id].k>1||ptr.size>1){svg.setPointerCapture(e.pointerId);box.classList.add("dragging")}last=null});
+  box.addEventListener("pointermove",e=>{if(!ptr.has(e.pointerId))return;const svg=svgIn(id),v=VIEW[id];const prev=ptr.get(e.pointerId);ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(ptr.size===1){if(v.k<=1)return;const upp=1/svg.getScreenCTM().a;v.cx-=(e.clientX-prev.x)*upp;v.cy-=(e.clientY-prev.y)*upp;zoomApply(id);return}
+    const [a,b]=[...ptr.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(last){const m=pt(svg,{clientX:(a.x+b.x)/2,clientY:(a.y+b.y)/2});zoomAt(id,d/last,m.x,m.y)}last=d});
+  const up=e=>{ptr.delete(e.pointerId);last=null;if(!ptr.size)box.classList.remove("dragging")};
+  box.addEventListener("pointerup",up);box.addEventListener("pointercancel",up)}
+zoomInit("drawBox");zoomInit("polarBox");
+$("type").addEventListener("change",()=>{for(const id in VIEW){VIEW[id].k=1;zoomApply(id)}});
+
 /* ---------- render ---------- */
 function render(){const T=T_(),B=cur();const M=T.model(B.p,B.f0);sync();
-  const dr=T.draw(B.p,B.f0,M);const svg=$("draw");svg.setAttribute("viewBox",`0 0 520 ${dr.h}`);svg.innerHTML=dr.svg;$("drawNote").textContent=T.drawNote;
+  const dr=T.draw(B.p,B.f0,M);const svg=$("draw");svg.dataset.base=`0 0 520 ${dr.h}`;svg.innerHTML=dr.svg;zoomApply("drawBox");$("drawNote").textContent=T.drawNote;
   readouts(T,B,M);swrChart(T,B,M);polar(T,B,M);bands(T,B,M);guide(T,B,M);commands(T,B);howto(T);renderLog();renderSolve(T,B);
   $("bClear").hidden=!B.meas;$("measNote").textContent=measNoteText(B)}
 buildKnobs();render();
