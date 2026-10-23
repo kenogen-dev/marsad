@@ -858,9 +858,13 @@ Pass check on the meter, nothing connected: OUT centre to shell ~100 ohm, Input 
 Input to DUT ~50, REF to DUT ~100. **Pass check on the radio, pre-registered:** DUT open near
 -2 dB at 1.3 GHz at g14, and both-open at least 25 dB below that. Until both pass, `marsad
 response` has nothing valid to work on and no antenna has a return-loss figure. **The unit was
-returned on 2026-10-22 without being rewired, and a replacement is ordered.** The meter and radio
-pass checks above apply to the replacement before any antenna run; the rewire diagram stays in
-`decoders/` in case it arrives with the same fault.
+returned on 2026-10-22 without being rewired, and a replacement is ordered.** *Corrected
+2026-10-23:* the replacement is a **three-port** "SWR Bridge 10-3000 MHz" (RFIN, RFOUT, DET, 50
+ohm reference built in), so the four-port meter checks and the "both ports open" test above do
+not apply to it. Its checks are in RUNSHEET Block G: meter RFIN-RFOUT ~50, RFIN-shell ~100,
+DET-RFOUT ~0, DET centre-shell 50-100 and never 0; on the radio, RFOUT open near -2 dB at 1.3 GHz
+at g14 and the load 25 dB or more below it. The rewire diagram stays in `decoders/` for the
+record.
 
 Incidental: 1850-2147 at 25k reads ~3 dB below the LS-range run at 50k in the overlap. That is
 rtl_power's 128- against 64-point FFT, the -3.0 dB step in the fftw characterisation, not the

@@ -344,13 +344,22 @@ whether it was a one-off. station.json carries the standing chain again.
 The bridge as shipped had its detector leads shorted (OUT centre to shell 0.3 ohm, should be
 ~100). Every run on 2026-10-22 measured leakage: DUT open read ~25 dB too low, and both ports
 open read 8-10 dB *louder* than one loaded. **Returned 2026-10-22, not rewired; a replacement is
-ordered.** When it arrives, before it touches the radio:
+ordered.** *Corrected 2026-10-23:* the replacement is a **different, three-port board**
+("SWR Bridge 10-3000 MHz": RFIN, RFOUT, DET, 50 ohm reference built in), due 2026-10-24. The
+four-port checks written here first (OUT/REF/DUT, "both ports open") do not apply to it. When it
+arrives, before it touches the radio:
 
-1. **Meter check, nothing connected:** OUT centre to shell ~100 ohm, Input to REF ~50, Input to
-   DUT ~50, REF to DUT ~100. A new unit can arrive with the same fault, so this is not optional.
-2. **Radio check, g14, no pad:** DUT open near **-2 dB at 1.3 GHz**; both open **25 dB or more
-   below** that. Fail either one and stop.
-3. Only then the three `marsad response` runs (`open`, `load`, `antenna`), whip first, UWB second.
+1. **Meter check, nothing connected:** RFIN centre to RFOUT centre ~50 ohm; RFIN centre to shell
+   ~100; DET centre to RFOUT centre ~0; DET centre to DET shell 50-100, **never 0** (0 is the
+   first board's short). A new unit can arrive with the same fault, so this is not optional.
+2. **Rig:** generator (on 10 min first) on RFIN; RFOUT open, loaded or on the antenna; DET > DC
+   block > 3 ft coax > cage. XTR g14, no pad, no notch or LaNA.
+3. **Radio check:** RFOUT open reads near **-2 dB at 1.3 GHz** on the full LS span at g14 (same
+   fingerprint as `nsrc-D14-LS`); RFOUT on the 50 ohm load reads **25 dB or more below** open
+   (that gap is the bridge's directivity). Fail either and stop.
+4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
+   generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
+   dB pad, no DC block, `--rx-floor-db -35.9`).
 
 Also from 2026-10-22: `top` on the UWB locked all 22 hops to 2186.7 MHz in the evening, where
 the morning run dropped everything above 2171.5. The cold/warm PLL test is still owed.
@@ -444,6 +453,42 @@ minutes), but B held the line in all 59 spectra at 4.6-11.5 dB over the floor, w
 intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, and also fits partial
 entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
 probe. Full table in CLAUDE.md "Block H2".
+
+### H3. Cold-start top edge (pre-registered 2026-10-23, 11:20)
+
+XTR idle (powered, not streaming) since 23:18 the night before, 12 h. Cold `rtl_test -t` at
+11:18: **E4K range 52 to 2186 MHz, gap 1094-1239** - the 2026-10-13 cold figure (2187) to within
+`rtl_test`'s 1 MHz search step. Then straight into `top 1h` (rtl_power_fftw, 22 hops, 2147-2187,
+g29), the same settings as `uwb-first`, then `rtl_test -t` again, warm.
+
+Predictions, from the pass-by-pass reading of `uwb-first` (2026-10-22 18:45):
+
+- **All 22 hops lock on the first pass**, top centre 2185.80 MHz.
+- **The top hops drop out from the top down and do not come back**: 2185.80 within the first
+  ~5 passes (2 min), 2180.43 by ~15 min, 2173.27 by ~45 min (+/- 50% on each time).
+- **2171.48 MHz holds for the whole hour.**
+- **Warm `rtl_test -t` afterwards reports a top of 2175 MHz or lower**, against 2186 cold.
+
+A hop that drops and later re-locks refutes "a smooth thermal slide" and points at marginal
+locking. If the curve starts already lower than `uwb-first`'s, idle-powered is not "cold".
+
+### H4. UWB reference on the LS fingerprint, 2 h (pre-registered 2026-10-23, 11:20)
+
+`custom 2h --freq 1241M:2148M:50k --gain 29 --integration 120 --skip-warmup 16`, the standard
+LS antenna fingerprint (`1241.000-2147.484 MHz | 43.7154 kHz | g29 | i120 | ...`), so the UWB
+sits beside 21 archived runs including the 60 mm whip on today's chain (`xtr-casc5-antenna-g29`
+2026-10-19 evening, `window-A1/A2-inside` 2026-10-20 morning). Chosen over a 1847-2148 tile
+because a tile would match nothing.
+
+Read on **within-run plateaus** (block median minus the run's own empty 2049-2099 block, the
+digital floor), because the runs are at different hours:
+
+- **AWS downlink 2124-2147: UWB at least 1.5 dB above the whip runs** (the 2049 deep tile gave
+  +1.8 to +2.3 at g42).
+- **PCS downlink 1930-1990: UWB at least 1.0 dB above** the whip.
+- **1241-1341: within +/-2 dB of the whip** - the 60 mm whips are near quarter-wave resonance
+  there, so the UWB has no advantage to show.
+- 1799.98 MHz is not used (retired as a yardstick 2026-10-20).
 
 ---
 
