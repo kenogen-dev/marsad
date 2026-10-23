@@ -21,6 +21,14 @@
       "runtimeArgs": ["-m", "marsad", "live", "--port", "8742"],
       "port": 8742,
       "autoPort": false
+    },
+    {
+      "name": "live-view-fftw",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-m", "marsad", "live", "--port", "8743", "--exit-after-idle", "5",
+                      "--csv", "surveys/survey_top_1h_uwb-first_20261022-1845.dat", "--pin"],
+      "port": 8743,
+      "autoPort": false
     }
   ]
 }

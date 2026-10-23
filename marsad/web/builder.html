@@ -188,6 +188,7 @@ tbody tr.now { background: var(--accent-soft); }
 tbody tr.now td { color: var(--trace); font-weight: 600; }
 .scroll { overflow-x: auto; }
 footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
+[hidden]{display:none !important}
 </style></head><body>
 <div class="wrap">
 <header>
@@ -227,17 +228,33 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
     <div class="ph"><h2>Recording settings</h2><span class="badge lock">Locks comparability</span></div>
     <p class="sub">Change any of these and this run can only be compared with other runs that
     share the same values. <code>marsad compare</code> refuses to treat them as equivalent.</p>
-    <div class="row">
-      <div class="f"><label for="bin">Bin kHz</label><input type="number" id="bin" step="0.1" min="0.1"></div>
+    <div class="row" style="margin-bottom:10px">
+      <div class="f"><label for="engine">Engine</label>
+        <select id="engine"><option value="rtl_power">rtl_power</option><option value="rtl_power_fftw">rtl_power_fftw</option></select></div>
       <div class="f"><label for="gain">Gain dB</label><select id="gain"></select></div>
+    </div>
+    <div class="row" id="rowRp">
+      <div class="f"><label for="bin">Bin kHz</label><input type="number" id="bin" step="0.1" min="0.1"></div>
       <div class="f"><label for="integ">Integration s</label><input type="number" id="integ" min="1" step="1"></div>
+      <div class="f"><label for="fir">FIR</label><input type="number" id="fir" step="1" min="0" max="9"></div>
+    </div>
+    <div class="row" id="rowFftw" hidden>
+      <div class="f"><label for="fbins">FFT bins</label>
+        <select id="fbins"><option>64</option><option>128</option><option>256</option><option>512</option><option>1024</option><option>2048</option><option>4096</option><option>8192</option></select></div>
+      <div class="f"><label for="ftime">Seconds per hop</label><input type="number" id="ftime" step="any" min="0.01"></div>
+      <div class="f"><label for="frate">Rate MS/s</label><input type="number" id="frate" step="0.001" min="0.25" max="3.2"></div>
+      <div class="f"><label for="fover">Overlap %</label><input type="number" id="fover" step="1" min="0" max="90"></div>
     </div>
     <div class="row" style="margin-top:10px">
       <div class="f"><label for="crop">Crop</label><input type="number" id="crop" step="0.05" min="0" max="0.45"></div>
-      <div class="f"><label for="fir">FIR</label><input type="number" id="fir" step="1" min="0" max="9"></div>
     </div>
-    <p class="hint">Crop and FIR are 0.25 and 9 by station convention. Every archived survey uses
+    <p class="hint" id="hintRp">Crop and FIR are 0.25 and 9 by station convention. Every archived survey uses
     them; changing either orphans this run.</p>
+    <p class="hint" id="hintFftw" hidden>rtl_power_fftw has no crop of its own: the recorder asks for an overlap of
+    100 × crop between hops and the analyser drops that share from each hop's edges, so the kept
+    parts still tile. Its dB are a power spectral density on its own scale, about 26 dB below
+    rtl_power's 50 kHz scale at 2.4 MS/s (measured 2026-10-22); a run from one engine is never
+    comparable with the other, and the fingerprint says which engine it was.</p>
     <div class="fp"><span style="color:var(--dim)">fingerprint</span><br><span id="fp"></span></div>
   </section>
 
@@ -288,7 +305,7 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
 </div>
 
 <section class="panel">
-  <div class="ph"><h2>What rtl_power will do</h2><span class="badge free">Derived</span></div>
+  <div class="ph"><h2 id="whatH">What rtl_power will do</h2><span class="badge free">Derived</span></div>
   <dl class="read" id="read"></dl>
   <div style="margin-top:13px">
     <div style="font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)">One sweep</div>
@@ -376,6 +393,8 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
 // assigned in boot(). Different tuners have different gain ladders, and librtlsdr
 // silently snaps to the nearest step, so the dropdown only ever offers real ones.
 let RTL_MAX = 2.8e6, RETUNE = 0.047, CEIL = 2147.483648, CMD = "marsad run";
+let FFTW = { retune_ms: 59, read_ms: 16, base_buf: 16384, buf_bytes: 1638400, default_rate: 2400000, default_bins: 128, default_time: 1, default_crop: 0.25, scale_offset_db: -26.2 };
+const isFftw = () => $("engine").value === "rtl_power_fftw";
 let GAINS = {}, LIMITS = {}, DEVICES = {}, GAPS = {}, RXLABEL = {};
 let PRESETS = {}, PRESET_ORDER = [], KNOWN = [], CHAIN_BASE = [], SDR_BASE = {}, CHAIN_OFF = {}, ENC_DEFAULT = {};
 const DUR_DEFAULT = { LS: [16, "h"], deep: [2, "h"], custom: [2, "h"] };
@@ -477,6 +496,45 @@ function geometry(lo, hi, binKhz, integ, durS, crop) {
   };
 }
 
+// rtl_power_fftw's hop plan (Plan::Plan in acquisition.cxx, mirrored by marsad/rpf.py):
+// minimum overhang = overlap% of the rate, hop count = smallest that covers the span with
+// at least that overlap, overhang recomputed as an integer so the hops tile the span,
+// first centre half a rate above the low edge. A single frequency is one hop.
+function planHops(loHz, hiHz, rate, overlapPct, centreHz) {
+  if (centreHz != null) return [Math.trunc(centreHz)];
+  const start = Math.trunc(loHz), stop = Math.trunc(hiHz);
+  const minOver = rate * overlapPct / 100;
+  const hops = Math.ceil(((stop - start) - minOver) / (rate - minOver));
+  if (hops <= 1) return [Math.floor((start + stop) / 2)];
+  const over = Math.trunc((hops * rate - (stop - start)) / (hops - 1));
+  const out = [Math.trunc(start + rate / 2)];
+  for (let i = 1; i < hops; i++) out.push(out[out.length - 1] + rate - over);
+  return out;
+}
+function geometryFftw(lo, hi, rate, bins, timeS, overlapPct, crop, durS, centre) {
+  const centres = planHops(lo * 1e6, hi * 1e6, rate, overlapPct, centre == null ? null : centre * 1e6);
+  const hops = centres.length;
+  const repeats = Math.ceil(rate * timeS / bins);
+  const listen = bins * repeats / rate;
+  const data = 2 * bins * repeats;
+  const reads = Math.ceil(data / FFTW.base_buf) <= 100 ? 1 : Math.ceil(data / FFTW.buf_bytes);
+  const overhead = (FFTW.retune_ms + FFTW.read_ms * (reads - 1)) / 1000;
+  const passS = hops * (listen + overhead);
+  const sweeps = Math.max(1, Math.ceil(durS / passS));
+  const kept = bins - 2 * Math.trunc(bins * crop * 0.5);
+  const binKhz = rate / bins / 1e3;
+  const spacing = hops > 1 ? (centres[1] - centres[0]) / 1e6 : rate / 1e6;
+  return {
+    engine: "rtl_power_fftw", hops, hopMhz: spacing, hopWidthMhz: rate / 1e6, rate, fft: bins, kept,
+    binKhz, bins: hops * kept, sweeps, retune: hops * overhead, overhead, reads, listen, passS,
+    listening: listen / (listen + overhead),
+    perFreq: sweeps * listen * (1 + (hops > 1 ? overlapPct / 100 : 0)),
+    ceilPerFreq: durS / hops, occStep: 100 / sweeps,
+    mb: sweeps * hops * (bins * 24 + 160) / 1e6,
+    centres: centres.map(c => c / 1e6), covered: [lo + binKhz * Math.trunc(bins * crop * 0.5) / 1e3, hi - binKhz * Math.trunc(bins * crop * 0.5) / 1e3]
+  };
+}
+
 const num = (v, d = 0) => v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 function secs(s) {
   if (s < 90) return num(s, 1) + " s";
@@ -493,6 +551,10 @@ function read() {
     lo, hiReq, hi: Math.min(hiReq, CEIL), clamped: hiReq > CEIL,
     bin: +$("bin").value, gain: +$("gain").value, integ: +$("integ").value || 1,
     crop: +$("crop").value, fir: +$("fir").value,
+    engine: $("engine").value,
+    fbins: +$("fbins").value || FFTW.default_bins, ftime: +$("ftime").value || FFTW.default_time,
+    frate: Math.round((+$("frate").value || FFTW.default_rate / 1e6) * 1e6),
+    fover: $("fover").value === "" ? null : +$("fover").value,
     durVal, unit, durS: durVal * (unit === "h" ? 3600 : 60),
     rx: $("receiver").value, device: $("device").value, tag: $("tag").value.trim(),
     target: $("target").value === "" ? null : +$("target").value,
@@ -590,7 +652,7 @@ function drawMap(g, s) {
   o.push(txt(x0, yB + 28, `${num(s.lo, 1)}`));
   o.push(txt(x1, yB + 28, `${num(s.hi, 1)} MHz · ${num(nH)} hops of ${num(g.hopMhz, 4)} MHz`, "end"));
 
-  const yC = 144, hc = s.lo + g.hopMhz * (hIdx + .5);
+  const yC = 144, hc = g.engine ? g.centres[hIdx] : s.lo + g.hopMhz * (hIdx + .5);
   o.push(`<path d="M${ha},${yB + 18} L${Math.max(ha + 2.5, hb)},${yB + 18} L${x1},${yC - 7} L${x0},${yC - 7} Z" fill="var(--accent)" fill-opacity=".10"/>`);
   o.push(txt(x1, yC - 12, `×${num(nH, 0)}`, "end"));
   o.push(bar(yC));
@@ -615,7 +677,8 @@ function drawMap(g, s) {
     `<b>1/${num(ratio)}</b> of the scan — too fine for one axis, hence the ` +
     `×${num(tspan / Math.max(1e-6, s.hiReq - s.lo), 0)} and ×${num(nH, 0)} steps. Amber marks ` +
     `hop centres, where the zero-IF DC spike sits. Pink is the ${num(s.crop * 100, 0)}% of each ` +
-    `hop that <code>-c</code> discards` + (GAPS[s.rx].length ? `, and the PLL gap.` : `.`);
+    `hop that ${g.engine ? "the analyser" : "<code>-c</code>"} discards` + (GAPS[s.rx].length ? `, and the PLL gap.` : `.`) +
+    (g.engine ? ` rtl_power_fftw hops are ${num(g.hopWidthMhz, 2)} MHz wide and overlap; the strip shows their spacing.` : "");
 }
 
 function drawFacts(s) {
@@ -633,8 +696,24 @@ function drawFacts(s) {
 
 function cells(g, s) {
   const finish = new Date(Date.now() + s.durS * 1000);
-  const skipped = s.useskip ? Math.min(g.sweeps - 1, Math.ceil(s.skipmin * 60 / s.integ)) : 0;
-  const items = [
+  const per = g.engine ? g.passS : s.integ;
+  const skipped = s.useskip ? Math.min(g.sweeps - 1, Math.ceil(s.skipmin * 60 / per)) : 0;
+  const items = g.engine ? [
+    ["Hops", num(g.hops), "× " + num(g.hopWidthMhz, 4) + " MHz, spaced " + num(g.hopMhz, 4)],
+    ["Sample rate", num(g.rate / 1e6, 6), "MS/s"],
+    ["FFT bins", num(g.fft), g.kept + " kept per hop after crop"],
+    ["Bin width", num(g.binKhz, 4), "kHz"],
+    ["Bins logged", num(g.bins), ""],
+    ["Spectra per hop", num(g.fft ? Math.ceil(g.rate * g.listen / g.fft) : 0), num(g.listen, 3) + " s listening, " + g.reads + (g.reads === 1 ? " read" : " reads")],
+    ["One pass", secs(g.passS), num(g.overhead * 1000, 0) + " ms overhead per hop"],
+    ["Passes", num(g.sweeps), skipped ? `${num(g.sweeps - skipped)} after warm-up` : "ends after the pass in which the duration elapses"],
+    ["Listening", num(g.listening * 100, 1) + "%", "of each pass"],
+    ["Listen per frequency", secs(g.perFreq), "ceiling " + secs(g.ceilPerFreq), true],
+    ["Occupancy step", num(100 / Math.max(1, g.sweeps - skipped), 2) + "%", "one pass"],
+    ["File size", num(g.mb, 1), "MB (.dat)"],
+    ["Finishes", finish.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      finish.toDateString() === new Date().toDateString() ? "today" : "tomorrow"]
+  ] : [
     ["Hops", num(g.hops), "× " + num(g.hopMhz, 4) + " MHz"],
     ["Sample rate", num(g.rate / 1e6, 6), "MS/s"],
     ["FFT size", num(g.fft), g.kept + " kept per hop"],
@@ -662,29 +741,42 @@ function flags(g, s) {
   if (s.hiReq <= s.lo) out.push(["bad", "Range", "Stop must be above start."]);
   if (s.lo < minF || s.hiReq > maxF)
     out.push(["bad", "Tuner", `The ${s.rx.toUpperCase()} covers ${minF}–${maxF} MHz. This range goes outside it.`]);
-  if (s.clamped)
+  if (s.clamped && !g.engine)
     out.push(["warn", "Ceiling", `rtl_power stops at ${CEIL} MHz, a signed 32-bit limit. The top is silently clamped from ${num(s.hiReq, 3)}. A range entirely above it writes no file and still exits 0.`]);
+  if (g.engine && s.hiReq > CEIL)
+    out.push(["ok", "Ceiling", `Above rtl_power's ${CEIL} MHz limit: fine for rtl_power_fftw (64-bit frequencies). Measured 2026-10-22 on the XTR: the E4000's PLL ceiling descends as the dongle warms, from above 2187 MHz cold to about 2172 MHz after 45 minutes; hops it refuses are dropped and named in the .log, and the Scan page hatches them.`]);
+  if (g.engine && s.fbins % 2)
+    out.push(["bad", "Bins", "rtl_power_fftw wants an even number of FFT bins."]);
+  if (g.engine && g.hops > 1 && s.crop > 0 && (s.fover ?? 100 * s.crop) < 100 * s.crop - 1e-9)
+    out.push(["bad", "Overlap", `With crop ${s.crop} the hops must overlap by at least ${num(100 * s.crop, 0)}% or the cropped edges leave gaps between hops.`]);
+  if (g.engine && g.listening < 0.5)
+    out.push(["warn", "Dwell", `Only ${num(g.listening * 100, 0)}% of the time is spent listening: ${num(g.overhead * 1000, 0)} ms of overhead per hop against ${num(g.listen, 2)} s of listening. More seconds per hop fixes it.`]);
+  if (g.engine && s.rx === "xtr" && s.hiReq > 2187)
+    out.push(["warn", "Tuner", "The XTR's top is 2187 MHz at best (rtl_test -t, 2026-10-13) and lower when warm."]);
   for (const [a, b] of GAPS[s.rx])
     if (s.lo < b && s.hiReq > a)
       out.push(["warn", "PLL gap", `${a}–${b} MHz is this unit's measured lock gap. Hops there record nothing useful; the analyser masks them.`]);
-  if (s.integ < g.retune * 1.2)
+  if (g.engine) { /* no retune floor: the program waits for each hop */ }
+  else if (s.integ < g.retune * 1.2)
     out.push(["bad", "Dwell", `-i ${s.integ} is under the ${num(g.retune, 1)} s retune floor for ${g.hops} hops. rtl_power misbehaves when a sweep outlasts the interval.`]);
   else if (g.listening < 0.5)
     out.push(["bad", "Dwell", `Only ${num(g.listening * 100, 0)}% of the time is spent listening — most of the run is retuning. Fewer hops or a longer -i both fix it.`]);
   else if (g.listening < 0.75)
     out.push(["warn", "Dwell", `${num(g.listening * 100, 0)}% listening: ${num(g.retune, 1)} s of every ${s.integ} s sweep is retuning. Doubling -i would reach ${num(100 * (1 - g.retune / (s.integ * 2)), 0)}%. Over 80% is the station norm for long runs.`]);
-  if (g.fft && g.fft <= 32)
+  if (!g.engine && g.fft && g.fft <= 32)
     out.push(["warn", "FFT", `A ${g.fft}-point FFT gives only ${g.kept} bins per hop after crop. Narrow spur lines get averaged into the floor. Halving the bin request would give FFT ${g.fft * 2} at the same hop count and dwell — finer bins cost disk, not time.`]);
   if (g.sweeps < 10)
     out.push(["warn", "Sweeps", `${g.sweeps} sweeps is thin for a 20th-percentile floor.`]);
   if (s.useskip && s.skipmin * 60 >= s.durS)
     out.push(["bad", "Warm-up", "The warm-up discard is as long as the run."]);
-  if ((s.crop !== 0.25 || s.fir !== 9))
+  if (!g.engine && (s.crop !== 0.25 || s.fir !== 9))
     out.push(["warn", "Convention", "Crop and FIR differ from 0.25 / 9. Nothing already archived uses these, so this run will have no comparison set."]);
+  if (g.engine && s.crop !== FFTW.default_crop)
+    out.push(["warn", "Convention", `Crop differs from ${FFTW.default_crop}, the station convention for this engine too.`]);
   if (s.target != null) {
     let best = null;
     for (let i = 0; i < g.hops; i++) {
-      const c = s.lo + g.hopMhz * (i + .5), d = Math.abs(c - s.target);
+      const c = g.engine ? g.centres[i] : s.lo + g.hopMhz * (i + .5), d = Math.abs(c - s.target);
       if (best === null || d < best.d) best = { d, c };
     }
     if (best && best.d * 1000 < g.binKhz * 3)
@@ -731,10 +823,24 @@ function command(g, s) {
   const p = PRESETS[s.preset], dur = s.durVal + s.unit, q = t => '"' + t.replace(/"/g, "'") + '"';
   const cliPreset = p.as || s.preset;
   const parts = [CMD, cliPreset, dur];
+  if (g.engine) {
+    const pf = p.engine === "rtl_power_fftw";
+    if (!pf) parts.push("--engine rtl_power_fftw");
+    const single = pf && p.centre != null && s.lo === p.lo && s.hiReq === p.hi;
+    if (!single && (!pf || s.lo !== p.lo || s.hiReq !== p.hi || cliPreset === "custom"))
+      parts.push("--freq " + fmtMhz(s.lo) + ":" + fmtMhz(s.hiReq));
+    if (!pf || s.fbins !== p.bins) parts.push("--bins " + s.fbins);
+    if (!pf || s.ftime !== p.time) parts.push("--time " + s.ftime);
+    if (!pf || s.frate !== p.rate) parts.push("--rate " + s.frate);
+    const over = s.fover ?? 100 * s.crop;
+    if (!pf || over !== p.overlap) parts.push("--overlap " + over);
+    if (s.gain !== p.gain) parts.push("--gain " + s.gain);
+  } else {
   if (s.lo !== p.lo || s.hiReq !== p.hi || s.bin !== p.bin || cliPreset === "custom")
     parts.push("--freq " + fmtMhz(s.lo) + ":" + fmtMhz(s.hiReq) + ":" + s.bin + "k");
   if (s.gain !== p.gain) parts.push("--gain " + s.gain);
   if (s.integ !== p.integ) parts.push("--integration " + s.integ);
+  }
   if (!p.rx || s.rx !== p.rx) parts.push("--receiver " + s.rx);
   if (s.device !== "") parts.push("--device " + s.device);
   if (s.tag) parts.push("--tag " + s.tag);
@@ -744,7 +850,7 @@ function command(g, s) {
   if (s.floorwin) parts.push("--floor-window " + s.floorwin);
   if (s.useskip && s.skipmin > 0) parts.push("--skip-warmup " + s.skipmin);
   if (s.crop !== 0.25) parts.push("--crop " + s.crop);
-  if (s.fir !== 9) parts.push("--fir " + s.fir);
+  if (!g.engine && s.fir !== 9) parts.push("--fir " + s.fir);
   if (!s.analyze) parts.push("--no-analyze");
   if (s.nonint) parts.push("--non-interactive");
   const line = parts.join(" ");
@@ -757,6 +863,21 @@ function command(g, s) {
 }
 
 function tradeoff(s) {
+  if (isFftw()) {
+    const opts = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
+    if (!opts.includes(s.ftime)) opts.push(s.ftime);
+    opts.sort((a, b) => a - b);
+    const centre = PRESETS[s.preset] && PRESETS[s.preset].centre != null && s.lo === PRESETS[s.preset].lo ? PRESETS[s.preset].centre : null;
+    $("tradeoff").innerHTML = opts.map(t => {
+      const g = geometryFftw(s.lo, s.hiReq, s.frate, s.fbins, t, s.fover ?? 100 * s.crop, s.crop, s.durS, centre), ok = g.listening >= 0.5;
+      return `<tr data-i="${t}" class="${t === s.ftime ? "now" : ""}" style="${ok ? "" : "opacity:.45"}">
+        <td>-t ${t}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${num(g.sweeps)}</td>
+        <td>${secs(g.perFreq)}</td><td>${num(g.occStep, 2)}%</td><td>${num(g.mb, 1)} MB</td></tr>`;
+    }).join("");
+    $("tradeoff").querySelectorAll("tr").forEach(tr =>
+      tr.onclick = () => { $("ftime").value = tr.dataset.i; update(); });
+    return;
+  }
   const opts = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300];
   if (!opts.includes(s.integ)) opts.push(s.integ);
   opts.sort((a, b) => a - b);
@@ -785,11 +906,21 @@ function syncSliders(s) {
 
 function update() {
   const s = read();
-  const g = geometry(s.lo, s.hi, s.bin, s.integ, s.durS, s.crop);
+  const fftw = s.engine === "rtl_power_fftw";
+  $("rowRp").hidden = fftw; $("rowFftw").hidden = !fftw; $("hintRp").hidden = fftw; $("hintFftw").hidden = !fftw;
+  if (fftw) { s.hi = s.hiReq; s.clamped = false; }
+  const p = PRESETS[s.preset] || {};
+  const centre = fftw && p.engine === "rtl_power_fftw" && p.centre != null && s.lo === p.lo && s.hiReq === p.hi ? p.centre : null;
+  const g = fftw
+    ? geometryFftw(s.lo, s.hiReq, s.frate, s.fbins, s.ftime, s.fover ?? 100 * s.crop, s.crop, s.durS, centre)
+    : geometry(s.lo, s.hi, s.bin, s.integ, s.durS, s.crop);
   syncSliders(s); drawMap(g, s); drawFacts(s); cells(g, s); flags(g, s);
   tradeoff(s); drawChain();
+  $("whatH").textContent = fftw ? "What rtl_power_fftw will do" : "What rtl_power will do";
   $("sweepsIn").value = g.sweeps;
-  $("fp").textContent = `${num(s.lo, 3)}-${num(s.hi, 3)} MHz | ${num(g.binKhz, 4)} kHz | ` +
+  $("fp").textContent = fftw
+    ? `${s.lo.toFixed(3)}-${s.hiReq.toFixed(3)} MHz | ${g.binKhz.toFixed(4)} kHz | g${s.gain} | t${s.ftime} | N${s.fbins} | r${s.frate / 1e6}M | o${s.fover ?? 100 * s.crop} | c${s.crop} | rtl_power_fftw | ${s.rx}`
+    : `${num(s.lo, 3)}-${num(s.hi, 3)} MHz | ${num(g.binKhz, 4)} kHz | ` +
     `g${s.gain} | i${s.integ} | c${s.crop} | F${s.fir} | ${s.rx}`;
   $("condline").textContent = conditionsText(s) || "(nothing recorded)";
   $("cmd").textContent = command(g, s);
@@ -801,6 +932,9 @@ function load(s) {
   $("lo").value = s.lo; $("hi").value = s.hiReq ?? s.hi;
   $("bin").value = s.bin; $("gain").value = s.gain; $("integ").value = s.integ;
   $("crop").value = s.crop; $("fir").value = s.fir;
+  $("engine").value = s.engine || "rtl_power";
+  $("fbins").value = s.fbins || FFTW.default_bins; $("ftime").value = s.ftime ?? FFTW.default_time;
+  $("frate").value = (s.frate || FFTW.default_rate) / 1e6; $("fover").value = s.fover ?? "";
   $("durval").value = s.durVal; $("durunit").value = s.unit; $("receiver").value = s.rx;
   $("device").value = s.device ?? 0; $("tag").value = s.tag || "";
   $("target").value = s.target ?? "";
@@ -818,6 +952,11 @@ function applyPreset(name) {
   const p = PRESETS[name];
   $("lo").value = p.lo; $("hi").value = p.hi; $("bin").value = p.bin;
   $("gain").value = p.gain; $("integ").value = p.integ;
+  $("engine").value = p.engine === "rtl_power_fftw" ? "rtl_power_fftw" : "rtl_power";
+  if (p.engine === "rtl_power_fftw") {
+    $("fbins").value = p.bins; $("ftime").value = p.time; $("frate").value = p.rate / 1e6;
+    $("fover").value = p.overlap; $("crop").value = p.crop;
+  }
   if (p.rx) { $("receiver").value = p.rx; $("device").value = DEVICES[p.rx]; }  // no rx = test profile, runs on whichever radio is set
   $("durval").value = p.dur[0]; $("durunit").value = p.dur[1];
   $("floorwin").value = p.fw || "";
@@ -830,6 +969,7 @@ async function boot() {
   try { cfg = await (await fetch("/config")).json(); } catch (e) {}
   if (!cfg) { document.body.insertAdjacentHTML("afterbegin", '<p style="color:var(--bad);padding:12px">Could not load /config from the station server.</p>'); return; }
   RTL_MAX = cfg.rtl_max_sample_hz; RETUNE = cfg.retune_ms / 1000; CEIL = cfg.ceiling_mhz; CMD = cfg.cmd_prefix || "marsad run";
+  if (cfg.fftw) FFTW = { ...FFTW, ...cfg.fftw };
   $("retunems").textContent = cfg.retune_ms;
   for (const [rx, r] of Object.entries(cfg.receivers)) {
     GAINS[rx] = r.gains; LIMITS[rx] = r.range; DEVICES[rx] = r.device; GAPS[rx] = r.gaps; RXLABEL[rx] = r.label;
@@ -850,12 +990,13 @@ async function boot() {
   $("receiver").value = curRx;
 
 $("preset").innerHTML = PRESET_ORDER.map(k => [k, PRESETS[k]])
-  .map(([k, p]) => `<option value="${k}">${k} — ${p.note}</option>`).join("");
+  .map(([k, p]) => `<option value="${k}">${k}${p.engine === "rtl_power_fftw" ? " (fftw)" : ""} — ${p.note}</option>`).join("");
 fillGains(curRx, 29);
 
 const first = PRESETS[PRESET_ORDER[0]] || { lo: 100, hi: 200, bin: 50, gain: 29, integ: 120 };
 const DEFAULTS = {
   preset: PRESET_ORDER[0] || "custom", lo: first.lo, hiReq: first.hi, bin: first.bin, gain: first.gain, integ: first.integ, crop: 0.25, fir: 9,
+  engine: "rtl_power", fbins: FFTW.default_bins, ftime: FFTW.default_time, frate: FFTW.default_rate, fover: null,
   durVal: 1, unit: "h", rx: curRx, device: String(DEVICES[curRx] ?? 0), tag: "", target: "",
   analyze: true, useskip: true, skipmin: 16, thresh: 10, floorwin: "",
   dryfirst: true, nonint: false, temp: "", humid: "", where: "inside", sky: "", notes: ""
@@ -890,8 +1031,14 @@ document.querySelectorAll("input, select, textarea").forEach(el => {
 // decimals because the duration parser accepts them, so an exact sweep
 // count never has to be rounded away.
 $("sweepsIn").addEventListener("input", () => {
-  const n = +$("sweepsIn").value, i = +$("integ").value || 1;
+  const n = +$("sweepsIn").value;
   if (!n || n < 1) return;
+  let i = +$("integ").value || 1;
+  if (isFftw()) {
+    const s = read(), p = PRESETS[s.preset] || {};
+    const centre = p.engine === "rtl_power_fftw" && p.centre != null && s.lo === p.lo && s.hiReq === p.hi ? p.centre : null;
+    i = geometryFftw(s.lo, s.hiReq, s.frate, s.fbins, s.ftime, s.fover ?? 100 * s.crop, s.crop, 60, centre).passS;
+  }
   const sec = n * i;
   if (sec % 3600 === 0) { $("durunit").value = "h"; $("durval").value = sec / 3600; }
   else { $("durunit").value = "m"; $("durval").value = +(sec / 60).toFixed(2); }

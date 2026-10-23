@@ -1,0 +1,262 @@
+Found Elonics E4000 tuner
+Scan session duration: 3600 seconds
+Available gains (in 1/10th of dB): -10, 15, 40, 65, 90, 115, 140, 165, 190, 215, 240, 290, 340, 420
+Selected nearest available gain: 290 (29 dB)
+Actual sample rate: 2400000 Hz
+Number of bins: 128
+Total number of (complex) samples to collect: 2400000
+Buffer length: 1638400
+Number of averaged spectra: 18750
+Estimated time of measurements: 1 seconds
+Tuning to 2148200000 Hz (try 1)
+Device tuned to: 2148200000 Hz
+Acquisition started at 2026-10-23 01:45:50 UTC
+Acquisition done at 2026-10-23 01:45:51 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 2 1 
+Tuning to 2149990477 Hz (try 1)
+Device tuned to: 2149990477 Hz
+Acquisition started at 2026-10-23 01:45:51 UTC
+Acquisition done at 2026-10-23 01:45:52 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 4 2 
+Tuning to 2151780954 Hz (try 1)
+Device tuned to: 2151780954 Hz
+Acquisition started at 2026-10-23 01:45:52 UTC
+Acquisition done at 2026-10-23 01:45:53 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 6 3 
+Tuning to 2153571431 Hz (try 1)
+Device tuned to: 2153571431 Hz
+Acquisition started at 2026-10-23 01:45:53 UTC
+Acquisition done at 2026-10-23 01:45:54 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 8 4 
+Tuning to 2155361908 Hz (try 1)
+Device tuned to: 2155361908 Hz
+Acquisition started at 2026-10-23 01:45:54 UTC
+Acquisition done at 2026-10-23 01:45:55 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 10 5 
+Tuning to 2157152385 Hz (try 1)
+Device tuned to: 2157152385 Hz
+Acquisition started at 2026-10-23 01:45:55 UTC
+Acquisition done at 2026-10-23 01:45:56 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 12 6 
+Tuning to 2158942862 Hz (try 1)
+Device tuned to: 2158942862 Hz
+Acquisition started at 2026-10-23 01:45:56 UTC
+Acquisition done at 2026-10-23 01:45:57 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 14 7 
+Tuning to 2160733339 Hz (try 1)
+Device tuned to: 2160733339 Hz
+Acquisition started at 2026-10-23 01:45:57 UTC
+Acquisition done at 2026-10-23 01:45:59 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 16 8 
+Tuning to 2162523816 Hz (try 1)
+Device tuned to: 2162523816 Hz
+Acquisition started at 2026-10-23 01:45:59 UTC
+Acquisition done at 2026-10-23 01:46:00 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 18 9 
+Tuning to 2164314293 Hz (try 1)
+Device tuned to: 2164314293 Hz
+Acquisition started at 2026-10-23 01:46:00 UTC
+Acquisition done at 2026-10-23 01:46:01 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 20 10 
+Tuning to 2166104770 Hz (try 1)
+Device tuned to: 2166104770 Hz
+Acquisition started at 2026-10-23 01:46:01 UTC
+Acquisition done at 2026-10-23 01:46:02 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 22 11 
+Tuning to 2167895247 Hz (try 1)
+Device tuned to: 2167895247 Hz
+Acquisition started at 2026-10-23 01:46:02 UTC
+Acquisition done at 2026-10-23 01:46:03 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 24 12 
+Tuning to 2169685724 Hz (try 1)
+Device tuned to: 2169685724 Hz
+Acquisition started at 2026-10-23 01:46:03 UTC
+Acquisition done at 2026-10-23 01:46:04 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 26 13 
+Tuning to 2171476201 Hz (try 1)
+Device tuned to: 2171476201 Hz
+Acquisition started at 2026-10-23 01:46:04 UTC
+Acquisition done at 2026-10-23 01:46:05 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 28 14 
+Tuning to 2173266678 Hz (try 1)
+Device tuned to: 2173266678 Hz
+Acquisition started at 2026-10-23 01:46:05 UTC
+Acquisition done at 2026-10-23 01:46:06 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 30 15 
+Tuning to 2175057155 Hz (try 1)
+Device tuned to: 2175057155 Hz
+Acquisition started at 2026-10-23 01:46:06 UTC
+Acquisition done at 2026-10-23 01:46:07 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 32 16 
+Tuning to 2176847632 Hz (try 1)
+Device tuned to: 2176847632 Hz
+Acquisition started at 2026-10-23 01:46:07 UTC
+Acquisition done at 2026-10-23 01:46:08 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 34 17 
+Tuning to 2178638109 Hz (try 1)
+Device tuned to: 2178638109 Hz
+Acquisition started at 2026-10-23 01:46:08 UTC
+Acquisition done at 2026-10-23 01:46:09 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 36 18 
+Tuning to 2180428586 Hz (try 1)
+Device tuned to: 2180428586 Hz
+Acquisition started at 2026-10-23 01:46:09 UTC
+Acquisition done at 2026-10-23 01:46:10 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 38 19 
+Tuning to 2182219063 Hz (try 1)
+Device tuned to: 2182219063 Hz
+Acquisition started at 2026-10-23 01:46:11 UTC
+Acquisition done at 2026-10-23 01:46:12 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 40 20 
+Tuning to 2184009540 Hz (try 1)
+Device tuned to: 2184009540 Hz
+Acquisition started at 2026-10-23 01:46:12 UTC
+Acquisition done at 2026-10-23 01:46:13 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 42 21 
+Tuning to 2185800017 Hz (try 1)
+Device tuned to: 2185800017 Hz
+Acquisition started at 2026-10-23 01:46:13 UTC
+Acquisition done at 2026-10-23 01:46:14 UTC
+Actual number of (complex) samples collected: 2400000
+Actual number of device readouts: 3
+Number of successful readouts: 3
+Actual number of averaged spectra: 18750
+Effective integration time: 1 seconds
+Buffer queue histogram: 0 0 0 0 44 22 
+[E4K] PLL not locked for 2185800017 Hz!
+[E4K] PLL not locked for 2185800017 Hz!
+[E4K] PLL not locked for 2185800017 Hz!
+Unable to tune to 2185800017. Dropping from frequency list.
+[E4K] PLL not locked for 2184009540 Hz!
+[E4K] PLL not locked for 2184009540 Hz!
+[E4K] PLL not locked for 2184009540 Hz!
+Unable to tune to 2184009540. Dropping from frequency list.
+[E4K] PLL not locked for 2182219063 Hz!
+[E4K] PLL not locked for 2182219063 Hz!
+[E4K] PLL not locked for 2182219063 Hz!
+Unable to tune to 2182219063. Dropping from frequency list.
+[E4K] PLL not locked for 2180428586 Hz!
+[E4K] PLL not locked for 2180428586 Hz!
+[E4K] PLL not locked for 2180428586 Hz!
+Unable to tune to 2180428586. Dropping from frequency list.
+[E4K] PLL not locked for 2178638109 Hz!
+[E4K] PLL not locked for 2178638109 Hz!
+[E4K] PLL not locked for 2178638109 Hz!
+Unable to tune to 2178638109. Dropping from frequency list.
+[E4K] PLL not locked for 2176847632 Hz!
+[E4K] PLL not locked for 2176847632 Hz!
+[E4K] PLL not locked for 2176847632 Hz!
+Unable to tune to 2176847632. Dropping from frequency list.
+[E4K] PLL not locked for 2175057155 Hz!
+[E4K] PLL not locked for 2175057155 Hz!
+[E4K] PLL not locked for 2175057155 Hz!
+Unable to tune to 2175057155. Dropping from frequency list.
+[E4K] PLL not locked for 2173266678 Hz!
+[E4K] PLL not locked for 2173266678 Hz!
+[E4K] PLL not locked for 2173266678 Hz!
+Unable to tune to 2173266678. Dropping from frequency list.

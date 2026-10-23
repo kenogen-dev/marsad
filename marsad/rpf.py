@@ -489,6 +489,10 @@ def record(args, station: Station, preset: dict) -> int:
 
     cmd = build_command(str(exe or TOOL), freq, gain, bins, rate, time_s, overlap, dur_s,
                         args.device, baseline, window)
+    # Every run of this engine can be stopped from the Scan page: the recorder polls
+    # this file and sends Ctrl-Break, which the Windows build is patched to treat
+    # like Ctrl-C (finish the pass, write it, exit). --stop-file (the Probe tab) wins.
+    stop_file = args.stop_file or (station.reports / f"{stem}.stop")
     retune_ms = float(station.data.get("retune_ms_per_hop_fftw", RETUNE_MS_DEFAULT))
     read_ms = float(station.data.get("read_ms_per_buffer_fftw", READ_MS_DEFAULT))
     geom = geometry(lo, hi, rate, bins, time_s, overlap, crop, dur_s, retune_ms, centre, read_ms)
@@ -559,6 +563,7 @@ def record(args, station: Station, preset: dict) -> int:
         "duration_requested_s": dur_s,
         "command_line": subprocess.list2cmdline(cmd),
         "command": cmd,
+        "stop_file": str(stop_file),
         ENGINE: {
             "freq_spec": freq,
             "freq_low_mhz": round(lo, 6),
@@ -596,12 +601,15 @@ def record(args, station: Station, preset: dict) -> int:
     print()
     t0 = time.time()
     interrupted = False
+    stop_file.parent.mkdir(parents=True, exist_ok=True)
+    stop_file.unlink(missing_ok=True)       # a stale flag must not stop this run at once
     try:
-        rc = run_recording(cmd, dur_s, raw_path, log_path, stop_file=args.stop_file)
+        rc = run_recording(cmd, dur_s, raw_path, log_path, stop_file=stop_file)
     except KeyboardInterrupt:
         interrupted, rc = True, 130
         print("\n  Interrupted. Keeping what was written.")
     elapsed = time.time() - t0
+    stop_file.unlink(missing_ok=True)
 
     log = {}
     try:

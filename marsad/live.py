@@ -15,6 +15,7 @@ appears, so a tab left open from the last run shows the next run too.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import math
 import re
@@ -26,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import chain, host, hunt, probe
+from . import chain, host, hunt, probe, rpf
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        parse_freq_spec)
@@ -374,6 +375,251 @@ class Tailer:
             }
 
 
+
+def _utc_to_local(text: str) -> str:
+    """'2026-10-22 05:44:17 UTC' (what rtl_power_fftw writes) -> local 'YYYY-MM-DD HH:MM:SS'."""
+    try:
+        t = dt.datetime.strptime(text.replace(" UTC", "").strip(), "%Y-%m-%d %H:%M:%S")
+        return t.replace(tzinfo=dt.timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return text
+
+
+class DatTailer(Tailer):
+    """Accumulates completed passes from a growing rtl_power_fftw .dat file.
+
+    The format is one block per hop: five `#` header lines (acquisition start and
+    end in UTC), N lines of `frequency_Hz power_dB`, then a blank line. With -e
+    the program writes the extra blank line that ends a pass only once, at the
+    very end, so passes are found the way sweeps are for rtl_power: the first
+    block whose lowest frequency is not above the previous block's begins a new
+    pass. That is the only exact rule: hops drop out as the tuner refuses them,
+    so a count cannot close a pass early; the pass in progress is drawn live anyway.
+
+    The sidecar's crop is applied as each block arrives - int(N*crop/2) bins off
+    each edge, rtl_power's own arithmetic, the same cut `marsad analyze` makes -
+    so the live picture is the report's picture. The hop centre is the middle
+    bin of the uncropped block. Levels are the engine's own scale (a power
+    spectral density), not rtl_power's; the payload says so.
+    """
+
+    def __init__(self, path: Path, cols: int, keep: int):
+        self.crop = 0.0
+        self.planned = None             # hops the plan asked for
+        self.refused: dict = {}         # Hz -> True: "Unable to tune to" in the .log
+        self.rate_hz = None
+        self.ended = False              # "Session duration elapsed." seen in the .log
+        self.log_path = path.with_suffix(".log")
+        self.log_offset = 0
+        self.start_epoch = None
+        self._blk_f: list = []
+        self._blk_v: list = []
+        self._blk_stamp = None
+        self._pass_stamp = None
+        super().__init__(path, cols, keep)
+
+    def _sidecar(self) -> dict:
+        try:
+            d = json.loads(self.path.with_suffix(".json").read_text())
+        except (OSError, ValueError):
+            return {"engine": "rtl_power_fftw", "integration_s": None}
+        rp = d.get("rtl_power_fftw", {}) or {}
+        g = d.get("geometry") or {}
+        if g.get("hops"):
+            self.planned = int(g["hops"])
+            self.hops = self.planned
+        self.crop = float(rp.get("crop") or 0.0)
+        self.rate_hz = rp.get("rate_hz_actual") or rp.get("rate_hz")
+        cov = g.get("covered_mhz")
+        if cov and len(cov) == 2:
+            self.lo, self.hi = float(cov[0]), float(cov[1])
+        elif rp.get("freq_low_mhz") is not None:
+            self.lo, self.hi = float(rp["freq_low_mhz"]), float(rp["freq_high_mhz"])
+        try:
+            self.start_epoch = dt.datetime.fromisoformat(d["started_local"]).timestamp()
+        except (KeyError, ValueError, TypeError):
+            pass
+        try:
+            fp = rpf.fingerprint(d, rp.get("bin_khz_actual"))
+        except (KeyError, TypeError, ValueError):
+            fp = None
+        meta = {"engine": "rtl_power_fftw",
+                "duration_s": d.get("duration_requested_s"),
+                "preset": d.get("preset"),
+                "integration_s": None,          # per-hop, not per-sweep: the cursor comes from the data
+                "time_per_hop_s": rp.get("time_per_hop_s"),
+                "bins": rp.get("bins"), "rate_hz": self.rate_hz, "crop": self.crop,
+                "gain_db": rp.get("gain_db"),
+                "receiver": d.get("receiver"),
+                "tag": ((d.get("csv") or "").split("_") + [None] * 4)[3],
+                "fingerprint": fp,
+                "pass_s": g.get("sweep_s"),
+                "expected": g.get("sweeps"),
+                "stop_file": d.get("stop_file"),
+                "scale": "rtl_power_fftw: power spectral density on its own scale, about 26 dB "
+                         "below rtl_power's 50 kHz scale at 2.4 MS/s (measured 2026-10-22)"}
+        # Only present once the recorder has written it, so the base class keeps
+        # re-reading the sidecar until the run is over.
+        if d.get("finished_local"):
+            meta["finished_local"] = d["finished_local"]
+        return meta
+
+    def _poll_log(self) -> None:
+        """Read what the program said since last time: refused hops, the actual
+        sample rate, and whether the session has ended."""
+        try:
+            size = self.log_path.stat().st_size
+        except OSError:
+            return
+        if size <= self.log_offset:
+            return
+        with open(self.log_path, "r", errors="replace") as fh:
+            fh.seek(self.log_offset)
+            text = fh.read()
+            self.log_offset = fh.tell()
+        for m in re.finditer(r"Unable to tune to\s*(\d+)", text):
+            self.refused[int(m.group(1))] = True
+        m = re.search(r"Actual sample rate:\s*(\d+)", text)
+        if m:
+            self.rate_hz = int(m.group(1))
+        if "Session duration elapsed" in text:
+            self.ended = True
+
+    def poll(self) -> None:
+        self._poll_log()
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size < self.offset:
+            self.offset = 0; self.partial = ""
+        if size == self.offset:
+            with self.lock:
+                self._close_if_over()
+            return
+        self.last_growth = time.time()
+        with open(self.path, "r", errors="replace") as fh:
+            fh.seek(self.offset)
+            chunk = fh.read()
+            self.offset = fh.tell()
+        with self.lock:
+            data = self.partial + chunk
+            lines = data.split("\n")
+            self.partial = lines.pop()
+            for ln in lines:
+                self._line(ln)       # blank lines matter here: they close a block
+            self._close_if_over()
+
+    def _close_if_over(self) -> None:
+        """Once the program has said the session is over (or the recorder has
+        written finished_local), the last pass has no successor to close it by the
+        frequency wrap, so close it here. A run that died mid-pass keeps its last
+        blocks as the in-progress trace, which is what they are."""
+        if self.cur and (self.ended or self.sidecar.get("finished_local")) and not self._blk_f:
+            self._finish(self._pass_stamp or "")
+
+    def _line(self, ln: str) -> None:
+        s = ln.strip()
+        if not s:
+            self._block_done()
+            return
+        if s.startswith("#"):
+            m = s.partition("Acquisition start:")[2].strip()
+            if m:
+                self._blk_stamp = _utc_to_local(m)
+            return
+        parts = s.split()
+        if len(parts) < 2:
+            return
+        try:
+            f = float(parts[0])
+        except ValueError:
+            return
+        self._blk_f.append(f)
+        self._blk_v.append(_reading(parts[1]))
+
+    def _expected(self) -> int:
+        return max(0, (self.hops or 0) - len(self.refused))
+
+    def _block_done(self) -> None:
+        n = len(self._blk_f)
+        if n == 0:
+            return
+        f, v = self._blk_f, self._blk_v
+        self._blk_f, self._blk_v = [], []
+        self.rows += 1
+        self.readings += n
+        self.nonfinite += sum(1 for x in v if x != x)
+        centre = f[n // 2]
+        k = int(n * self.crop * 0.5) if self.crop > 0 else 0
+        if k and n - 2 * k >= 2:
+            f, v = f[k:n - k], v[k:n - k]
+        lo = f[0]
+        if self.last_lo is not None and lo <= self.last_lo:
+            self._finish(self._pass_stamp or "")
+        if self.cur_rows == 0:
+            self._pass_stamp = self._blk_stamp
+        self.last_lo = lo
+        self.cur_rows += 1
+        if len(f) > 1:
+            self.step_hz = (f[-1] - f[0]) / (len(f) - 1)
+        if self.hops is None or len(self.hop_centres) < self.hops:
+            self.hop_centres.add(round(centre))
+        self.cur.extend((fi / 1e6, vi) for fi, vi in zip(f, v))
+        # No early close on a hop count: hops drop out as the tuner refuses them
+        # (tonight's run lost eight, one at a time), so only the frequency wrap is
+        # exact. The pass in progress is on screen anyway, as the partial trace.
+
+    def payload(self, since: int) -> dict:
+        d = super().payload(since)
+        with self.lock:
+            cur_top = max((f for f, _ in self.cur), default=None)
+            refused = sorted(self.refused)
+            tuned = len(self.hop_centres)
+        half = float(self.rate_hz or 2.4e6) * (1.0 - self.crop) / 2.0 / 1e6
+        finished = bool(self.sidecar.get("finished_local")) or self.ended
+        d["engine"] = "rtl_power_fftw"
+        d["planned_hops"] = self.planned
+        d["tuned_hops"] = tuned
+        d["refused_mhz"] = [[round(h / 1e6 - half, 4), round(h / 1e6 + half, 4)] for h in refused]
+        d["expected"] = self.sidecar.get("expected")
+        # The cursor is where the last block landed, which is a fact, not a clock estimate.
+        d["cursor_est"] = False
+        if cur_top is not None and self.lo is not None and self.hi:
+            pct = max(0.0, min(1.0, (cur_top - self.lo) / max(1e-9, self.hi - self.lo)))
+            d["cursor_pct"], d["cursor"] = pct, cur_top
+        else:
+            d["cursor_pct"], d["cursor"] = None, None
+        dur = self.sidecar.get("duration_s")
+        if dur and self.start_epoch and not finished:
+            d["eta_s"] = max(0, int(dur - (time.time() - self.start_epoch)))
+        elif finished:
+            d["eta_s"] = 0
+        # Stop is offered while the recorder is alive: it has a stop file, the run is
+        # not over, and the file grew in the last half minute.
+        d["can_stop"] = bool(self.sidecar.get("stop_file")) and not finished \
+            and (time.time() - self.last_growth) < 30
+        d["meta"] = {**self.sidecar, "ended": self.ended}
+        return d
+
+
+def stop_recording(station: Station, tailer) -> dict:
+    """The Scan tab's Stop for an rtl_power_fftw run: touch the stop file its
+    sidecar names, which `marsad run` polls twice a second; it then sends
+    Ctrl-Break and the program finishes its pass, writes it and exits, and the
+    recorder analyses and archives as usual. Refused in plain words otherwise."""
+    sf = (tailer.sidecar or {}).get("stop_file") if tailer is not None else None
+    if not sf:
+        raise ValueError("this run cannot be stopped from here: it was started without a "
+                         "stop file (an older marsad run, or not an rtl_power_fftw run)")
+    path = Path(sf)
+    if not path.is_absolute():
+        path = station.root / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("stop\n", encoding="utf-8")
+    return {"ok": True, "note": "asked the recorder to finish the pass in progress and stop"}
+
+
 # ---------------------------------------------------------------- config for the builder
 
 def builder_config(station: Station) -> dict:
@@ -383,6 +629,21 @@ def builder_config(station: Station) -> dict:
         # The builder writes rtl_power commands. An rtl_power_fftw preset has a
         # range with no bin width ("2147M:2187M", or a single centre) and would
         # make the whole page refuse to start, as it did on 2026-10-22.
+        if p.get("engine") == "rtl_power_fftw":
+            try:
+                rate = int(p.get("rate", rpf.DEFAULT_RATE_HZ))
+                lo, hi, c = rpf.parse_freq(p["freq"], rate)
+            except (SystemExit, ValueError, KeyError):
+                continue
+            bins = int(p.get("bins", rpf.DEFAULT_BINS))
+            crop = float(p.get("crop", rpf.DEFAULT_CROP))
+            presets[name] = {"engine": "rtl_power_fftw", "lo": lo, "hi": hi, "centre": c,
+                             "bins": bins, "rate": rate, "time": float(p.get("time", rpf.DEFAULT_TIME_S)),
+                             "overlap": float(p.get("overlap", 100.0 * crop)), "crop": crop,
+                             "bin": rate / bins / 1e3, "integ": float(p.get("time", rpf.DEFAULT_TIME_S)),
+                             "gain": p["gain"], "rx": p.get("receiver"),
+                             "fw": p.get("floor_window", 0), "note": p.get("note", "")}
+            continue
         if p.get("engine") not in (None, "rtl_power"):
             continue
         try:
@@ -406,6 +667,13 @@ def builder_config(station: Station) -> dict:
         "rtl_max_sample_hz": RTL_MAX_SAMPLE_HZ,
         "retune_ms": station.retune_ms_per_hop,
         "crop": CROP, "fir": FIR,
+        # rtl_power_fftw: the measured overhead model and its defaults (CLAUDE.md 2026-10-22)
+        "fftw": {"retune_ms": float(station.data.get("retune_ms_per_hop_fftw", rpf.RETUNE_MS_DEFAULT)),
+                 "read_ms": float(station.data.get("read_ms_per_buffer_fftw", rpf.READ_MS_DEFAULT)),
+                 "base_buf": rpf.BASE_BUF, "buf_bytes": rpf.DEFAULT_BUF_BYTES,
+                 "default_rate": rpf.DEFAULT_RATE_HZ, "default_bins": rpf.DEFAULT_BINS,
+                 "default_time": rpf.DEFAULT_TIME_S, "default_crop": rpf.DEFAULT_CROP,
+                 "scale_offset_db": -26.2},
         "receivers": receivers,
         "presets": presets,
         # JSON objects lose their order in a browser when keys look like numbers
@@ -437,18 +705,22 @@ def archive_summary(station: Station) -> dict:
 
 
 def survey_list(station: Station) -> list:
-    """Every CSV in surveys/, newest first, with whatever the sidecar knows."""
+    """Every recording in surveys/ (rtl_power .csv and rtl_power_fftw .dat), newest
+    first, with whatever the sidecar knows."""
     out = []
     if not station.surveys.exists():
         return out
-    for f in sorted(station.surveys.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True):
-        meta = {}
+    files = list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat"))
+    for f in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True):
+        meta = {"engine": "rtl_power_fftw" if f.suffix.lower() == ".dat" else "rtl_power"}
         try:
             d = json.loads(f.with_suffix(".json").read_text())
-            rp = d.get("rtl_power", {})
+            eng = d.get("engine") or meta["engine"]
+            rp = d.get(eng, {}) or {}
             g = d.get("geometry", {})
-            meta = {"receiver": d.get("receiver"), "gain": rp.get("gain_db"),
-                    "integ": rp.get("integration_s"), "sweeps": g.get("sweeps"),
+            meta = {"engine": eng, "receiver": d.get("receiver"), "gain": rp.get("gain_db"),
+                    "integ": rp.get("integration_s"), "tph": rp.get("time_per_hop_s"),
+                    "sweeps": g.get("sweeps"),
                     "lo": rp.get("freq_low_mhz"), "hi": rp.get("freq_high_mhz_effective"),
                     "started": d.get("started_local"), "tag": d.get("preset")}
         except (OSError, ValueError):
@@ -476,14 +748,15 @@ LAST_REQUEST = [time.time()]      # any HTTP hit defers the idle shutdown
 
 
 def get_tailer(station: Station, name: str, cols: int, keep: int):
-    """One Tailer per CSV, built the first time it is asked for."""
+    """One tailer per recording, built the first time it is asked for; a .dat gets
+    the rtl_power_fftw reader."""
     with TAIL_LOCK:
         t = TAILERS.get(name)
         if t is None:
             path = station.surveys / name
             if not path.exists():
                 return None
-            t = Tailer(path, cols, keep)
+            t = (DatTailer if path.suffix.lower() == ".dat" else Tailer)(path, cols, keep)
             TAILERS[name] = t
         return t
 
@@ -493,7 +766,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
     """`banner` replaces the usual "(Ctrl-C to stop)" line, for the double-click launch."""
     station = station or Station.load()
     ap = argparse.ArgumentParser(prog=prog, description="The station's local web app")
-    ap.add_argument("--csv", help="path to the CSV (default: newest in surveys/)")
+    ap.add_argument("--csv", help="path to the recording, .csv or .dat (default: newest in surveys/)")
     ap.add_argument("--port", type=int, default=8731)
     ap.add_argument("--cols", type=int, default=1200, help="display columns")
     ap.add_argument("--keep", type=int, default=400, help="sweeps held in memory")
@@ -508,9 +781,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
     args = ap.parse_args(argv)
 
     def newest_csv():
+        """The newest recording of either engine: rtl_power's .csv or rtl_power_fftw's .dat."""
         if not station.surveys.exists():
             return None
-        files = sorted(station.surveys.glob("*.csv"), key=lambda p: p.stat().st_mtime)
+        files = sorted(list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat")),
+                       key=lambda p: p.stat().st_mtime)
         return files[-1] if files else None
 
     if args.csv:
@@ -527,7 +802,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
 
     live = {"path": path, "tail": None}
     if path is not None:
-        tail = Tailer(path, args.cols, args.keep)
+        tail = (DatTailer if path.suffix.lower() == ".dat" else Tailer)(path, args.cols, args.keep)
         with TAIL_LOCK:
             TAILERS[path.name] = tail
         live["tail"] = tail
@@ -575,6 +850,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 elif u.path == "/chain/use":
                     chain.use(station, str(form.get("name") or ""))
                     out = chain.summary(station)
+                elif u.path == "/scan/stop":
+                    name = str(form.get("file") or "")
+                    t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)
+                    out = stop_recording(station, t)
                 else:
                     self.send_error(404); return
             except (ValueError, RuntimeError) as exc:

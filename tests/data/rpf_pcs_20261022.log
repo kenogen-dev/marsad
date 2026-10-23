@@ -1,0 +1,11 @@
+Found Elonics E4000 tuner
+Scan session duration: 120 seconds
+Available gains (in 1/10th of dB): -10, 15, 40, 65, 90, 115, 140, 165, 190, 215, 240, 290, 340, 420
+Selected nearest available gain: 290 (29 dB)
+Actual sample rate: 2400000 Hz
+Number of bins: 64
+Total number of (complex) samples to collect: 2400000
+Buffer length: 1638400
+Number of averaged spectra: 37500
+Estimated time of measurements: 1 seconds
+Session duration elapsed.

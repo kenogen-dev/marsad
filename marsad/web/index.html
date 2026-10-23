@@ -127,6 +127,8 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
   <div class="s">left <b id="eta">—</b></div>
   <div class="s" id="fin"></div>
   <div class="s" id="meta">—</div>
+  <div class="s" id="engine" hidden style="color:#e8b14f" title=""></div>
+  <button class="btn halt" id="scan-stop" hidden title="Ask the recorder to finish the pass in progress and stop; the run is then analysed and archived as usual">Stop run</button>
 </header>
 <div class="tabs">
   <div class="tab on" data-pane="scan">Scan</div>
@@ -160,6 +162,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <label><input type="checkbox" id="mk-art"><i class="tri" style="border-bottom-color:#8599a8"></i>hop-centre DC spike / hop-wide impulse</label>
       <label><input type="checkbox" id="mk-grid"><i class="vert" style="background:rgba(232,177,79,.6);height:7px"></i>spur family grid (ticks at the top)</label>
       <label><input type="checkbox" id="mk-hop"><i class="vert" style="background:rgba(133,153,168,.7);height:5px"></i>hop centres (ticks at the bottom)</label>
+      <span id="key-refused" hidden><i style="background:repeating-linear-gradient(135deg,rgba(232,120,120,.55) 0 2px,transparent 2px 5px);height:10px;width:18px;border:1px solid rgba(232,120,120,.6)"></i>hop the tuner refused (PLL would not lock): no data there</span>
     </div>
     <div class="key under"><span class="pk" id="pk" style="margin-left:0"></span></div></div>
   <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
@@ -334,7 +337,21 @@ let rows=[], meds=[], lo=null, hi=null, total=0, have=0, lastBytes=0, stale=0;
 let partial=null, cursorPct=null, hoverPct=null;
 let liveFile=null, curFile=null, surveys=[];
 let FAMILIES=[14.4,28.8,24,25,100], THR=10;
-let peaks=[], hopC=[];
+let peaks=[], hopC=[], refused=[], engine='rtl_power';
+let hatch=null;
+function hatchPattern(x){
+  if(hatch)return hatch;
+  const c=document.createElement('canvas');c.width=c.height=8;const g=c.getContext('2d');
+  g.strokeStyle='rgba(232,120,120,.55)';g.lineWidth=1.5;g.beginPath();g.moveTo(0,8);g.lineTo(8,0);g.moveTo(-2,2);g.lineTo(2,-2);g.moveTo(6,10);g.lineTo(10,6);g.stroke();
+  hatch=x.createPattern(c,'repeat');return hatch;}
+// Refused hops (rtl_power_fftw: "Unable to tune to", PLL would not lock) drawn as hatched
+// gaps, so a missing slice of the band reads as "no data" rather than as silence.
+function drawRefused(x,W,H){
+  if(!refused.length||lo===null)return;
+  x.save();x.fillStyle=hatchPattern(x);
+  for(const [a,b] of refused){const pa=fx((a-lo)/(hi-lo),W),pb=fx((b-lo)/(hi-lo),W);
+    if(pb<0||pa>W)continue;x.fillRect(Math.max(0,pa),0,Math.min(W,pb)-Math.max(0,pa),H);}
+  x.restore();}
 // Marker layers. Detections default on; the two reference grids default off because
 // at full span they are dense enough to read as texture rather than information.
 const marks={sig:true,spur:true,art:true,grid:false,hop:false};
@@ -415,7 +432,10 @@ function drawSpec(floor,span){
   for(let d=0;d<=span;d+=10){x.beginPath();x.moveTo(0,y(floor+d));x.lineTo(W,y(floor+d));x.stroke();
     x.fillStyle='rgba(133,153,168,.6)';x.font='10px ui-monospace,monospace';
     x.fillText((floor+d).toFixed(0),3,y(floor+d)-2);}
+  if(engine==='rtl_power_fftw'){x.fillStyle='rgba(232,177,79,.85)';x.font='10px ui-monospace,monospace';
+    x.fillText('dB on rtl_power_fftw\'s own scale (PSD) — not rtl_power\'s',3,11);}
   x.restore();
+  drawRefused(x,W,H);
   for(const [arr,col,w] of [[mh,'rgba(232,177,79,.55)',1],[rows[rows.length-1],'#4fd3e8',1.3]]){
     if(!arr)continue;
     x.beginPath();x.lineWidth=w;x.strokeStyle=col;let on=false;
@@ -509,6 +529,7 @@ function drawFall(floor,span){
 
 function overlayFall(){
   const f=document.getElementById('fall'),g=f.getContext('2d'),FW=f.width,FH=f.height;
+  drawRefused(g,FW,FH);
   if(!fallImg)return;
   g.putImageData(fallImg,0,0);
   const tk=ticks(fLo(),fHi());
@@ -664,7 +685,9 @@ function fmt(s){if(s===null||s===undefined)return '—';
 function resetView(){
   view={z:1,c:0.5,top:0,fit:true,ry:1};
   rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
-  peaks=[];hopC=[];document.getElementById('pk').textContent='';
+  peaks=[];hopC=[];refused=[];engine='rtl_power';document.getElementById('pk').textContent='';
+  document.getElementById('engine').hidden=true;document.getElementById('key-refused').hidden=true;
+  document.getElementById('scan-stop').hidden=true;
   fallImg=null;lastFloor=null;mh=[];
   for(const id of ['n','last','floor','peak','cur','eta'])document.getElementById(id).textContent='—';
 }
@@ -676,14 +699,14 @@ async function loadSurveys(){
     if(!curFile)curFile=liveFile;
     const sel=document.getElementById('survey');
     sel.innerHTML=surveys.map(s=>{
-      const bits=[s.receiver?s.receiver.toUpperCase():null,s.gain!=null?('g'+s.gain):null,
-                  s.integ!=null?('i'+s.integ):null,s.mb+' MB'].filter(Boolean).join(' · ');
+      const bits=[s.engine==='rtl_power_fftw'?'fftw':null,s.receiver?s.receiver.toUpperCase():null,s.gain!=null?('g'+s.gain):null,
+                  s.integ!=null?('i'+s.integ):null,s.tph!=null?('t'+s.tph):null,s.mb+' MB'].filter(Boolean).join(' · ');
       return `<option value="${s.name}"${s.name===curFile?' selected':''}>${s.name} — ${bits}</option>`;
     }).join('');
     document.getElementById('arch').innerHTML=
       '<thead><tr><th>Survey</th><th>Rx</th><th>Gain</th><th>Integ</th><th>Sweeps</th><th>Range MHz</th><th>MB</th></tr></thead><tbody>'
       +surveys.map(s=>`<tr class="go" data-f="${esc(s.name)}"><td>${esc(s.name)}${s.name===liveFile?' <span class="lv">live</span>':''}</td>`
-        +`<td>${s.receiver?s.receiver.toUpperCase():'—'}</td><td>${s.gain??'—'}</td><td>${s.integ??'—'}</td>`
+        +`<td>${s.receiver?s.receiver.toUpperCase():'—'}${s.engine==='rtl_power_fftw'?' <span class="lv" style="color:#e8b14f">fftw</span>':''}</td><td>${s.gain??'—'}</td><td>${s.integ??(s.tph!=null?s.tph+' s/hop':'—')}</td>`
         +`<td>${s.sweeps??'—'}</td><td>${s.lo!=null?s.lo+'–'+s.hi:'—'}</td><td>${s.mb}</td></tr>`).join('')
       +'</tbody>';
     document.querySelectorAll('#arch tr[data-f]').forEach(tr=>tr.onclick=()=>{
@@ -1333,6 +1356,18 @@ async function tick(){
       if(rows.length>400){rows=rows.slice(-400);meds=meds.slice(-400);}}
     partial=d.partial||null;
     if(d.hop_centres_mhz)hopC=d.hop_centres_mhz;
+    engine=d.engine||'rtl_power';
+    refused=d.refused_mhz||[];
+    const eng=document.getElementById('engine');
+    if(engine==='rtl_power_fftw'){
+      const mm=d.meta||{};
+      eng.hidden=false;
+      eng.innerHTML='rtl_power_fftw · dB = its own scale'+(mm.fingerprint?'  <span style="color:var(--dim)">'+esc(mm.fingerprint)+'</span>':'');
+      eng.title=(mm.scale||'')+(mm.fingerprint?'\nfingerprint: '+mm.fingerprint:'');
+      document.getElementById('key-refused').hidden=!refused.length;
+    }else{eng.hidden=true;document.getElementById('key-refused').hidden=true;}
+    const sb=document.getElementById('scan-stop');
+    sb.hidden=!(engine==='rtl_power_fftw'&&d.can_stop&&curFile===liveFile);
     if(d.peaks){peaks=d.peaks;
       const nk={signal:0,spur:0,artefact:0};for(const p of peaks)nk[p.kind]++;
       document.getElementById('pk').textContent=peaks.length
@@ -1351,7 +1386,9 @@ async function tick(){
       [m.receiver?m.receiver.toUpperCase():null,
        m.gain_db!=null?('g'+m.gain_db):null,
        m.integration_s!=null?('i'+m.integration_s):null,
-       d.expected?('of '+d.expected+' sweeps'):null,
+       d.expected?('of '+(engine==='rtl_power_fftw'?'~':'')+d.expected+(engine==='rtl_power_fftw'?' passes':' sweeps')):null,
+       (engine==='rtl_power_fftw'&&d.planned_hops)?(d.tuned_hops+' of '+d.planned_hops+' hops tuned'+(refused.length?', '+refused.length+' refused':'')):null,
+       (engine==='rtl_power_fftw'&&(d.meta||{}).ended&&!(d.meta||{}).finished_local)?'session ended':null,
        // the analyser's saturation diagnostic: non-finite readings land on the strongest bins
        (d.nonfinite_pct>1)?('⚠ '+d.nonfinite_pct.toFixed(1)+'% readings non-finite: peaks are lower bounds'):null
       ].filter(Boolean).join('  ');
@@ -1373,6 +1410,15 @@ for(const k of ['sig','spur','art','grid','hop']){const el=document.getElementBy
   el.onchange=()=>{marks[k]=el.checked;try{localStorage.setItem('sdr-marks',JSON.stringify(marks));}catch(e){}redrawLight();};}
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showPane(t.dataset.pane));
 document.getElementById('survey').onchange=e=>{curFile=e.target.value;resetView();};
+document.getElementById('scan-stop').onclick=async()=>{
+  const b=document.getElementById('scan-stop');
+  if(!confirm('Stop this rtl_power_fftw run? It finishes the pass in progress, then analyses and archives what it has.'))return;
+  b.disabled=true;
+  try{const r=await fetch('/scan/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:curFile})});
+    const d=await r.json();b.textContent=d.error?('Stop failed: '+d.error):'Stopping…';
+    if(d.error)alert(d.error);}
+  catch(e){b.textContent='Stop failed';}
+  setTimeout(()=>{b.textContent='Stop run';b.disabled=false;},8000);};
 fetch('/roadmap').then(r=>r.text()).then(t=>document.getElementById('road').textContent=t)
   .catch(()=>document.getElementById('road').textContent='TOOL_ROADMAP.md not found');
 loadSurveys();
