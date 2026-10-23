@@ -426,6 +426,18 @@ instead of vanishing.
 - A and C must agree within 3 dB (the line's own wander over half an hour), or B is unreadable.
 - If A shows no line at all: stop, and look at 1799.98 before anything else.
 
+**Amendment after A, before B (22:25).** A found the line at **1633.4721 MHz**, essentially one
+1.17 kHz bin, median **9.1 dB** over floor, 32% occupancy at floor+10. That is ~16 dB weaker than
+its history implies (8-11 dB in 43 kHz bins should be ~25 dB at 1.17 kHz): the UWB in its new spot
+hears it far less than the dipole did, or it has faded. No mirror at 1632.53 (too weak to show).
+At 9 dB a 10 dB drop does not leave a line, so the predictions are restated on the **peak bin's
+median excess over floor**, background per bin 0.28 +/- 0.42 dB:
+
+- real signal: **~2.6 dB** (1.2-4.6 allowing the line's own +/-3 dB wander) - about 5 sigma
+- second- or third-order product made in the chain: **0.3 dB or less**, i.e. background
+
+So B now separates **real vs made-in-chain**, not second- vs third-order. Noted, not hidden.
+
 ---
 
 ## Rules that apply to every run
