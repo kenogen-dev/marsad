@@ -339,14 +339,15 @@ whether it was a one-off. station.json carries the standing chain again.
 
 ---
 
-## Block G - return-loss bridge (started 2026-10-22, BLOCKED on a rewire)
+## Block G - return-loss bridge (started 2026-10-22, BLOCKED on the replacement)
 
-The bridge as shipped has its detector leads shorted (OUT centre to shell 0.3 ohm, should be
+The bridge as shipped had its detector leads shorted (OUT centre to shell 0.3 ohm, should be
 ~100). Every run on 2026-10-22 measured leakage: DUT open read ~25 dB too low, and both ports
-open read 8-10 dB *louder* than one loaded. Rewire per `decoders/rf_bridge_rewire.svg`, then:
+open read 8-10 dB *louder* than one loaded. **Returned 2026-10-22, not rewired; a replacement is
+ordered.** When it arrives, before it touches the radio:
 
 1. **Meter check, nothing connected:** OUT centre to shell ~100 ohm, Input to REF ~50, Input to
-   DUT ~50, REF to DUT ~100.
+   DUT ~50, REF to DUT ~100. A new unit can arrive with the same fault, so this is not optional.
 2. **Radio check, g14, no pad:** DUT open near **-2 dB at 1.3 GHz**; both open **25 dB or more
    below** that. Fail either one and stop.
 3. Only then the three `marsad response` runs (`open`, `load`, `antenna`), whip first, UWB second.

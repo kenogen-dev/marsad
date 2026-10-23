@@ -798,6 +798,27 @@ margin by which `rtl_test` judges a lock, or a drift in the unit is open: re-mea
 `top` preset stays at 2147-2187: it asks for everything, the program drops what will not
 lock, and the `.log` names each dropped hop.
 
+**The owner's first real run (2026-10-22, 18:45-19:37): the PLL ceiling descends as the dongle
+warms.** `marsad run top 1h --device 0 --tag uwb-first --skip-warmup 5`, UWB biconical on the
+notch at the window, g29. The Claude desktop app restarted at 19:37 and took the recorder with
+it after 52 min; the `.dat` was analysed afterwards (`marsad analyze`, 178 passes, 2102 bins,
+2147.30-2186.68 MHz) and archived with the antenna flag. Read pass by pass, the log and the
+data say something the morning run could not: **all 22 hops locked at the start, up to
+2185.8 MHz, and the top ones then dropped out one at a time** - 2185.80 after 3 passes,
+2184.01 after 9, 2182.22 after 16, 2180.43 after 25, 2178.64 after 37, 2176.85 after 53,
+2175.06 after 76, 2173.27 after 116 (about 45 min in), while 2171.48, refused that morning
+after ten hours running, held through all 177 passes. So the E4000's upper lock limit is not a
+fixed 2170.6 or 2187: it is **above 2187 MHz cold and falls to about 2172 MHz as the dongle
+warms**, which is why `rtl_test -t` on a cold unit said 2187 and the warm morning run said
+2170.6. The top 15 MHz of the XTR's range are available for the first minutes of a run and
+then gone. Consequences: the `top` preset stays at 2147-2187 and the program drops what will
+not lock (the log names each hop; the Scan page hatches them); a survey that needs 2172-2187
+MHz has to start cold and be short, or a 50-ohm-cooled dongle is the next experiment; and the
+warm-up discard works against the top slice here, because the warm-up is when those hops
+exist. Floor on the engine's scale: -59.4 dB at 2147.5-2160, -61.0 at 2160-2171, -60.1 at
+2170-2180, -63.5 at 2180-2190 (from the early passes); the four detections (2164.30, 2166.08,
+2180.44, 2182.23) are all hop centres of the plan, nothing else.
+
 Incidental, for anyone reading the raw `.dat`: with `-e` the program writes the extra blank
 line that marks the end of a pass **only once, at the very end**, not after every pass, so
 passes are not separated in the file; the parser groups hops into passes by the frequency
@@ -836,8 +857,10 @@ then **coax-style** wiring if the bridge end has two pads, **balanced-pair** if 
 Pass check on the meter, nothing connected: OUT centre to shell ~100 ohm, Input to REF ~50,
 Input to DUT ~50, REF to DUT ~100. **Pass check on the radio, pre-registered:** DUT open near
 -2 dB at 1.3 GHz at g14, and both-open at least 25 dB below that. Until both pass, `marsad
-response` has nothing valid to work on and no antenna has a return-loss figure. **No run after
-the rewire is recorded yet.**
+response` has nothing valid to work on and no antenna has a return-loss figure. **The unit was
+returned on 2026-10-22 without being rewired, and a replacement is ordered.** The meter and radio
+pass checks above apply to the replacement before any antenna run; the rewire diagram stays in
+`decoders/` in case it arrives with the same fault.
 
 Incidental: 1850-2147 at 25k reads ~3 dB below the LS-range run at 50k in the overlap. That is
 rtl_power's 128- against 64-point FFT, the -3.0 dB step in the fftw characterisation, not the
@@ -1950,6 +1973,36 @@ engines. Its dB are a power spectral density, `10*log10(sum|X|^2 / repeats / N /
 rtl_power's scale; see the characterisation section for the measured offset.
 `tests/test_rpf.py` pins the hop plan (the program's own Plan::Plan arithmetic), geometry,
 fingerprint, command line, log parser and the parser on a sample file.
+
+**The web app shows rtl_power_fftw runs live (2026-10-22).** `marsad live` on 8731 follows
+the newest recording of either engine, `surveys/*.csv` or `surveys/*.dat`, and the Scan tab's
+survey list and Archive table carry both, with an `fftw` tag. A `.dat` is read by
+`live.DatTailer`, a subclass of the CSV tailer that keeps the same spectrum, waterfall,
+median trend, peaks and payload: it remembers its byte offset between polls, reads one block
+per hop (five `#` header lines, N `frequency power` lines, a blank line), converts the
+program's UTC stamps to local time, applies the sidecar's crop as each block lands
+(`int(N*crop/2)` bins off each edge, the analyser's cut, so the live picture is the report's),
+and groups hops into passes by the frequency wrapping down - the only exact rule, because
+hops drop out as the tuner refuses them and `-e` writes the pass-ending blank line only once,
+at the very end. The pass in progress is the partial trace; the last pass closes when the
+`.log` says `Session duration elapsed`. The `.log` is tailed too: every `Unable to tune to`
+becomes a **hatched gap** on the spectrum and the waterfall ("hop the tuner refused: no data
+there"), never a silent hole, and the header says `22 of 22 hops tuned, 8 refused`, passes
+done against planned, and the engine fingerprint. The dB axis carries the note that the
+scale is rtl_power_fftw's own (about 26 dB below rtl_power's 50 kHz scale at 2.4 MS/s), so
+nobody reads the two as one. **Stop works on any rtl_power_fftw run**, not only ones started
+from the page: `rpf.record` now always writes a stop file (`reports/<stem>.stop`, named in
+the sidecar) and polls it; the Scan tab's Stop button posts `/scan/stop`, the recorder sends
+Ctrl-Break, the patched program finishes its pass, and analysis and archiving follow as
+usual. The **Builder tab** has an engine choice: for rtl_power_fftw it offers FFT bins,
+seconds per hop, sample rate and overlap, reproduces the program's hop plan and the measured
+overhead model, previews the engine's fingerprint, flags the ceiling as fine (with the
+warm-dongle caveat) and emits `--engine rtl_power_fftw --bins --time --rate --overlap`; the
+trade-off table varies seconds per hop instead of `-i`. `tests/test_live_dat.py` pins the
+tailer on the real PCS capture (one read against two reads that cut mid-line), the refused
+hops on the log of the owner's first top-slice run, and the newest-of-either-engine follow.
+The live viewer does not auto-start for a `.dat` run from `marsad run` yet (the 8731 copy
+follows it on its own when it is up).
 
 `tools/run_survey.py` — records a survey from a preset, then analyses it:
 
