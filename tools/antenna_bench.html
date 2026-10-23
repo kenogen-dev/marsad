@@ -502,6 +502,7 @@ TYPES.helix={
   init:{cl:1.0,pitch:13,N:7,plate:0,sense:"RHCP",match:"strip",d:1.63},
   help:[["Circumference.","Axial mode holds from 0.75 to 1.33 wavelengths; 1.0 is the middle. The feed resistance is about 140 × C/λ ohms."],["Pitch.","12 to 14° is the classic figure; spacing between turns is C × tan(pitch)."],["Turns.","Each turn adds about 1.5 dB at first; past ten the law flattens and the beam gets hard to point. Iridium is all-sky, so fewer turns and a wider beam see more passes."],["Winding.","Looking from behind the plate along the axis, a right-hand helix advances clockwise. Iridium, Inmarsat and GOES are all right-hand circular; wind the wrong way and you lose 20 dB, not 3."],["Feed.","A strip of copper over the first quarter turn, tapering from the feed, works as a quarter-wave transformer from 140 Ω down to 50."]],
   trim:null,
+  noTrim:{what:"A helix has no dimension to shorten; the match strip is the only thing that reads as a dip.",fix:"lengthen or shorten the strip, or slide it toward the feed.",suspect:"the match or the winding sense"},
   pill:p=>`${p.N} turns ${p.sense}`,
   design(f0,p){const L=lam(f0);return {plate:Math.round(0.75*L/5)*5}},
   model(p,f0){const L=lam(f0);const C=p.cl*L,D=C/Math.PI,S=C*Math.tan(p.pitch*RAD),ax=p.N*S;
@@ -797,7 +798,59 @@ TYPES.qfh={
   plan(p,f0,M){const d=TYPES.qfh.design(f0,p);const g=TYPES.qfh.geom({...p,Lm:d.Lm*1.03});return [`Bend the large loop from <b>${f0_(g.L1)} mm</b> of tube and the small from <b>${f0_(g.L2)} mm</b>, 3 percent long (predicted final ${f0_(d.Lm*(1+p.split/100))} and ${f0_(d.Lm*(1-p.split/100))} mm), the large as ${f0_(g.D1)} across by ${f0_(g.H1)} tall, the small as ${f0_(g.D2)} by ${f0_(g.H2)}, both wound <b>${p.sense}</b>.`,`Cross them at 90°, feed in parallel at the top, run the coax down inside a large-loop element, and stand it on a wooden stool with the bridge's RFOUT on a short jumper. Trim both loops by the same fraction, at the horizontal runs.`]},
   howto:[["Resonance.","Each loop resonates when its closed path is close to one wavelength; the larger loop is above and the smaller below by the split, which is what gives the 90° phasing with no phasing line. The bench puts the dip at the mean loop length times the loop factor, and the geometry (diameter, height, element length) follows from the half-turn and the height-to-diameter ratio: loop = 2·√((πD/2)² + H²) + 2D."],["Match.","Two loops in parallel, taken as 40 Ω with an 8 percent 2:1 bandwidth, the figures the classic 137 MHz builds report. Nothing here models the infinite balun or the tube's own reactance."],["Pattern.","A cardioid pointing up, 2.5 dBic overhead and about 9 dB down at the horizon, circular in the sense the loops are wound. The real pattern depends on the split being right; a QFH with the loops the same size is linearly polarised and lopsided."]]
 };
-const ORDER=["gp","discone","jpole","coco","biquad","helix","qfh","vdip","can","yagi","dipole"];
+/* 12. Log-periodic dipole array: Carrel's design, wideband and directional, nothing to trim. */
+const lpdaZ0=k=>(2500/k+Math.sqrt((2500/k)**2+1e4))/2;  // feeder impedance that makes Rin = Z0/sqrt(1 + Z0/k) equal 50
+TYPES.lpda={
+  id:"lpda",short:"LPDA",name:"Log-periodic dipole array (LPDA)",word:"build",
+  lede:"A row of dipoles, each τ times the one behind it, fed in turn through a two-wire feeder made of the two booms, with a half-twist at every element. Only the few elements near a half wave do the work, so the active region slides along the boom as the frequency changes: one build from ADS-B to the 2.1 GHz downlink, directional, and nothing to trim. Designed by Carrel's method.",
+  f0:{def:1500,min:100,max:2187},presets:[["1090 ADS-B",1090],["1620 Iridium",1620],["2130 downlink",2130]],
+  knobs:[["flo","Lowest frequency",100,2187,1,0,"MHz"],["fhi","Highest frequency",150,3000,1,0,"MHz"],["tau","Scale factor τ",0.80,0.97,0.005,3,""],["sig","Spacing factor σ",0.04,0.22,0.002,3,""],["d","Element diameter",1,12,0.1,1,"mm"],["Z0","Feeder impedance",30,300,1,0,"Ω"],["Db","Boom tube diameter",4,30,0.5,1,"mm"]],
+  init:{flo:1000,fhi:2200,tau:0.9,sig:0.164,d:3.2,Z0:0,Db:10},
+  help:[["Band.","The longest element is a half wave at the lowest frequency; the shortest is set so the highest frequency still has a full active region behind it. Nothing works below the lowest; a little works above the highest."],["τ.","Each element and each gap is τ times the one behind it. Closer to 1 means more elements, a longer boom, more gain and a smoother match: 0.80 is small and about 6 dBi, 0.95 is long and about 9."],["σ.","The gap between two elements over twice the longer one's length. Carrel's best gain for a given τ is at σ = 0.243 τ − 0.051, about 0.17 at τ 0.9. Smaller σ is a shorter boom and less gain."],["Element diameter.","3.2 mm brazing rod is typical. Fatter elements lower each element's impedance, which lowers the feeder impedance needed for 50 Ω."],["Feeder.","The two booms are a two-wire line. Its impedance sets the feed resistance; the bench prints the value that gives 50 Ω and the boom spacing that makes it."],["Boom tube.","Square or round tube carrying the element halves; together with the spacing it sets the feeder impedance."]],
+  trim:null,
+  noTrim:{what:"An LPDA has nothing to trim: the longest element sets the bottom of the band and the shortest sets the top.",fix:"check the boom spacing, which half of each element is on which boom, and the coax through the boom before suspecting any element.",suspect:"the boom spacing or an element half on the wrong boom"},
+  pill:p=>`τ ${p.tau.toFixed(3)}, σ ${p.sig.toFixed(3)}, ${TYPES.lpda.geom(p).N} elements`,
+  // Carrel: cot α = 4σ/(1−τ); active region B_ar = 1.1 + 7.7(1−τ)² cot α; structure bandwidth B_s = B · B_ar; N = 1 + ln B_s / ln(1/τ).
+  geom(p){const flo=p.flo,fhi=Math.max(p.fhi,p.flo*1.05);const B=fhi/flo,cot=4*p.sig/(1-p.tau),Bar=1.1+7.7*(1-p.tau)**2*cot,Bs=B*Bar;
+    const N=Math.ceil(1+Math.log(Bs)/Math.log(1/p.tau));const L=[],x=[];let pos=0;
+    for(let i=0;i<N;i++){const l=lam(flo)/2*Math.pow(p.tau,i);L.push(l);x.push(pos);pos+=2*p.sig*l}
+    return {flo,fhi,B,Bar,Bs,cot,N,L,x,boom:x[N-1],fLo:C0/(2*L[0]/1000)/1e6,fHi:C0/(2*L[N-1]/1000)/1e6/Bar,alpha:Math.atan(1/cot)/RAD}},
+  // Mean element impedance Za = 120(ln(L/d) − 2.25) for the middle element; k = 4σ′Za with σ′ = σ/√τ.
+  feed(p,g){const Lm=g.L[Math.floor(g.N/2)];const Za=Math.max(30,120*(Math.log(Lm/p.d)-2.25));return {Za,k:4*p.sig/Math.sqrt(p.tau)*Za}},
+  design(f0,p){const g=TYPES.lpda.geom(p);return {Z0:Math.round(clamp(lpdaZ0(TYPES.lpda.feed(p,g).k),30,300))}},
+  model(p,f0){const g=TYPES.lpda.geom(p);const {Za,k}=TYPES.lpda.feed(p,g);const Rin=p.Z0/Math.sqrt(1+p.Z0/k);const Zm=lpdaZ0(k);
+    const per=Math.log(1/p.tau),rip=0.05+0.6*(1-p.tau);
+    const Zf=f=>{const ph=2*Math.PI*Math.log(f/g.flo)/per;let R=Rin*(1+rip*Math.sin(ph)),X=Rin*rip*0.7*Math.cos(ph);
+      if(f<g.fLo){const u=f/g.fLo;R=Math.max(4,R*u**4);X-=Rin*8*(1-u)}else if(f>g.fHi)X+=Rin*3*(f/g.fHi-1);return [R,X]};
+    const fres=Math.sqrt(g.fLo*g.fHi);const z=mkZ(Zf,fres);
+    const sopt=0.243*p.tau-0.051,pen=clamp(1.5*((p.sig-sopt)/0.06)**2,0,3),inb=f0>=g.fLo&&f0<=g.fHi;const G=6.3+20*(p.tau-0.8)-pen-(inb?0:3);
+    const hpE=72-120*(p.tau-0.8),hpH=Math.min(130,hpE*1.7),fb=15+20*(p.tau-0.8);const sB=p.Db*Math.cosh(p.Z0/120);
+    return {...z,fres,R0:Rin,G,hpE,hpH,fb,g,Za,sopt,sB,span:[g.fLo,g.fHi],mmPerMHz:0,
+      feedNote:`${f0_(p.Z0)} Ω feeder; 50 Ω wants ${f0_(Zm)}`,gainNote:!inb?`target outside ${f0_(g.fLo)}–${f0_(g.fHi)} MHz: −3 dB and falling`:pen>0.2?`σ off its ${sopt.toFixed(3)} optimum, −${pen.toFixed(1)} dB`:"Carrel's chart less ~1 dB (Butson and Thompson); ±1 dB",
+      rows:[["Elements",`${g.N}`,`${f1(g.L[0])} down to ${f1(g.L[g.N-1])} mm, τ ${p.tau.toFixed(3)}`],["Covers",`${f0_(g.fLo)}–${f0_(g.fHi)} MHz`,`asked ${f0_(g.flo)}–${f0_(g.fhi)}; active region ${g.Bar.toFixed(2)}× wide`],["Boom",`${f0_(g.boom)} mm`,`element 1 to element ${g.N}; apex half-angle ${g.alpha.toFixed(1)}°`],["Twin booms",`${f1(sB)} mm apart`,`centre to centre for ${p.Db} mm tube, gap ${f1(sB-p.Db)} mm`],["Beamwidth",`${f0_(hpE)}° × ${f0_(hpH)}°`,`in the elements' plane × across it; front-to-back ~${f0_(fb)} dB`]],
+      guideRows:[["Feeder for 50 Ω",`${f0_(Zm)} Ω`,`booms ${f1(p.Db*Math.cosh(Zm/120))} mm apart, centre to centre, for ${p.Db} mm tube`],["σ for best gain",sopt.toFixed(3),`Carrel's optimum at τ ${p.tau.toFixed(3)}`],["Element impedance",`${f0_(Za)} Ω`,`120(ln(L/d) − 2.25), middle element`]]};
+  },
+  pattern(p,f0,M){const b=beam(M.hpH,M.fb);return {omni:false,dir:b,bore:"out",azBW:M.hpE,note:()=>`The beam fires off the short end: ${f0_(M.hpE)}° wide in the plane of the elements and ${f0_(M.hpH)}° across it, about ${f0_(M.fb)} dB down behind. With the elements horizontal the narrow plane is the azimuth; the pattern and gain hold nearly constant across the whole band, which is the point of the design.`}},
+  draw(p,f0,M){const g=M.g;const H=330;const sc=Math.min(2.0,440/Math.max(g.boom,1),250/g.L[0]);const x0=40,cy=160;let s="";const w=Math.max(1.5,p.d*0.9);
+    s+=`<line x1="${x0}" x2="${x0+g.boom*sc}" y1="${cy}" y2="${cy}" stroke="var(--muted)" stroke-width="${Math.max(3,p.Db*sc*0.4)}"/>`;
+    // each element's two halves sit on opposite booms and swap at every element: the colours show which half is on the top boom
+    g.L.forEach((l,i)=>{const x=x0+g.x[i]*sc,a=i%2?"var(--sim)":"var(--accent)",b=i%2?"var(--accent)":"var(--sim)";
+      s+=`<line x1="${x}" x2="${x}" y1="${cy-l*sc/2}" y2="${cy}" stroke="${a}" stroke-width="${w}" stroke-linecap="round"/><line x1="${x}" x2="${x}" y1="${cy}" y2="${cy+l*sc/2}" stroke="${b}" stroke-width="${w}" stroke-linecap="round"/>`});
+    const xe=x0+g.boom*sc;
+    s+=`<text x="${x0}" y="${cy-g.L[0]*sc/2-8}" text-anchor="middle">${f1(g.L[0])}</text><text x="${xe}" y="${cy-g.L[g.N-1]*sc/2-8}" text-anchor="middle">${f1(g.L[g.N-1])}</text>`;
+    s+=`<circle cx="${xe}" cy="${cy}" r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/><text x="${xe-6}" y="${cy+18}" text-anchor="end">feed, forward →</text>`;
+    const yb=cy+g.L[0]*sc/2+18;s+=`<line x1="${x0}" x2="${xe}" y1="${yb}" y2="${yb}" stroke="var(--ink)"/><text x="${(x0+xe)/2}" y="${yb+14}" text-anchor="middle">boom ${f0_(g.boom)} mm, ${g.N} elements</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · top view · copper: top boom, blue: bottom</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Two parallel booms, one above the other, insulated from each other. Every element is two halves, one screwed into each boom, and which boom carries the left half swaps at every element: that half-twist is the whole trick. The coax runs inside one boom from the long end, braid to that boom and centre conductor to the other, at the short end.",
+  chain:p=>{const g=TYPES.lpda.geom(p);return `log-periodic dipole array (${g.N} elements of ${p.d.toFixed(1)} mm rod, ${f1(g.L[0])} to ${f1(g.L[g.N-1])} mm, tau ${p.tau.toFixed(3)}, sigma ${p.sig.toFixed(3)}, boom ${f0_(g.boom)} mm, twin booms ${f1(p.Db*Math.cosh(p.Z0/120))} mm apart for ${f0_(p.Z0)} ohm, coax through the boom to the short end, elements horizontal, short end forward)`},
+  plan(p,f0,M){const g=M.g;const tab=g.L.map((l,i)=>`${i+1}: ${f1(l)} @ ${f1(g.x[i])}`).join(" · ");
+    return [`Cut ${g.N} elements of ${p.d.toFixed(1)} mm rod, each in two halves, and mark the booms from the long end. Element number: tip-to-tip length @ distance from element 1, in mm: <span class="mono">${tab}</span>. Tip to tip includes the gap between the booms.`,
+      `Fix the booms <b>${f1(M.sB)} mm</b> apart, centre to centre (${p.Db} mm tube, ${f0_(p.Z0)} Ω). Swap which boom carries the left half at every element. Feed coax inside one boom from the long end, out at the short end: braid to that boom, centre to the other.`,
+      `Put the short end on the bridge's RFOUT port through a short jumper, pointing at the room's emptiest corner. Nothing is cut afterwards: the check is that the SWR stays under 2:1 from ${f0_(g.fLo)} to ${f0_(g.fHi)} MHz.`]},
+  howto:[["Resonance.","There is no single resonance. The elements are half waves from the lowest frequency up, each τ times the last, so at any frequency the two or three elements near a half wave carry the current and the rest stay quiet. Carrel's active-region width 1.1 + 7.7(1 − τ)² cot α sets how many extra short elements are needed above the top frequency; the element count and the boom follow from it."],["Match.","The booms form a feeder of impedance Z0 loaded by the active elements, which gives Rin = Z0/√(1 + Z0/(4σ′Za)) with σ′ = σ/√τ and Za = 120(ln(L/d) − 2.25) (Carrel). The bench draws that resistance with a ripple that repeats every factor τ in frequency, larger for smaller τ, and a collapse below the longest element's half-wave frequency. The ripple size is a rule of thumb, not a derivation."],["Pattern.","A cos-power beam off the short end. Gain is a straight-line fit to Carrel's chart less the 1 to 2 dB Butson and Thompson later showed it overstated: about 6.3 dBi at τ 0.80 rising to 9.3 at 0.95, less a penalty when σ is away from 0.243 τ − 0.051. Trust it to ±1 dB."]]
+};
+const ORDER=["gp","discone","jpole","coco","biquad","helix","qfh","vdip","can","yagi","lpda","dipole"];
 
 /* ---------- state ---------- */
 const S={type:"gp",B:{},log:[]};
@@ -852,6 +905,10 @@ const SOLVE={
     note:()=>{const tb=0.25*lam(1800);return `<b>Textbook starting point, not the station's answer.</b> At 1800 MHz a quarter wave is ${f1(tb)} mm per whip (${f1(tb*0.95)} with the 0.95 end effect), yet four measured lengths put the best at <b>60 mm</b>: −16.6 dB on 1799.98 MHz, against −20.7 at 50, −17.6 at 75 and −24.5 at 100. The model knows nothing of the LaNA at the feed, the glass or the L, and with an amplifier at the feed the pattern counts for more than the match. The archive outranks this.`}},
   discone:{after:p=>{p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
     note:()=>"The cone slant is what Solve moves; the disc follows at 0.7 × the cone bottom and the lowest-frequency knob follows the cutoff. One frequency puts it on the first dip, which is the smallest discone that hears it."},
+  lpda:{custom:(freqs,p,T)=>{const one=freqs.length===1,m=one?1.15:1.05;const q={...p};
+      q.flo=clamp(Math.round(Math.min(...freqs)/m),100,2187);q.fhi=clamp(Math.round(Math.max(...freqs)*m),150,3000);
+      q.sig=clamp(Math.round((0.243*q.tau-0.051)/0.002)*0.002,0.04,0.22);Object.assign(q,T.design(0,q));return q},
+    note:()=>"Nothing on an LPDA is trimmed. Solve puts the band edges 5 percent outside the frequencies asked (15 percent either side of a single one), sets σ to Carrel's optimum for your τ, and sets the feeder to the impedance that gives 50 Ω. τ is the size-against-gain choice and stays yours; 0.9 is a fair middle."},
   helix:{key:"cl",direct:()=>1,note:()=>"Nothing on a helix is trimmed. Solve sets the circumference to one wavelength at the centre frequency, the middle of the axial-mode band, and the plate to 0.75 λ there; the turns and pitch are yours."}
 };
 const knobOf=(T,k)=>T.knobs.find(x=>x[0]===k);
@@ -864,7 +921,11 @@ function parseFreqs(text,T,f0){const out=[],dropped=[];const t=String(text||"").
     else{const v=parseFloat(tok);if(isFinite(v)&&v>0)add(v);else dropped.push(tok)}}
   return {freqs:[...new Set(out)].sort((a,b)=>a-b),dropped}}
 function solveFor(T,B,freqs){
-  const sp=SOLVE[T.id]||{};const key=sp.key||T.trim.key;
+  const sp=SOLVE[T.id]||{};
+  // a design with no single trimmed dimension (the LPDA) sets its own band edges; it is reported like the helix, centred
+  if(sp.custom){const gm=Math.exp(freqs.reduce((a,f)=>a+Math.log(f),0)/freqs.length);
+    return {p:sp.custom(freqs,{...B.p},T),f0:Math.round(gm*10)/10,mode:"centre",edge:null,ideal:null,compromise:null,key:null,gm,clamped:[],limWhy:null}}
+  const key=sp.key||T.trim.key;
   const range=k=>{const n=knobOf(T,k);return (sp.lim&&sp.lim[k])||[n[2],n[3]]};
   const n0=knobOf(T,key);const stp=n0[6]==="mm"?Math.min(n0[4],0.1):Math.pow(10,-n0[5]);
   const gm=Math.exp(freqs.reduce((a,f)=>a+Math.log(f),0)/freqs.length);
@@ -906,11 +967,11 @@ $("solveOut").addEventListener("click",e=>{if(!e.target.closest("#bRevert"))retu
 function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true;el.innerHTML="";return}el.hidden=false;
   const fmt=(n,v)=>typeof v!=="number"?esc(v):v.toFixed(Math.max(n[5],n[6]==="mm"&&n[0]===s.key?1:0));
   const unit=n=>n[6]==="°"?"°":n[6]?" "+n[6]:"";
-  const Mo=T.model(s.old.p,s.old.f0),Mn=T.model(s.newP,s.f0);const kname=SOLVE[T.id]?.key?"circumference":T.trim.label;
+  const Mo=T.model(s.old.p,s.old.f0),Mn=T.model(s.newP,s.f0);const kname=SOLVE[T.id]?.key?"circumference":T.trim?T.trim.label:"design";
   const rows=[];if(Math.abs(s.old.f0-s.f0)>1e-9)rows.push(`<tr><td>Target</td><td class="n">${fF(s.old.f0)} → <b>${fF(s.f0)}</b> MHz</td><td class="small muted">${s.freqs.length>1?"geometric mean":"the frequency asked"}</td></tr>`);
   for(const n of T.knobs){const k=n[0],a=s.old.p[k],b=s.newP[k];if(a===b||(typeof a==="number"&&Math.abs(a-b)<1e-9))continue;
     const cl=s.clamped.find(c=>c[0]===k);
-    const why=k===s.key?(s.edge?`<span class="chip bad">at the ${s.edge==="lo"?"short":"long"} limit</span>`:`<span class="chip good">solved</span>`):cl?`<span class="chip warn">clamped</span> rule says ${fmt(n,cl[1])}`:SOLVE[T.id]?.after?"follows":"design rule";
+    const why=k===s.key?(s.edge?`<span class="chip bad">at the ${s.edge==="lo"?"short":"long"} limit</span>`:`<span class="chip good">solved</span>`):cl?`<span class="chip warn">clamped</span> rule says ${fmt(n,cl[1])}`:SOLVE[T.id]?.custom?"set by Solve":SOLVE[T.id]?.after?"follows":"design rule";
     rows.push(`<tr><td>${esc(n[1].split(",")[0])}</td><td class="n">${fmt(n,a)} → <b>${fmt(n,b)}</b>${unit(n)}</td><td class="small muted">${why}</td></tr>`)}
   const fr=s.freqs.map(f=>{const so=Mo.swr(f),sn=Mn.swr(f),g=Mn.gam(f),rl=-20*Math.log10(Math.max(g,1e-4));
     return `<tr><td class="n">${fF(f)}</td><td class="n muted">${so<50?f2(so):"»10"}</td><td class="n"><span class="chip ${cls(sn)}">${sn<50?f2(sn):"»10"}:1</span></td><td class="n">${rl>=40?"≥40":rl.toFixed(1)} dB</td></tr>`}).join("");
@@ -958,6 +1019,7 @@ function swrChart(T,B,M){const W=640,H=300,L=44,R=12,Tp=14,Bm=34;const f0=B.f0;c
   let fx0=f0*0.82,fx1=f0*1.1;fx0=Math.min(fx0,M.fres-0.04*f0);fx1=Math.max(fx1,M.fres+0.04*f0);
   for(const p of mp){fx0=Math.min(fx0,p.f);fx1=Math.max(fx1,p.f)}
   const sf=B.solve?B.solve.freqs:[];for(const f of sf){fx0=Math.min(fx0,f*0.97);fx1=Math.max(fx1,f*1.03)}
+  if(M.span){fx0=Math.min(fx0,M.span[0]*0.9);fx1=Math.max(fx1,M.span[1]*1.08)}
   const X=f=>L+(f-fx0)/(fx1-fx0)*(W-L-R),Y=s=>Tp+(1-Math.log10(clamp(s,1,10)))*(H-Tp-Bm);
   let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="SWR against frequency, predicted and measured">`;
   for(const [n,lo,hi] of CATALOGUE){if(hi<fx0||lo>fx1)continue;s+=`<rect x="${X(Math.max(lo,fx0)).toFixed(1)}" y="${Tp}" width="${(X(Math.min(hi,fx1))-X(Math.max(lo,fx0))).toFixed(1)}" height="${H-Tp-Bm}" fill="var(--sunk)"/>`}
@@ -1006,7 +1068,7 @@ function polar(T,B,M){const S_=230,c=115,Rr=92;const pat=T.pattern(B.p,B.f0,M);
 }
 
 /* ---------- bands ---------- */
-function bands(T,B,M){const list=bandsFor(B.f0);
+function bands(T,B,M){const list=M.span?CATALOGUE.filter(b=>b[2]>=M.span[0]*0.9&&b[1]<=M.span[1]*1.1):bandsFor(B.f0);
   const rows=list.map(([n,lo,hi,note])=>{const fc=(lo+hi)/2;const sw=M.swr(fc),ml=M.ml(fc),g=M.G-ml;
     let mrow="";if(B.meas){const near=B.meas.points.filter(p=>p.f>=lo&&p.f<=hi&&p.flag==="ok");if(near.length){const m=near.reduce((a,b)=>a+b.swr,0)/near.length;const gm=Math.min((m-1)/(m+1),0.999);mrow=`${f2(m)}:1, ${(-10*Math.log10(1-gm*gm)).toFixed(2)} dB`}}
     return `<tr><td><b>${esc(n)}</b><div class="small muted">${esc(note)}</div></td><td class="n">${lo}–${hi}</td><td class="n"><span class="chip ${cls(sw)}">${sw<50?f2(sw):"»10"}:1</span></td><td class="n">${ml.toFixed(2)} dB</td><td class="n">${g.toFixed(1)} dBi</td><td class="n">${mrow||'<span class="muted">—</span>'}</td></tr>`});
@@ -1018,10 +1080,10 @@ function bands(T,B,M){const list=bandsFor(B.f0);
 /* ---------- cut guide and plan ---------- */
 function guide(T,B,M){const f0=M.goal||B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim;const gname=M.goal?"the design dip":"the target";
   $("guideTitle").textContent=tr?"Cut guide":"What the dip means";$("logTitle").textContent=tr?"Cut log":"Run log";$("bLog").textContent=tr?"Record this cut":"Record this run";
-  $("planNote").textContent=tr?"Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.":"Nothing on this antenna is cut to tune it. If the bridge disagrees with the page, the match or the winding sense is the first suspect, not a dimension.";
+  $("planNote").textContent=tr?"Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.":`Nothing on this antenna is cut to tune it. If the bridge disagrees with the page, ${T.noTrim.suspect} is the first suspect, not a dimension.`;
   let verdict,cut=0,cls2="",rows=[];
   if(!tr){const sw=B.meas?B.meas.points.filter(p=>p.flag==="ok").reduce((a,b)=>b.swr<a.swr?b:a,{swr:99}).swr:null;
-    verdict=`<b>No trim.</b> A helix has no dimension to shorten; the match strip is the only thing that reads as a dip. ${sw!=null?`Best measured SWR ${f2(sw)}:1 at ${f0_(fm)} MHz${sw<=2?": good enough, stop.":": lengthen or shorten the strip, or slide it toward the feed."}`:"Overlay the bridge's curve and read the SWR across the band rather than looking for a dip."}`;cls2=sw==null?"":sw<=2?"good":"warn";
+    verdict=`<b>No trim.</b> ${T.noTrim.what} ${sw!=null?`Best measured SWR ${f2(sw)}:1 at ${f0_(fm)} MHz${sw<=2?": good enough, stop.":": "+T.noTrim.fix}`:"Overlay the bridge's curve and read the SWR across the band rather than looking for a dip."}`;cls2=sw==null?"":sw<=2?"good":"warn";
     rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of target`]].concat(M.guideRows||[])}
   else{const dimNow=B.p[tr.key];const full=M.cutFor?M.cutFor(fm):dimNow*(1-ratio);
     if(Math.abs(ratio-1)<=0.004){verdict=`<b>On target.</b> The dip is within ${fT(f0*0.004)} MHz of ${fF(f0)}${M.goal?", the design dip":""}. Stop cutting.`;cls2="good"}
