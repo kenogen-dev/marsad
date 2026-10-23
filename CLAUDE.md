@@ -41,7 +41,7 @@ Never delete raw survey CSVs or recordings without asking.
 | Item | Details |
 |---|---|
 | **Main receiver** | Nooelec **NESDR SMArTee XTR** (shows as "SMArTee XTR v5ee"). RTL2832U + **Elonics E4000** tuner, zero-IF. 0.5 ppm TCXO (28.8 MHz). |
-| XTR range | **52–2187 MHz** and **gap 1095–1240 MHz**, both measured on this unit (SN 08701076) with `rtl_test -t` on 2026-10-13. Nominal spec is ~52–2200 (some units ~2300) with a ~1105–1268 gap; the E4000 PLL varies per unit, so trust the measured figures. |
+| XTR range | **52–2187 MHz** and **gap 1095–1240 MHz**, both measured on this unit (SN 08701076) with `rtl_test -t` on 2026-10-13 - **cold figures**. Warm after an hour of streaming (2026-10-23): **52–2170, gap 1086–1230**; the whole PLL range slides down as it warms, see "Block H3". Nominal spec is ~52–2200 (some units ~2300) with a ~1105–1268 gap; the E4000 PLL varies per unit, so trust the measured figures. |
 | XTR gains (dB) | -1, 1.5, 4, 6.5, 9, 11.5, 14, 16.5, 19, 21.5, 24, 29, 34, 42. Use these exact values with `-g`. |
 | XTR bias-tee | **Always on** (hardware); SDR++ "Bias T" checkbox and `rtl_biast` have no effect. |
 | Second receiver | Nooelec **NESDR SMArt v5** (R860 tuner, low-IF), 24–1766 MHz, no gap, HF direct sampling 0.1–25 MHz. Cleaner and more sensitive above ~700 MHz; planned as sniffer / L-band (1.3–1.7 GHz) receiver. |
