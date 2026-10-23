@@ -1048,6 +1048,50 @@ starting temperature and the room matter, but the shape repeats. Practical rules
   how warm the dongle was.
 - The gap's top edge moving down (1239 -> 1230) only widens what LS (starting at 1241) can use.
 
+### Block H4, UWB on the LS fingerprint (2026-10-23, 12:19-12:58): no better than the whip in its own spot
+
+Pre-registered in RUNSHEET H4. `custom 2h --freq 1241M:2148M:50k -g 29 -i 120`, UWB on the
+standing chain, dongle warm from H3. **Cut short at 12:57:48 (38 min, 19 sweeps)** by a Ctrl-C
+reaching its console; the recorder died without finishing, so it was analysed afterwards with
+the pre-registered `--skip-sweeps 8`, leaving 11 sweeps (the sidecar has a
+`conditions_correction`). That is as long as the 30 min whip runs it is read against, so the
+comparison stands.
+
+Within-run plateaus (block median minus the run's own empty 2049-2099 block):
+
+| Block | UWB H4 | whip casc5 (10-19 18:47) | whip A1 (10-20 07:28) | whip A2 (10-20 10:20) | whip restored (10-21 09:27) | UWB minus whip mean |
+|---|---|---|---|---|---|---|
+| 1241-1341 | 7.35 | 6.10 | 7.81 | 7.26 | 10.84 | -0.65 (whip spread 4.7) |
+| 1441-1541 | 4.02 | 5.22 | 6.37 | 5.04 | 6.50 | -1.76 |
+| 1930-1990 PCS downlink | **8.62** | 10.41 | 9.29 | 10.02 | 10.35 | **-1.39**, below all four |
+| 2124-2147 AWS downlink | **3.36** | 3.06 | 3.47 | 2.82 | 3.08 | **+0.25**, inside the whip range |
+
+**Against the predictions:** AWS at least +1.5 dB for the UWB: **REFUTED** (+0.25). PCS at least
++1.0: **REFUTED** (-1.39, the UWB is below every whip run). 1241-1341 within +/-2 dB: held.
+
+**Why this does not contradict the 2049 deep tiles.** There the dipole was **moved to the UWB's
+exact spot**, at g42, and the UWB won by +1.8 to +2.3 dB on the AWS plateau. Here the whip runs
+sit in the dipole's own spot, 8 in left and a few inches higher, at g29. So H4 compares **antenna
+plus position**, and the position seems to give back what the antenna gains. A second effect
+works the same way: at g29 the AWS plateau is only ~3 dB above the digital floor, which squeezes
+any difference (a real +2.3 dB at a 3.1 dB plateau would read about +1.3). **Reading: at its
+current spot the UWB is no better than the whip across LS.** The UWB's advantage is real but
+needs the better spot to show, so the dipole's outlined spot, or outside, is where it belongs.
+The clean test is the UWB moved onto the dipole's outline, 30 min at this fingerprint.
+
+**Incidentals, same run:**
+
+- **1633.47 MHz is almost gone with the UWB**: +1.4 dB over the floor, against +7.6 to +10.9 in
+  all four whip runs. The external carrier 1799.98 MHz dropped only 1-7 dB by comparison (+16.6
+  against +17.6 to +23.9). A line that falls ~8 dB more than a distant carrier when the antenna
+  moves 8 inches is a **near-field source close to the dipole's spot**, which fits Block H2 and
+  the Block E outside result. That is where the probe hunt should start.
+- **1799.98 MHz is back** at +16.6 dB, steady; retired as a yardstick on 2026-10-20 and not
+  reinstated on one run.
+- **1435.92 MHz** (aeronautical telemetry, previously seen only with the antenna outside) at
+  +7.9 dB median, against +1.1 to +3.6 in the whip runs. The UWB at its spot hears it; the whip
+  did not.
+
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
 The test the 2 GHz positive control asked for. `deep-2049-uwb-g42` (18:40) and

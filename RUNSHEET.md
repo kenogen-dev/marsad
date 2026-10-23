@@ -497,6 +497,14 @@ digital floor), because the runs are at different hours:
   there, so the UWB has no advantage to show.
 - 1799.98 MHz is not used (retired as a yardstick 2026-10-20).
 
+**DONE (cut to 38 min by a Ctrl-C at 12:57; 11 sweeps analysed). Two of three refuted.** AWS
+plateau UWB +0.25 dB over the whip mean (predicted at least +1.5); PCS **-1.39** (predicted at
+least +1.0); 1241-1341 within +/-2 (held). The whip runs sit in the dipole's own spot, the UWB
+8 in away, so this measures antenna plus position; the same-spot deep tiles still stand. **Next:
+UWB onto the dipole's outline, 30 min at this fingerprint.** Bonus: 1633.47 MHz nearly vanished
+(+1.4 dB) with the UWB, pointing at a source close to the dipole's spot - start the probe hunt
+there. Details in CLAUDE.md "Block H4".
+
 ---
 
 ## Rules that apply to every run
