@@ -29,15 +29,15 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:1rem;line-height:1.55;
-  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 72px}
-.wrap{max-width:1140px;margin:0 auto;display:grid;gap:22px}
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 72px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:18px}
 h1,h2,h3{font-family:var(--f-display);font-weight:600;line-height:1.1;margin:0;text-wrap:balance}
-h1{font-size:clamp(2rem,5vw,2.9rem);letter-spacing:-.01em}
+h1{font-size:clamp(1.7rem,4vw,2.3rem);letter-spacing:-.01em}
 h2{font-size:1.45rem}
 h3{font-size:1.1rem}
 h4{margin:0;font-family:var(--f-mono);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
 p{margin:0}
-.lede{color:var(--muted);max-width:66ch;font-size:1.08rem}
+.lede{color:var(--muted);max-width:90ch;font-size:.98rem;line-height:1.45}
 .eyebrow{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
 .mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 .muted{color:var(--muted)} .small{font-size:.86rem}
@@ -45,7 +45,7 @@ a{color:var(--sim)}
 button,input,select,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-header{display:grid;gap:10px}
+header{display:grid;gap:6px}
 .topline{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
 .pill{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--line);border-radius:999px;padding:.2rem .7rem;font-size:.84rem;background:var(--surface)}
 .pill b{font-family:var(--f-mono);font-weight:500}
@@ -54,7 +54,7 @@ header{display:grid;gap:10px}
 
 section{display:grid;gap:14px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:clamp(14px,2.4vw,22px);min-width:0}
-.bench{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr);gap:18px;align-items:start}
+.bench{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);gap:18px;align-items:start}
 @media (max-width:860px){.bench{grid-template-columns:1fr}}
 .drawing{background:var(--sunk);border-radius:10px;padding:10px;min-width:0}
 .drawing svg{width:100%;height:auto;display:block;max-width:100%}
@@ -118,6 +118,12 @@ details[open]>summary{margin-bottom:.6rem}
 .knobs.compact .knob{gap:1px 10px}
 .knobs.compact details{padding:.4rem .7rem}
 .stack{display:grid;gap:14px;min-width:0}
+.live{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(220px,.9fr);gap:14px;align-items:start}
+@media (max-width:700px){.live{grid-template-columns:1fr}}
+.live .ro{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
+.live .ro>div{padding:.3rem .5rem}
+.live .ro .v{font-size:.92rem}
+.live .ro .s{font-size:.74rem;line-height:1.3}
 .ro.tight>div{padding:.4rem .6rem}
 .ro.tight .v{font-size:.98rem}
 .measgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
@@ -155,8 +161,11 @@ details[open]>summary{margin-bottom:.6rem}
 
   <div class="stack">
     <div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Predicted</h2><span class="note">from the lengths beside it</span></div>
-      <div class="ro tight" id="ro" style="margin-top:8px"></div>
+      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>As built, and what it predicts</h2><span class="note">drawn to scale · numbers follow the knobs</span></div>
+      <div class="live" style="margin-top:8px">
+        <div><div class="drawing"><svg id="draw" viewBox="0 0 520 360" role="img" aria-label="Drawing of the antenna with element lengths"></svg></div><p class="note" style="margin-top:6px" id="drawNote"></p></div>
+        <div class="ro tight" id="ro"></div>
+      </div>
       <div class="score" id="score"></div>
     </div>
 
@@ -184,13 +193,13 @@ details[open]>summary{margin-bottom:.6rem}
   </div>
 </section>
 
-<!-- THE ANTENNA AND ITS PATTERN -->
+<!-- PATTERN AND PLAN -->
 <section>
   <div class="bench">
     <div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:baseline"><h2>The antenna, as built</h2><span class="note">Drawn to scale</span></div>
-      <div class="drawing" style="margin-top:10px"><svg id="draw" viewBox="0 0 520 360" role="img" aria-label="Drawing of the antenna with element lengths"></svg></div>
-      <p class="note" style="margin-top:8px" id="drawNote"></p>
+      <h2>Plan from here</h2>
+      <ol class="steps" id="plan" style="margin-top:10px"></ol>
+      <p class="note" style="margin-top:8px" id="planNote">Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.</p>
     </div>
     <div class="panel polar">
       <h2 id="polarTitle">Elevation pattern, predicted</h2>
@@ -206,15 +215,6 @@ details[open]>summary{margin-bottom:.6rem}
     <h2>What it hears in the station's bands</h2>
     <p class="note" style="margin-top:4px" id="bandsNote"></p>
     <div class="scroll" style="margin-top:10px"><table id="bands"></table></div>
-  </div>
-</section>
-
-<!-- PLAN -->
-<section>
-  <div class="panel">
-    <h2>Plan from here</h2>
-    <ol class="steps" id="plan" style="margin-top:10px"></ol>
-    <p class="note" style="margin-top:8px" id="planNote">Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.</p>
   </div>
 </section>
 
@@ -275,7 +275,7 @@ function mkZ(Zf,fres){
   const swr=f=>{const g=gam(f);return (1+g)/(1-g)};
   const ml=f=>{const g=gam(f);return -10*Math.log10(1-g*g)};
   const st=fres>=500?1:0.1;let lo=fres,hi=fres;
-  if(swr(fres)<=1.98){while(swr(lo-st)<=2&&lo>fres*0.5)lo-=st;while(swr(hi+st)<=2&&hi<fres*1.6)hi+=st}
+  if(swr(fres)<=1.98){while(swr(lo-st)<=2&&lo>fres*0.5)lo-=st;while(swr(hi+st)<=2&&hi<fres*10)hi+=st}
   return {Z:Zf,gam,swr,ml,bwLo:lo,bwHi:hi};
 }
 // Series-resonant style impedance: R grows with f^2 as the element gets electrically longer, X is a straight line in f/fres.
@@ -671,13 +671,56 @@ TYPES.dipole={
   plan(p,f0,M){const d=TYPES.dipole.design(f0,p);return [`Set both whips to <b>${f1(d.arm)} mm</b> (the telescoping whips slide, so there is nothing to cut), ${p.ang}° apart.`,`Put the mount's SMA on the bridge's RFOUT port in free air. This is also the only antenna here with four archive points to check the bridge against: 60 mm should dip near ${f0_(0.95*C0/(0.24)/1e6)} MHz.`]},
   howto:[["Resonance.","A quarter wave per whip times the end-effect factor, the same arithmetic as the ground plane's vertical with the droop set to 90°."],["Match.","73 Ω straight, scaled by the angle between the whips, and the thin-wire reactance slope for the whip's length and diameter."],["Pattern.","A straight dipole's figure, taken for the vertical whip; the L's horizontal whip is not modelled separately. The archive numbers in the readouts are measured, not predicted, and outrank everything else on this page."]]
 };
-const ORDER=["gp","coco","biquad","helix","vdip","can","yagi","dipole"];
+
+/* 9. Discone: a broadband vertical with no radials and no reflector. */
+TYPES.discone={
+  id:"discone",short:"Discone",name:"Discone",word:"cut",
+  lede:"A disc over a cone, fed across the gap between them. The cone's slant length sets a cutoff; above it the discone sits near 50 Ω for several octaves with no radials and no reflector, so one small build covers ADS-B, the radar and the 2.1 GHz downlink at once. Omnidirectional, dipole gain.",
+  f0:{def:1090,min:300,max:2187},presets:[["1090 ADS-B",1090],["1265 radar",1265],["2130 downlink",2130]],
+  knobs:[["flow","Lowest frequency to cover",100,2187,1,0,"MHz"],["L","Cone slant, each wire",10,800,0.5,1,"mm"],["ang","Cone included angle",40,90,1,0,"°"],["disc","Disc diameter",5,600,0.5,1,"mm"],["gap","Disc to cone gap",1,20,0.5,1,"mm"],["N","Cone wires",6,24,1,0,""],["d","Wire diameter",0.5,4,0.01,2,"mm"]],
+  init:{flow:1000,L:0,ang:60,disc:0,gap:3,N:12,d:1.63},
+  help:[["Lowest frequency.","The design knob. The cone's slant length is a quarter wave here, and the match holds from a little above it to roughly eight times it. 1000 MHz gives a 75 mm cone that covers 1090, 1265 and 2130 together."],["Slant.","Each cone wire, from the small end to the tip. The only thing that moves the cutoff, and the only trim. Shorter raises it."],["Angle.","60° included is the classic; wider (90°) lowers the impedance a little and shortens the build, narrower raises it. Between 50 and 70 nothing much changes."],["Disc.","0.7 times the cone's bottom diameter. It sets how well the top of the band matches, not where the band starts."],["Gap.","As small as the connector allows: the disc sits on the centre pin, the cone wires on the flange, so the gap is the pin's exposed length."],["Cone wires.","Eight is the minimum that behaves like a sheet at the top of the band; twelve or sixteen is better. A solid sheet cone is the same antenna, heavier."]],
+  trim:{key:"L",label:"cone wires"},
+  pill:p=>`${p.N} wires, cutoff ${p.flow} MHz`,
+  design(f0,p){const L=r5(0.25*lam(p.flow));const B=2*L*Math.sin(p.ang/2*RAD);return {L,disc:r5(0.7*B)}},
+  model(p,f0){const fcut=C0/(4*p.L/1000)/1e6;const fres=1.12*fcut;const B=2*p.L*Math.sin(p.ang/2*RAD);const dr=p.disc/(0.7*B);
+    const slope=wireSlope(p.L,p.d/2);
+    const Zf=f=>{const u=f/fres;if(u<1)return [Math.max(4,50*u*u*u),-slope*(1-u)*(1+3*(1-u))];
+      const ph=2*Math.PI*Math.log(u)/Math.log(2.5);const rip=0.22+0.3*Math.abs(dr-1)+0.12*Math.max(0,u-5);return [50*(1+rip*Math.sin(ph)),50*(rip+0.06)*Math.cos(ph)+22*Math.max(0,u-5)]};
+    const z=mkZ(Zf,fres);const hgt=p.L*Math.cos(p.ang/2*RAD)+p.gap;
+    return {...z,fres,goal:fres,goalNote:`1.12 × the ${f0_(fcut)} MHz cutoff; the guide trims against this`,R0:50,G:2.1,fcut,B,mmPerMHz:p.L/fres,feedNote:"disc to cone, broadband",gainNote:"dipole-like; the lobe leans down the cone as frequency rises",
+      rows:[["Cutoff",`${f0_(fcut)} MHz`,`slant ${f1(p.L)} mm = λ/4 there`],["Cone, bottom",`${f0_(B)} mm`,`${p.ang}° included; top as small as the connector`],["Disc",`${f1(p.disc)} mm`,`${(p.disc/B).toFixed(2)} × cone bottom; 0.70 is the rule`],["Height overall",`${f0_(hgt)} mm`,"disc to cone tips"]],
+      guideRows:[["Disc, set at",`${f1(0.7*B)} mm`,"0.7 × cone bottom; it moves the top of the band, not the cutoff"]]};
+  },
+  pattern(p,f0,M){const kh=Math.min(2*Math.PI*p.L/lam(f0),1.9);const u=f0/M.fres;const t=clamp(0.6*(u-1),0,1.5);
+    return {omni:true,el:el=>wireE(kh,Math.PI/2-el)*(1+t*Math.max(0,-Math.sin(el))),note:pk=>`Strongest ${pk>=0?"+":""}${pk}° from the horizon at ${fF(f0)} MHz. Just above the cutoff a discone is a dipole; ${u>1.3?"this far above it the lobe leans down the cone, which on a window mount is toward the street rather than the sky":"higher up its band the lobe leans down the cone"}. Mount it disc up.`}},
+  draw(p,f0,M){const H=330;const ca=p.ang/2*RAD;const h=p.L*Math.cos(ca);const sc=Math.min(1.8,240/(h+p.gap),430/Math.max(M.B,p.disc));const cx=260,yd=70;let s="";
+    const yt=yd+p.gap*sc,yb=yt+h*sc,rb=M.B/2*sc,ry=Math.max(6,rb*0.28),rd=p.disc/2*sc;
+    s+=`<ellipse cx="${cx}" cy="${yb}" rx="${rb}" ry="${ry}" fill="none" stroke="var(--accent)" stroke-dasharray="3 3" opacity=".5"/>`;
+    let back="",front="";for(let i=0;i<p.N;i++){const a=2*Math.PI*i/p.N+Math.PI/p.N;const x=cx+rb*Math.sin(a),y=yb-ry*Math.cos(a);const seg=`<line x1="${cx+(Math.sin(a)>0?3:-3)}" y1="${yt}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--accent)" stroke-width="${Math.max(1.6,p.d*1.4)}" stroke-linecap="round"${Math.cos(a)>0?' opacity=".35"':""}/>`;if(Math.cos(a)>0)back+=seg;else front+=seg}
+    s+=back;s+=`<ellipse cx="${cx}" cy="${yd}" rx="${rd}" ry="${Math.max(4,rd*0.28)}" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>`;s+=front;
+    s+=`<rect x="${cx-5}" y="${yt-2}" width="10" height="6" fill="var(--muted)"/><line x1="${cx}" x2="${cx}" y1="${yd}" y2="${yt}" stroke="var(--ink)" stroke-width="2"/>`;
+    s+=`<line x1="${cx}" x2="${cx}" y1="${yt+4}" y2="${yb+ry+24}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${cx+6}" y="${yb+ry+22}">coax down the cone</text>`;
+    s+=`<text x="${cx+rd+10}" y="${yd+4}">disc ${f1(p.disc)} mm</text>`;
+    s+=`<text x="${cx+rb*0.55+10}" y="${(yt+yb)/2}">slant ${f1(p.L)} mm</text>`;
+    s+=`<text x="${cx-rd-10}" y="${(yd+yt)/2+4}" text-anchor="end">gap ${f1(p.gap)} mm</text>`;
+    s+=`<text x="${cx-rb-10}" y="${yb+4}" text-anchor="end">bottom ${f0_(M.B)} mm</text>`;
+    s+=`<text x="${cx}" y="${yt-10}" text-anchor="middle" style="fill:var(--accent)">${p.ang}° cone</text>`;
+    s+=`<text x="12" y="${H-8}">scale ${(10*sc).toFixed(1)} px = 10 mm · side view, ${p.N} wires, cutoff ${f0_(M.fcut)} MHz</text>`;
+    return {svg:s,h:H}},
+  drawNote:"Disc soldered to the connector's centre pin, the cone wires to its flange or body, the coax running down inside the cone. A brass disc and brazing-rod cone is the usual build; a PCB-blank disc works. Disc up.",
+  chain:p=>`discone (disc ${f1(p.disc)} mm, cone of ${p.N} wires ${f1(p.L)} mm slant at ${p.ang} deg included, ${f1(p.gap)} mm gap, ${p.d.toFixed(2)} mm wire, disc up, in free air)`,
+  plan(p,f0,M){const d=TYPES.discone.design(f0,p);return [`Cut ${p.N} cone wires to <b>${f1(d.L*1.08)} mm</b>, 8 percent long (predicted final ${f1(d.L)} mm for a ${p.flow} MHz cutoff), and a disc of <b>${f1(d.disc)} mm</b>. Solder the wires round the connector flange at ${p.ang}° included and the disc to the pin.`,`Stand it disc up on the bridge's RFOUT port, clear of the bench by a hand's width; the sweep below shows the cutoff as the first dip, and from there the SWR should stay under 2 to the top of the sweep.`]},
+  howto:[["Resonance.","A discone has a cutoff, not a resonance: below it the cone is too short and the feed goes capacitive; just above it there is a first dip, taken here at 1.12 times c/(4 × slant). That dip is what the cut guide trims against, so the guide reads the measured dip against the design dip rather than the target."],["Match.","Above the first dip the bench draws 50 Ω with a ripple of about ±22 percent in resistance and ±14 Ω of reactance, repeating every 2.5× in frequency, growing when the disc is away from 0.7 × the cone bottom and past six times the cutoff. That is the shape measured discones show, not a derivation; the bridge will draw the real one."],["Pattern.","A dipole's figure at the cutoff, leaning down the cone as frequency rises (a discone's high-band lobe points below the horizon). Gain 2.1 dBi throughout; the discone buys bandwidth, never gain."]]
+};
+const ORDER=["gp","discone","coco","biquad","helix","vdip","can","yagi","dipole"];
 
 /* ---------- state ---------- */
 const S={type:"gp",B:{},log:[]};
 function bundle(id){if(!S.B[id]){const T=TYPES[id];const b={p:{...T.init},f0:T.f0.def,dip:Math.round(T.f0.def*0.0915)*10,meas:null,dipFromMeas:false};
     // dimensions that start at 0 are "design from the target"
     const need=Object.keys(b.p).filter(k=>b.p[k]===0);if(need.length){const d=T.design(b.f0,b.p,id==="gp"?T.model(b.p,b.f0):null);for(const k of need)if(d[k]!=null)b.p[k]=d[k]}
+    const g=T.model(b.p,b.f0).goal;if(g)b.dip=Math.round(g*0.0915)*10;
     S.B[id]=b}return S.B[id]}
 const cur=()=>bundle(S.type);
 const T_=()=>TYPES[S.type];
@@ -706,7 +749,7 @@ function sync(){const T=T_(),B=cur();
   const kd=$("kDip");kd.min=Math.round(B.f0*0.5);kd.max=Math.round(B.f0*1.5);kd.step=B.f0<500?0.1:1;kd.value=B.dip;if(document.activeElement!==$("nDip"))$("nDip").value=fF(B.dip);$("vDip").textContent=`${fF(B.dip)} MHz`;
 }
 $("type").addEventListener("change",()=>{S.type=$("type").value;buildKnobs();render();window.scrollTo({top:0,behavior:"smooth"})});
-$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(!B.dipFromMeas)B.dip=Math.round(B.f0*0.0915)*10;render();toast(`${b.textContent}: design dimensions set`)});
+$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;render();toast(`${b.textContent}: design dimensions set`)});
 $("kF0").addEventListener("input",()=>{cur().f0=+$("kF0").value;render()});
 $("nF0").addEventListener("change",()=>{const v=parseFloat($("nF0").value);if(!isFinite(v)){sync();return}cur().f0=clamp(v,+$("kF0").min,+$("kF0").max);render()});
 $("kDip").addEventListener("input",()=>{const B=cur();B.dip=+$("kDip").value;B.dipFromMeas=false;render()});
@@ -716,12 +759,12 @@ $("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(
 
 /* ---------- readouts ---------- */
 function cls(swr){return swr<=1.5?"good":swr<=2.5?"warn":"bad"}
-function readouts(T,B,M){const f0=B.f0;const sT=M.swr(f0),mlT=M.ml(f0),off=M.fres-f0;
+function readouts(T,B,M){const f0=B.f0;const sT=M.swr(f0),mlT=M.ml(f0),off=M.fres-(M.goal||f0);
   const rows=[];
-  if(T.trim)rows.push(["Predicted resonance",`${fF(M.fres)} MHz`,`${Math.round(off*10)>=0?"+":"−"}${fT(Math.abs(off))} MHz from target`,Math.abs(off)<f0*0.01?"good":Math.abs(off)<f0*0.04?"warn":"bad"]);
+  if(T.trim)rows.push([M.goal?"Predicted first dip":"Predicted resonance",`${fF(M.fres)} MHz`,M.goal?M.goalNote:`${Math.round(off*10)>=0?"+":"−"}${fT(Math.abs(off))} MHz from target`,Math.abs(off)<f0*0.01?"good":Math.abs(off)<f0*0.04?"warn":"bad"]);
   rows.push(["Feed at resonance",`${f0_(M.R0)} Ω`,M.feedNote,""]);
   rows.push(["SWR at target",`${sT<50?f2(sT):"»10"} : 1`,`${mlT.toFixed(2)} dB mismatch loss`,cls(sT)]);
-  rows.push(["2:1 band",M.bwHi>M.bwLo?`${f0_(M.bwLo)}–${f0_(M.bwHi)}`:"none",M.bwHi>M.bwLo?`${((M.bwHi-M.bwLo)/M.fres*100).toFixed(1)}% of resonance`:"never under 2:1 as drawn",""]);
+  rows.push(["2:1 band",M.bwHi>M.bwLo?`${f0_(M.bwLo)}–${f0_(M.bwHi)}`:"none",M.bwHi>M.bwLo?(M.bwHi/M.bwLo>2?`${(M.bwHi/M.bwLo).toFixed(1)}× end to end`:`${((M.bwHi-M.bwLo)/M.fres*100).toFixed(1)}% of resonance`):"never under 2:1 as drawn",""]);
   rows.push(["Pattern gain",`${M.G.toFixed(1)} dBi`,M.gainNote,""]);
   if(T.trim)rows.push(["Trim rate",`${(1/M.mmPerMHz).toFixed(M.mmPerMHz>1?2:0)} MHz/mm`,`${(M.mmPerMHz*10).toFixed(2)} mm per 10 MHz on the ${T.trim.label}`,""]);
   for(const r of M.rows)rows.push([r[0],r[1],r[2],r[3]||""]);
@@ -793,7 +836,7 @@ function bands(T,B,M){const list=bandsFor(B.f0);
 }
 
 /* ---------- cut guide and plan ---------- */
-function guide(T,B,M){const f0=B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim;
+function guide(T,B,M){const f0=M.goal||B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim;const gname=M.goal?"the design dip":"the target";
   $("guideTitle").textContent=tr?"Cut guide":"What the dip means";$("logTitle").textContent=tr?"Cut log":"Run log";$("bLog").textContent=tr?"Record this cut":"Record this run";
   $("planNote").textContent=tr?"Cutting only ever moves the dip up. Leave the last millimetre until the bridge agrees; the model's own error is about that size.":"Nothing on this antenna is cut to tune it. If the bridge disagrees with the page, the match or the winding sense is the first suspect, not a dimension.";
   let verdict,cut=0,cls2="",rows=[];
@@ -801,11 +844,11 @@ function guide(T,B,M){const f0=B.f0,fm=B.dip,ratio=fm/f0;const tr=T.trim;
     verdict=`<b>No trim.</b> A helix has no dimension to shorten; the match strip is the only thing that reads as a dip. ${sw!=null?`Best measured SWR ${f2(sw)}:1 at ${f0_(fm)} MHz${sw<=2?": good enough, stop.":": lengthen or shorten the strip, or slide it toward the feed."}`:"Overlay the bridge's curve and read the SWR across the band rather than looking for a dip."}`;cls2=sw==null?"":sw<=2?"good":"warn";
     rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of target`]].concat(M.guideRows||[])}
   else{const dimNow=B.p[tr.key];const full=M.cutFor?M.cutFor(fm):dimNow*(1-ratio);
-    if(Math.abs(ratio-1)<=0.004){verdict=`<b>On target.</b> The dip is within ${fT(f0*0.004)} MHz of ${fF(f0)}. Stop cutting.`;cls2="good"}
-    else if(ratio<1){cut=full>2?0.7*full:full;verdict=`<b>Too long.</b> The dip is ${fT(f0-fm)} MHz below the target, so the ${tr.label} is about ${f1(full)} mm too long. Cut <b>${f1(cut)} mm</b> off the ${tr.label}${full>2?" now and measure again; that is 70 percent of the way, so the last step stays small":""}.`;cls2=full>5?"bad":"warn"}
-    else{verdict=`<b>Too short.</b> The dip is ${fT(fm-f0)} MHz above the target. Wire does not grow back; the fix is a new ${tr.label} about ${f1(-full)} mm longer, or accept the higher resonance (it still covers the band if the 2:1 edge reaches ${fF(f0)}).`;cls2="bad"}
+    if(Math.abs(ratio-1)<=0.004){verdict=`<b>On target.</b> The dip is within ${fT(f0*0.004)} MHz of ${fF(f0)}${M.goal?", the design dip":""}. Stop cutting.`;cls2="good"}
+    else if(ratio<1){cut=full>2?0.7*full:full;verdict=`<b>Too long.</b> The dip is ${fT(f0-fm)} MHz below ${gname}, so the ${tr.label} ${tr.label.endsWith("s")?"are":"is"} about ${f1(full)} mm too long. Cut <b>${f1(cut)} mm</b> off the ${tr.label}${full>2?" now and measure again; that is 70 percent of the way, so the last step stays small":""}.`;cls2=full>5?"bad":"warn"}
+    else{verdict=`<b>Too short.</b> The dip is ${fT(fm-f0)} MHz above ${gname}. Wire does not grow back; the fix is a new ${tr.label} about ${f1(-full)} mm longer, or accept the higher resonance (it still covers the band if the 2:1 edge reaches ${fF(f0)}).`;cls2="bad"}
     const newD=Math.max(1,dimNow-cut);
-    rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of target`],["Full correction",`${f1(full)} mm`,`on the ${tr.label}, from 1/length scaling`],["This cut",`${f1(cut)} mm`,`${tr.label} ${f1(dimNow)} → ${f1(newD)} mm`]].concat(M.guideRows||[])}
+    rows=[["Measured dip",`${fF(fm)} MHz`,B.dipFromMeas?"from the measured curve":"typed"],["Offset",`${(fm-f0)>=0?"+":""}${fT(fm-f0)} MHz`,`${((ratio-1)*100).toFixed(1)}% of ${M.goal?"the design dip":"target"}`],["Full correction",`${f1(full)} mm`,`on the ${tr.label}, from 1/length scaling`],["This cut",`${f1(cut)} mm`,`${tr.label} ${f1(dimNow)} → ${f1(newD)} mm`]].concat(M.guideRows||[])}
   $("verdict").innerHTML=verdict;$("verdict").style.borderLeftColor=cls2==="good"?"var(--good)":cls2==="warn"?"var(--warn)":cls2==="bad"?"var(--bad)":"var(--accent)";
   $("cutRo").innerHTML=rows.map(([k,v,s])=>`<div><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
   const steps=T.plan(B.p,f0,M);
