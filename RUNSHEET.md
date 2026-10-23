@@ -392,7 +392,39 @@ Read with block medians by hand (`compare-runs` refuses a cross-engine pair by d
 levels across sample rates; to sit beside rtl_power data use `-b 64 --rate 2758620`. Full table
 in CLAUDE.md "Block H1".
 
-### H2. 1633.47 MHz at 1.17 kHz bins, then the 10 dB pad - NEXT
+### H2. 1633.47 MHz at 1.17 kHz bins, then the 10 dB pad - NEXT (pre-registered 2026-10-22, 22:10)
+
+One hop centred on **1633.000 MHz** (line at +470 kHz, clear of the DC spike; its zero-IF mirror
+image would land at 1632.53), 2048 bins = **1.17 kHz**, 2.4 MS/s, `-t 10`, g29, 10 min each,
+`--floor-window 0.1`. The narrow bins should lift a single-frequency line ~12.6 dB above what rtl_power's
+21.5 kHz bins showed (18 dB on the deep tile), which is what lets a 20 or 30 dB drop be read
+instead of vanishing.
+
+| # | Tag | Pad |
+|---|---|---|
+| A | `h2-A-1633-nopad` | none - also the check that the line is there at all on the UWB |
+| B | `h2-B-1633-pad10` | 10 dB between the notch and the LaNA input |
+| C | `h2-C-1633-nopad` | none again - the bracket; the line wandered 6 dB in an hour on 2026-10-19 |
+
+**What the archive already says (read before the run, 2026-10-22):**
+
+- **The PCS-IMD story has a width problem.** 2 x 1799.98 - 1966.49 = 1633.47 only works if
+  there is a narrow line at 1966.49. In every antenna run it sits **+0.8 to +1.2 dB** over the
+  floor, i.e. no line, just the broadband LTE downlink. A third-order product of a wideband
+  parent is at least that wide; 1633.47 is **one bin**. Its partner 2 x 1966.49 - 1799.98 =
+  2133.00 is also absent (-0.7 to +0.5). On paper that specific product is ruled out.
+- **But it does track something.** In Block E the line **vanished with the antenna outside**
+  (B +0.1, B2 +2.2 dB over floor) and returned inside (A1 +9.7, A2 +10.7). 1799.98 also faded
+  during B/B2, so that fits a product of 1799.98 and fits a source inside the room equally well.
+  It does not track 1799.98 dB for dB (A1 vs casc5: 1799.98 -5.3 dB, 1633.47 -1.2).
+
+**Predictions, on the line's median level, A/C mean against B:**
+
+- **-10 dB (+/-2):** a real signal arriving at the antenna (a room device or outside).
+- **-20 dB:** a second-order product made in our chain (e.g. 1799.98 - 166.51 MHz).
+- **-30 dB or gone:** a third-order product made in our chain.
+- A and C must agree within 3 dB (the line's own wander over half an hour), or B is unreadable.
+- If A shows no line at all: stop, and look at 1799.98 before anything else.
 
 ---
 
