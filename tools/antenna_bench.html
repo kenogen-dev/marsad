@@ -128,6 +128,10 @@ details[open]>summary{margin-bottom:.6rem}
 .ro.tight .v{font-size:.98rem}
 .measgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
 @media (max-width:700px){.measgrid{grid-template-columns:1fr}}
+.solve{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.solve table{min-width:0;font-size:.82rem}
+.solve th,.solve td{padding:.3rem .35rem}
+.solve .sum{font-size:.88rem;line-height:1.4}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -154,6 +158,11 @@ details[open]>summary{margin-bottom:.6rem}
       <span class="sl"><input type="range" id="kF0" min="300" max="2187" step="1" value="2130"><input class="num" id="nF0" inputmode="decimal" aria-label="Target frequency in MHz"></span></div>
     <div id="knobList" style="display:grid;gap:9px"></div>
     <div class="row"><button class="btn sm" id="bStart" type="button">Start-long lengths</button><button class="btn sm" id="bFinal" type="button">Predicted final lengths</button></div>
+    <div class="solve">
+      <div class="knob"><label for="solveFor">Solve for</label><span class="note">MHz</span>
+        <span class="sl"><input class="num" id="solveFor" style="flex:1;width:auto" placeholder="blank = the target; 1090, 1265; 2110-2155" aria-label="Frequencies to solve for, in MHz"><button class="btn sm primary" id="bSolve" type="button">Solve</button></span></div>
+      <div id="solveOut" style="display:grid;gap:8px" hidden></div>
+    </div>
     <details><summary>What each knob means</summary>
       <div style="display:grid;gap:.5rem" class="note" id="knobHelp"></div>
     </details>
@@ -832,6 +841,100 @@ $("nDip").addEventListener("change",()=>{const B=cur();const v=parseFloat($("nDi
 $("bStart").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(T.trim)B.p[T.trim.key]=r5(B.p[T.trim.key]*1.10);render();toast("Start-long lengths set")};
 $("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);render();toast(T.trim?"Predicted final lengths set":"Design dimensions set")};
 
+/* ---------- Solve: dimensions for the frequencies asked ---------- */
+// Solve moves one dimension, the one the cut guide trims (a helix has none, so its circumference), after setting the
+// build-once dimensions by the design rule at the centre frequency. One frequency: the trimmed dimension is found by
+// bisection so the model's own predicted dip sits on it. Several: the dimension that makes the worst SWR across them
+// smallest; if even that leaves one above 2:1, the antenna is centred on their geometric mean and the page names what
+// it gives up. Every number comes from the same model() the readouts use, so Solve and the prediction cannot disagree.
+const SOLVE={
+  dipole:{lim:{arm:[50,125]},limWhy:"the window mount's whips slide from about 50 to 125 mm each",
+    note:()=>{const tb=0.25*lam(1800);return `<b>Textbook starting point, not the station's answer.</b> At 1800 MHz a quarter wave is ${f1(tb)} mm per whip (${f1(tb*0.95)} with the 0.95 end effect), yet four measured lengths put the best at <b>60 mm</b>: −16.6 dB on 1799.98 MHz, against −20.7 at 50, −17.6 at 75 and −24.5 at 100. The model knows nothing of the LaNA at the feed, the glass or the L, and with an amplifier at the feed the pattern counts for more than the match. The archive outranks this.`}},
+  discone:{after:p=>{p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
+    note:()=>"The cone slant is what Solve moves; the disc follows at 0.7 × the cone bottom and the lowest-frequency knob follows the cutoff. One frequency puts it on the first dip, which is the smallest discone that hears it."},
+  helix:{key:"cl",direct:()=>1,note:()=>"Nothing on a helix is trimmed. Solve sets the circumference to one wavelength at the centre frequency, the middle of the axial-mode band, and the plate to 0.75 λ there; the turns and pitch are yours."}
+};
+const knobOf=(T,k)=>T.knobs.find(x=>x[0]===k);
+// "1090, 1265" is two frequencies; "2110-2155" is a band, taken as five points spaced evenly in ratio.
+function parseFreqs(text,T,f0){const out=[],dropped=[];const t=String(text||"").replace(/mhz/ig," ").trim();
+  if(!t)return {freqs:[f0],dropped};
+  const add=f=>{if(f>=T.f0.min&&f<=T.f0.max)out.push(f);else dropped.push(f)};
+  for(const tok of t.split(/[,;\s]+/).filter(Boolean)){const m=tok.match(/^(\d+(?:\.\d+)?)[-–:](\d+(?:\.\d+)?)$/);
+    if(m){let a=+m[1],b=+m[2];if(a>b)[a,b]=[b,a];for(let i=0;i<5;i++)add(Math.round(a*Math.pow(b/a,i/4)*10)/10)}
+    else{const v=parseFloat(tok);if(isFinite(v)&&v>0)add(v);else dropped.push(tok)}}
+  return {freqs:[...new Set(out)].sort((a,b)=>a-b),dropped}}
+function solveFor(T,B,freqs){
+  const sp=SOLVE[T.id]||{};const key=sp.key||T.trim.key;
+  const range=k=>{const n=knobOf(T,k);return (sp.lim&&sp.lim[k])||[n[2],n[3]]};
+  const n0=knobOf(T,key);const stp=n0[6]==="mm"?Math.min(n0[4],0.1):Math.pow(10,-n0[5]);
+  const gm=Math.exp(freqs.reduce((a,f)=>a+Math.log(f),0)/freqs.length);
+  const single=freqs.length===1;const fT0=Math.round((single?freqs[0]:gm)*10)/10;
+  // build-once dimensions from the design rule at the centre, held inside the knobs' ranges
+  const p0={...B.p};const d=T.design(fT0,p0,T.model(p0,fT0));const base={...p0};const clamped=[];
+  for(const [k,v] of Object.entries(d)){const n=knobOf(T,k);if(!n||n[2]===null||typeof v!=="number"||k===key){if(k!==key)base[k]=v;continue}
+    const [lo,hi]=range(k);base[k]=clamp(v,lo,hi);if(base[k]!==v)clamped.push([k,v])}
+  const at=x=>{const q={...base,[key]:x};if(sp.after)sp.after(q);return q};
+  const [lo,hi]=range(key);const rnd=x=>clamp(Math.round(x/stp)*stp,lo,hi);
+  const worst=q=>{const M=T.model(q,fT0);return Math.max(...freqs.map(f=>M.swr(f)))};
+  const dipOf=q=>{const M=T.model(q,fT0);return M.goal||M.fres};
+  // every trimmed dimension lowers the dip as it grows, so bisection finds the one length that puts it on f
+  const resonate=(f,a,b)=>{const g=x=>dipOf(at(x))-f;if(g(a)<0)return {x:a,edge:"lo"};if(g(b)>0)return {x:b,edge:"hi"};
+    for(let i=0;i<60;i++){const m=(a+b)/2;if(g(m)>0)a=m;else b=m}return {x:(a+b)/2,edge:null}};
+  // coarse scan in ratio, then golden-section on the best cell: worst-case SWR against length is not always one smooth bowl
+  const minimax=()=>{const n=240,r=Math.pow(hi/lo,1/n);let bx=lo,bw=Infinity;for(let i=0;i<=n;i++){const x=lo*Math.pow(r,i);const w=worst(at(x));if(w<bw){bw=w;bx=x}}
+    let a=Math.max(lo,bx/r),b=Math.min(hi,bx*r);for(let i=0;i<50;i++){const m1=a+(b-a)*0.382,m2=a+(b-a)*0.618;if(worst(at(m1))<worst(at(m2)))b=m2;else a=m1}return (a+b)/2};
+  let x,mode,edge=null,compromise=null;
+  if(sp.direct){x=clamp(sp.direct(),lo,hi);mode="centre"}
+  else if(single){const r=resonate(fT0,lo,hi);x=r.x;edge=r.edge;mode="resonant"}
+  else{x=minimax();const w=worst(at(rnd(x)));if(w<=2)mode="minimax";else{compromise=w;const r=resonate(fT0,lo,hi);x=r.x;edge=r.edge;mode="centred"}}
+  if(mode==="minimax"&&(rnd(x)<=lo||rnd(x)>=hi))edge=rnd(x)<=lo?"lo":"hi";
+  // where the knob stopped Solve, what the length would have been with no limit
+  const ideal=edge&&mode!=="minimax"?resonate(fT0,lo*0.05,hi*20).x:null;
+  // of the two knob steps either side of the solved length, keep the one whose dip lands nearer
+  let xr=rnd(x);if(mode==="resonant"||mode==="centred"){const a=rnd(Math.floor(x/stp)*stp),b=rnd(Math.ceil(x/stp)*stp);xr=Math.abs(dipOf(at(a))-fT0)<=Math.abs(dipOf(at(b))-fT0)?a:b}
+  return {p:at(xr),f0:fT0,mode,edge,ideal,compromise,key,gm,clamped,limWhy:edge?sp.limWhy:null}}
+function doSolve(){const T=T_(),B=cur();const {freqs,dropped}=parseFreqs($("solveFor").value,T,B.f0);
+  if(!freqs.length){toast(`Nothing to solve for between ${T.f0.min} and ${T.f0.max} MHz.`);return}
+  const old={p:{...B.p},f0:B.f0,dip:B.dip};const r=solveFor(T,B,freqs);
+  B.p={...r.p};B.f0=r.f0;if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;
+  B.solve={...r,freqs,dropped,old,newP:{...B.p}};render();
+  toast(r.edge?"Solved, but a limit stopped it: see the note":"Solved: the changes are listed under the button")}
+$("bSolve").onclick=doSolve;
+$("solveFor").addEventListener("keydown",e=>{if(e.key==="Enter")doSolve()});
+$("solveOut").addEventListener("click",e=>{if(!e.target.closest("#bRevert"))return;const B=cur(),s=B.solve;if(!s)return;
+  B.p={...s.old.p};B.f0=s.old.f0;if(!B.dipFromMeas)B.dip=s.old.dip;B.solve=null;render();toast("Back to the values before Solve")});
+function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true;el.innerHTML="";return}el.hidden=false;
+  const fmt=(n,v)=>typeof v!=="number"?esc(v):v.toFixed(Math.max(n[5],n[6]==="mm"&&n[0]===s.key?1:0));
+  const unit=n=>n[6]==="°"?"°":n[6]?" "+n[6]:"";
+  const Mo=T.model(s.old.p,s.old.f0),Mn=T.model(s.newP,s.f0);const kname=SOLVE[T.id]?.key?"circumference":T.trim.label;
+  const rows=[];if(Math.abs(s.old.f0-s.f0)>1e-9)rows.push(`<tr><td>Target</td><td class="n">${fF(s.old.f0)} → <b>${fF(s.f0)}</b> MHz</td><td class="small muted">${s.freqs.length>1?"geometric mean":"the frequency asked"}</td></tr>`);
+  for(const n of T.knobs){const k=n[0],a=s.old.p[k],b=s.newP[k];if(a===b||(typeof a==="number"&&Math.abs(a-b)<1e-9))continue;
+    const cl=s.clamped.find(c=>c[0]===k);
+    const why=k===s.key?(s.edge?`<span class="chip bad">at the ${s.edge==="lo"?"short":"long"} limit</span>`:`<span class="chip good">solved</span>`):cl?`<span class="chip warn">clamped</span> rule says ${fmt(n,cl[1])}`:SOLVE[T.id]?.after?"follows":"design rule";
+    rows.push(`<tr><td>${esc(n[1].split(",")[0])}</td><td class="n">${fmt(n,a)} → <b>${fmt(n,b)}</b>${unit(n)}</td><td class="small muted">${why}</td></tr>`)}
+  const fr=s.freqs.map(f=>{const so=Mo.swr(f),sn=Mn.swr(f),g=Mn.gam(f),rl=-20*Math.log10(Math.max(g,1e-4));
+    return `<tr><td class="n">${fF(f)}</td><td class="n muted">${so<50?f2(so):"»10"}</td><td class="n"><span class="chip ${cls(sn)}">${sn<50?f2(sn):"»10"}:1</span></td><td class="n">${rl>=40?"≥40":rl.toFixed(1)} dB</td></tr>`}).join("");
+  const dipN=Mn.goal||Mn.fres,off=dipN-s.f0;const lost=s.freqs.filter(f=>Mn.swr(f)>2);const wN=Math.max(...s.freqs.map(f=>Mn.swr(f)));
+  let sum="";
+  if(s.mode==="resonant")sum=`Predicted ${Mn.goal?"first dip":"dip"} at <b>${fF(dipN)} MHz</b>, ${Math.abs(off)<0.05?"on":(off>=0?"+":"−")+fT(Math.abs(off))+" MHz from"} ${fF(s.f0)}.`;
+  else if(s.mode==="minimax")sum=`Worst SWR across the ${s.freqs.length} frequencies: <b>${f2(wN)}:1</b>, all under 2:1. Predicted ${Mn.goal?"first dip":"dip"} at ${fF(dipN)} MHz.`;
+  else if(s.mode==="centred")sum=`No single ${kname} gets all of them under 2:1; the best compromise still left ${s.compromise<50?f2(s.compromise):"»10"}:1. Centred instead on the geometric mean, <b>${fF(s.f0)} MHz</b> (dip at ${fF(dipN)}). It gives up <b>${lost.map(fF).join(", ")||"nothing"} MHz</b>.`;
+  else sum=`Centred on <b>${fF(s.f0)} MHz</b>; worst SWR across them ${f2(wN)}:1${lost.length?`, above 2:1 at ${lost.map(fF).join(", ")} MHz`:""}.`;
+  if(s.mode==="minimax"&&lost.length)sum+=` Above 2:1 at ${lost.map(fF).join(", ")} MHz.`;
+  const notes=[];
+  if(s.edge){const n=knobOf(T,s.key);notes.push(`<b>Limit reached.</b> ${s.ideal!=null?`The textbook ${kname} here is ${f1(s.ideal)}${unit(n)}, `:""}${s.edge==="lo"?"shorter":"longer"} than ${s.limWhy||"this knob goes"}; held at ${fmt(n,s.newP[s.key])}${unit(n)}, so the dip lands at ${fF(dipN)} MHz instead.`)}
+  for(const [k,v] of s.clamped){const n=knobOf(T,k);notes.push(`${esc(n[1].split(",")[0])}: the design rule wants ${fmt(n,v)}${unit(n)}, outside the knob's ${n[2]}–${n[3]}${unit(n)}; held at the end of the range.`)}
+  if(!s.edge&&s.mode!=="centre"&&Mn.swr(dipN)>1.5)notes.push(`At its dip this antenna presents about ${f0_(Mn.R0)} Ω, so the best it can show on 50 Ω is ${f2(Mn.swr(dipN))}:1 whatever the length. That is the match's job (${esc(Mn.feedNote)}), not the saw's.`);
+  if(s.dropped.length)notes.push(`Left out, outside ${T.f0.min}–${T.f0.max} MHz for this antenna: ${s.dropped.map(v=>esc(v)).join(", ")}.`);
+  if(SOLVE[T.id]?.note)notes.push(SOLVE[T.id].note());
+  const moved=Math.abs(B.f0-s.f0)>1e-9||T.knobs.some(n=>B.p[n[0]]!==s.newP[n[0]]);
+  el.innerHTML=`<p class="sum">${sum}</p>
+    <div class="scroll"><table><thead><tr><th>Changed</th><th>Before → after</th><th></th></tr></thead><tbody>${rows.join("")||'<tr><td colspan="3" class="muted">Nothing moved: already there.</td></tr>'}</tbody></table></div>
+    <div class="scroll"><table><thead><tr><th>MHz</th><th>SWR before</th><th>SWR after</th><th>Return loss</th></tr></thead><tbody>${fr}</tbody></table></div>
+    ${notes.map(t=>`<p class="note">${t}</p>`).join("")}
+    <p class="note">${moved?"Knobs moved since Solve; the tables show what it set. ":""}Predicted, not measured: the bridge has the last word.</p>
+    <div class="row"><button class="btn sm" id="bRevert" type="button">Revert to before Solve</button></div>`}
+
 /* ---------- readouts ---------- */
 function cls(swr){return swr<=1.5?"good":swr<=2.5?"warn":"bad"}
 function readouts(T,B,M){const f0=B.f0;const sT=M.swr(f0),mlT=M.ml(f0),off=M.fres-(M.goal||f0);
@@ -854,6 +957,7 @@ function readouts(T,B,M){const f0=B.f0;const sT=M.swr(f0),mlT=M.ml(f0),off=M.fre
 function swrChart(T,B,M){const W=640,H=300,L=44,R=12,Tp=14,Bm=34;const f0=B.f0;const mp=B.meas?B.meas.points:[];
   let fx0=f0*0.82,fx1=f0*1.1;fx0=Math.min(fx0,M.fres-0.04*f0);fx1=Math.max(fx1,M.fres+0.04*f0);
   for(const p of mp){fx0=Math.min(fx0,p.f);fx1=Math.max(fx1,p.f)}
+  const sf=B.solve?B.solve.freqs:[];for(const f of sf){fx0=Math.min(fx0,f*0.97);fx1=Math.max(fx1,f*1.03)}
   const X=f=>L+(f-fx0)/(fx1-fx0)*(W-L-R),Y=s=>Tp+(1-Math.log10(clamp(s,1,10)))*(H-Tp-Bm);
   let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="SWR against frequency, predicted and measured">`;
   for(const [n,lo,hi] of CATALOGUE){if(hi<fx0||lo>fx1)continue;s+=`<rect x="${X(Math.max(lo,fx0)).toFixed(1)}" y="${Tp}" width="${(X(Math.min(hi,fx1))-X(Math.max(lo,fx0))).toFixed(1)}" height="${H-Tp-Bm}" fill="var(--sunk)"/>`}
@@ -862,6 +966,7 @@ function swrChart(T,B,M){const W=640,H=300,L=44,R=12,Tp=14,Bm=34;const f0=B.f0;c
   const span=fx1-fx0;const step=span>600?100:span>250?50:span>120?20:span>60?10:span>25?5:1;
   for(let f=Math.ceil(fx0/step)*step;f<=fx1;f+=step){s+=`<line x1="${X(f)}" x2="${X(f)}" y1="${H-Bm}" y2="${H-Bm+4}" stroke="var(--line)"/><text x="${X(f)}" y="${H-10}" text-anchor="middle" fill="var(--muted)">${f}</text>`}
   if(f0>=fx0&&f0<=fx1)s+=`<line x1="${X(f0)}" x2="${X(f0)}" y1="${Tp}" y2="${H-Bm}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${X(f0)+4}" y="${Tp+10}" fill="var(--muted)">target</text>`;
+  for(const f of sf)s+=`<line x1="${X(f).toFixed(1)}" x2="${X(f).toFixed(1)}" y1="${Tp}" y2="${H-Bm}" stroke="var(--sim)" stroke-dasharray="1 3" opacity=".8"/><path d="M${(X(f)-4).toFixed(1)},${Tp} h8 l-4,6 z" fill="var(--sim)"/>`;
   if(fx0<=2147.48&&2147.48<=fx1)s+=`<line x1="${X(2147.48)}" x2="${X(2147.48)}" y1="${Tp}" y2="${H-Bm}" stroke="var(--bad)" stroke-dasharray="2 4" opacity=".7"/>`;
   let d="";const n=200;for(let i=0;i<=n;i++){const f=fx0+span*i/n;d+=(i?"L":"M")+X(f).toFixed(1)+","+Y(M.swr(f)).toFixed(1)}
   s+=`<path d="${d}" fill="none" stroke="var(--sim)" stroke-width="2.2"/>`;
@@ -871,7 +976,7 @@ function swrChart(T,B,M){const W=640,H=300,L=44,R=12,Tp=14,Bm=34;const f0=B.f0;c
     s+=`<circle cx="${X(best.f)}" cy="${Y(best.swr)}" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`}
   const fr=M.fres;if(T.trim&&fr>=fx0&&fr<=fx1)s+=`<circle cx="${X(fr)}" cy="${Y(M.swr(fr))}" r="4.5" fill="var(--sim)" stroke="var(--surface)" stroke-width="2"/>`;
   s+=`<rect x="${L}" y="${Tp}" width="${W-L-R}" height="${H-Tp-Bm}" fill="transparent"/><line id="hoverLine" x1="0" x2="0" y1="${Tp}" y2="${H-Bm}" stroke="var(--ink)" opacity="0"/>`;
-  s+=`<text x="${W-R}" y="${H-1}" text-anchor="end" fill="var(--muted)">MHz · SWR on 50 Ω · shaded: station bands</text></svg>`;
+  s+=`<text x="${W-R}" y="${H-1}" text-anchor="end" fill="var(--muted)">MHz · SWR on 50 Ω · shaded: station bands${sf.length?" · ▼ solved for":""}</text></svg>`;
   $("swrChart").innerHTML=s;
   const svg=$("swrChart").querySelector("svg"),hl=svg.querySelector("#hoverLine");
   svg.addEventListener("mousemove",e=>{const r=svg.getBoundingClientRect();const px=(e.clientX-r.left)/r.width*W;if(px<L||px>W-R){hl.setAttribute("opacity","0");return}
@@ -958,7 +1063,7 @@ function fallback(t){const ta=document.createElement("textarea");ta.value=t;docu
 $("bCopyAnt").onclick=()=>copy(commands.ant,"Antenna run");$("bCopyResp").onclick=()=>copy(commands.resp,"Response command");
 
 /* ---------- how it thinks ---------- */
-const COMMON_HOWTO=[["The cut.","Resonance scales as one over length. If the bridge finds the dip 100 MHz below a 2130 MHz target, the trimmed element is about 100/2130 of its length too long, and that is the cut. The bench takes 70 percent of it on any cut over 2 mm so that the last step is small and only ever goes up. Each antenna names which dimension carries the cut."],["What the models are not.","Closed forms and thin-wire approximations, not field solvers. The Antenna Atlas's Wire Lab solves the currents properly, but for wires in one plane. This page exists because the bridge measures the real antenna and the model only has to be good enough to say how far to cut, or whether to bother."],["The measurement.","Three five-minute runs through the SWR bridge with the noise generator: nothing on RFOUT (the 0 dB reference), a 50 Ω load (the bridge's own floor), then the antenna. marsad response turns them into return loss and SWR at every bin and writes the file the box above reads. Open and load serve every antenna measured on the same sweep in the same session as long as the generator stays on."]];
+const COMMON_HOWTO=[["Solve.","Solve sets the build-once dimensions by each antenna's design rule at the centre frequency, then moves the one dimension the cut guide trims. For one frequency it searches for the length at which this page's own model puts the dip on that frequency, so the readout and the chart agree with it by construction. For several, or a band typed as 2110-2155, it picks the length that makes the worst SWR among them smallest; when even that leaves one above 2:1 it centres on their geometric mean and names the frequencies it gives up. Knob ranges hold, the window whips stay within 50–125 mm each, and Revert puts back what was there. It is the textbook answer for the first cut, no better than the model."],["The cut.","Resonance scales as one over length. If the bridge finds the dip 100 MHz below a 2130 MHz target, the trimmed element is about 100/2130 of its length too long, and that is the cut. The bench takes 70 percent of it on any cut over 2 mm so that the last step is small and only ever goes up. Each antenna names which dimension carries the cut."],["What the models are not.","Closed forms and thin-wire approximations, not field solvers. The Antenna Atlas's Wire Lab solves the currents properly, but for wires in one plane. This page exists because the bridge measures the real antenna and the model only has to be good enough to say how far to cut, or whether to bother."],["The measurement.","Three five-minute runs through the SWR bridge with the noise generator: nothing on RFOUT (the 0 dB reference), a 50 Ω load (the bridge's own floor), then the antenna. marsad response turns them into return loss and SWR at every bin and writes the file the box above reads. Open and load serve every antenna measured on the same sweep in the same session as long as the generator stays on."]];
 function howto(T){$("howto").innerHTML=T.howto.concat(COMMON_HOWTO).map(([b,t])=>`<p><b>${esc(b)}</b> ${esc(t)}</p>`).join("")}
 
 /* ---------- measured import ---------- */
@@ -1001,7 +1106,7 @@ $("bLog").onclick=async()=>{const T=T_(),B=cur();let swr=null;if(B.meas){const o
 /* ---------- render ---------- */
 function render(){const T=T_(),B=cur();const M=T.model(B.p,B.f0);sync();
   const dr=T.draw(B.p,B.f0,M);const svg=$("draw");svg.setAttribute("viewBox",`0 0 520 ${dr.h}`);svg.innerHTML=dr.svg;$("drawNote").textContent=T.drawNote;
-  readouts(T,B,M);swrChart(T,B,M);polar(T,B,M);bands(T,B,M);guide(T,B,M);commands(T,B);howto(T);renderLog();
+  readouts(T,B,M);swrChart(T,B,M);polar(T,B,M);bands(T,B,M);guide(T,B,M);commands(T,B);howto(T);renderLog();renderSolve(T,B);
   $("bClear").hidden=!B.meas;$("measNote").textContent=measNoteText(B)}
 buildKnobs();render();
 
