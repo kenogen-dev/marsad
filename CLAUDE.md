@@ -806,7 +806,7 @@ it after 52 min; the `.dat` was analysed afterwards (`marsad analyze`, 178 passe
 data say something the morning run could not: **all 22 hops locked at the start, up to
 2185.8 MHz, and the top ones then dropped out one at a time** - 2185.80 after 3 passes,
 2184.01 after 9, 2182.22 after 16, 2180.43 after 25, 2178.64 after 37, 2176.85 after 53,
-2175.06 after 76, 2173.27 after 116 (about 45 min in), while 2171.48, refused that morning
+2175.06 after 76, 2173.27 after 116 (35.6 min in; first written as "about 45", corrected 2026-10-23), while 2171.48, refused that morning
 after ten hours running, held through all 177 passes. So the E4000's upper lock limit is not a
 fixed 2170.6 or 2187: it is **above 2187 MHz cold and falls to about 2172 MHz as the dongle
 warms**, which is why `rtl_test -t` on a cold unit said 2187 and the warm morning run said
@@ -881,7 +881,7 @@ pass.** *Corrected 2026-10-23:* this paragraph first read the run as "all hops l
 is not the explanation". That was a whole-run reading and it was wrong. Read pass by pass (see
 "The owner's first real run" in the rtl_power_fftw characterisation section), every hop locked
 at the start and the top ones dropped out one at a time as the dongle warmed, from 2185.80 after
-3 passes to 2173.27 after ~45 min. The upper lock limit falls with warm-up, which reconciles the
+3 passes to 2173.27 after 35.6 min. The upper lock limit falls with warm-up, which reconciles the
 cold `rtl_test -t` (2187) with the warm morning run (2170.6). The 24 `PLL not locked` lines are
 those drop-outs.
 
@@ -996,6 +996,57 @@ pattern points to **a device in the room or the building**, not the sky and not 
 fading (several dB in minutes) suggests either the source's own duty or a path that changes
 (people moving, a fan). The **Hunt mode** in the Probe tab exists for exactly this: walk a
 near-field probe round the room on the 5 MHz `hunt` tile around 1633.47 and listen for the tone.
+
+### Block H3, cold-start top edge (2026-10-23, 11:18-12:19): the whole PLL range slides down ~10-16 MHz as the XTR warms
+
+Pre-registered in RUNSHEET H3. XTR idle (powered, not streaming) for 12 h, then cold `rtl_test
+-t`, `top 1h` (rtl_power_fftw, 22 hops, g29, UWB on the standing chain), and `rtl_test -t` again
+straight after, warm. Launched outside the desktop app's process tree; nothing touched.
+
+| | cold, 11:18 | warm, 12:19 (after 1 h streaming) | shift |
+|---|---|---|---|
+| E4K top | **2186 MHz** | **2170 MHz** | **-16** |
+| L-band gap | **1094-1239** | **1086-1230** | **-8 / -9** |
+| bottom | 52 | 52 | 0 |
+
+Hop by hop through the hour (last pass each hop centre appeared; no hop ever came back once gone):
+
+| Hop centre | H3 today, cold start | `uwb-first`, 2026-10-22 evening |
+|---|---|---|
+| 2185.80 | 0.4 min | 1.2 min |
+| 2184.01 | 2.3 | 3.5 |
+| 2182.22 | 4.5 | 6.0 |
+| 2180.43 | 7.6 | 9.1 |
+| 2178.64 | 11.2 | 13.1 |
+| 2176.85 | 15.6 | 18.0 |
+| 2175.06 | 21.4 | 24.7 |
+| 2173.27 | 29.9 | 35.6 |
+| 2171.48 | **44.1** | held all 51 min |
+| 2169.69 and below | held all 60 min | held |
+
+**Against the predictions:** all 22 locked on the first pass (held); top-down, monotonic, no
+re-lock (held - so a smooth thermal slide, not marginal locking); 2185.80 within 2 min (0.4,
+held); 2180.43 by ~15 +/- 7.5 min (7.6, held at the edge); 2173.27 by ~45 +/- 22 min (29.9,
+held); **2171.48 holds the whole hour: REFUTED**, it went at 44 min; warm `rtl_test -t` top
+2175 or lower (2170, held).
+
+**What it means.** The E4000's PLL tuning range is set by its VCO, and the whole range moves down
+with temperature: the top by 16 MHz and both gap edges by 8-9 MHz over the first hour of
+streaming. Today's curve ran ~15-25% faster than last night's and one hop further, so the
+starting temperature and the room matter, but the shape repeats. Practical rules:
+
+- **2172-2187 MHz is a cold-start-only band**: usable for the first ~5-40 minutes depending on
+  the hop, gone after an hour. A survey of it must start cold and be short. Above ~2170 nothing
+  is available on a warm XTR.
+- **The PLL gap moves too, and that reaches 1090 MHz.** Warm, `rtl_test -t` puts the gap's lower
+  edge at **1086 MHz, so 1090 (ADS-B) is inside the warm gap**. Cold it was 1094. rtl_power and
+  rtl_power_fftw drop a hop that will not lock, but `rtl_adsb` keeps receiving through `PLL not
+  locked`, so a warm XTR may decode ADS-B poorly or not at all with no clear error. Untested.
+  **Pre-registered:** `adsb_check.py` on the XTR at g29, 10 min cold then 10 min after an hour of
+  streaming, same hour of the day: a working-then-failing pattern means ADS-B belongs on the v5
+  (R860, no gap) or on a cold XTR. The 2026-10-16 XTR control (1856 frames/min) did not record
+  how warm the dongle was.
+- The gap's top edge moving down (1239 -> 1230) only widens what LS (starting at 1241) can use.
 
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 

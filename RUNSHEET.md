@@ -472,6 +472,13 @@ Predictions, from the pass-by-pass reading of `uwb-first` (2026-10-22 18:45):
 A hop that drops and later re-locks refutes "a smooth thermal slide" and points at marginal
 locking. If the curve starts already lower than `uwb-first`'s, idle-powered is not "cold".
 
+**DONE 12:19. Four of five held; one refuted.** All 22 locked at first; drop-outs strictly top-down
+with no re-lock; 2185.80 gone at 0.4 min, 2180.43 at 7.6, 2173.27 at 29.9; **2171.48 did NOT hold
+the hour (gone at 44.1 min)**; warm `rtl_test -t` read **52-2170, gap 1086-1230** against cold
+52-2186, gap 1094-1239. The whole PLL range slides down as the dongle warms. **New open item:
+warm, 1090 MHz sits inside the gap** - an ADS-B cold/warm check on the XTR is pre-registered in
+CLAUDE.md "Block H3".
+
 ### H4. UWB reference on the LS fingerprint, 2 h (pre-registered 2026-10-23, 11:20)
 
 `custom 2h --freq 1241M:2148M:50k --gain 29 --integration 120 --skip-warmup 16`, the standard
