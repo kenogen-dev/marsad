@@ -136,6 +136,10 @@ details[open]>summary{margin-bottom:.6rem}
 .zbar button:hover{border-color:var(--accent)}
 .zbar span{font-family:var(--f-mono);font-size:.66rem;color:var(--muted);background:var(--surface);border-radius:4px;padding:1px 5px;opacity:.9}
 .solve{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.lk{display:inline-flex;align-items:center;gap:3px;font-family:var(--f-mono);font-size:.64rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);cursor:pointer;white-space:nowrap}
+.lk input{accent-color:var(--accent);margin:0}
+.knob.locked .val,.knob.locked .lk{color:var(--accent)}
+.knob.locked input[type=range]{opacity:.55}
 .solve table{min-width:0;font-size:.82rem}
 .solve th,.solve td{padding:.3rem .35rem}
 .solve .sum{font-size:.88rem;line-height:1.4}
@@ -168,6 +172,7 @@ details[open]>summary{margin-bottom:.6rem}
     <div class="solve">
       <div class="knob"><label for="solveFor">Solve for</label><span class="note">MHz</span>
         <span class="sl"><input class="num" id="solveFor" style="flex:1;width:auto" placeholder="blank = the target; 1090, 1265; 2110-2155" aria-label="Frequencies to solve for, in MHz"><button class="btn sm primary" id="bSolve" type="button">Solve</button></span></div>
+      <p class="note" id="lockNote"></p>
       <div id="solveOut" style="display:grid;gap:8px" hidden></div>
     </div>
     <details><summary>What each knob means</summary>
@@ -861,7 +866,7 @@ const ORDER=["gp","discone","jpole","coco","biquad","helix","qfh","vdip","can","
 
 /* ---------- state ---------- */
 const S={type:"gp",B:{},log:[]};
-function bundle(id){if(!S.B[id]){const T=TYPES[id];const b={p:{...T.init},f0:T.f0.def,dip:Math.round(T.f0.def*0.0915)*10,meas:null,dipFromMeas:false};
+function bundle(id){if(!S.B[id]){const T=TYPES[id];const b={p:{...T.init},f0:T.f0.def,dip:Math.round(T.f0.def*0.0915)*10,meas:null,dipFromMeas:false,lock:{}};
     // dimensions that start at 0 are "design from the target"
     const need=Object.keys(b.p).filter(k=>b.p[k]===0);if(need.length){const d=T.design(b.f0,b.p,id==="gp"?T.model(b.p,b.f0):null);for(const k of need)if(d[k]!=null)b.p[k]=d[k]}
     const g=T.model(b.p,b.f0).goal;if(g)b.dip=Math.round(g*0.0915)*10;
@@ -876,20 +881,25 @@ function buildKnobs(){const T=T_(),B=cur();
   $("kF0").min=T.f0.min;$("kF0").max=T.f0.max;
   $("knobList").innerHTML=T.knobs.map(([key,label,min,max,step,dec,unit])=>{
     if(min===null){const opts=T.selects[key];return `<div class="knob"><label for="k_${key}">${esc(label)}</label><span></span><span class="sl"><select class="num" id="k_${key}" data-key="${key}">${opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select></span></div>`}
-    return `<div class="knob"><label for="k_${key}">${esc(label)}</label><span class="val" id="v_${key}"></span><span class="sl"><input type="range" id="k_${key}" data-key="${key}" min="${min}" max="${max}" step="${step}"><input class="num" id="n_${key}" data-key="${key}" inputmode="decimal" aria-label="${esc(label)}"></span></div>`}).join("");
+    const lk=CAL.has(key)?"":`<label class="lk" title="Solve leaves a locked knob where it is"><input type="checkbox" data-lock="${key}" aria-label="Lock ${esc(label)} for Solve">lock</label>`;
+    return `<div class="knob" id="kn_${key}"><label for="k_${key}">${esc(label)}</label><span class="val" id="v_${key}"></span><span class="sl"><input type="range" id="k_${key}" data-key="${key}" min="${min}" max="${max}" step="${step}"><input class="num" id="n_${key}" data-key="${key}" inputmode="decimal" aria-label="${esc(label)}">${lk}</span></div>`}).join("");
   $("knobHelp").innerHTML=T.help.map(([b,t])=>`<p><b>${esc(b)}</b> ${esc(t)}</p>`).join("");
   $("bStart").hidden=!T.trim;$("bFinal").textContent=T.trim?"Predicted final lengths":"Design dimensions";
   $("knobTitle").textContent=T.trim?"Lengths and target":"Dimensions and target";
   for(const el of $("knobList").querySelectorAll("input[type=range]"))el.addEventListener("input",()=>{cur().p[el.dataset.key]=+el.value;render()});
   for(const el of $("knobList").querySelectorAll("input.num"))el.addEventListener("change",()=>{const v=parseFloat(el.value);const k=$("k_"+el.dataset.key);if(!isFinite(v)){sync();return}cur().p[el.dataset.key]=clamp(v,+k.min,+k.max);render()});
   for(const el of $("knobList").querySelectorAll("select"))el.addEventListener("change",()=>{cur().p[el.dataset.key]=el.value;render()});
+  for(const el of $("knobList").querySelectorAll("[data-lock]"))el.addEventListener("change",()=>{cur().lock[el.dataset.lock]=el.checked;sync()});
 }
 function sync(){const T=T_(),B=cur();
   $("kF0").value=B.f0;if(document.activeElement!==$("nF0"))$("nF0").value=fF(B.f0);$("vF0").textContent=`${fF(B.f0)} MHz`;$("kF0").step=B.f0<500?0.1:1;
   for(const [key,label,min,max,step,dec,unit] of T.knobs){const v=B.p[key];const k=$("k_"+key),n=$("n_"+key),vv=$("v_"+key);
     if(min===null){if(k)k.value=v;continue}
     if(k)k.value=v;if(n&&document.activeElement!==n)n.value=dec?(+v).toFixed(dec):String(Math.round(v));
-    if(vv){const txt=dec?(+v).toFixed(dec):String(Math.round(v));vv.textContent=unit==="°"?txt+"°":unit?txt+" "+unit:txt}}
+    if(vv){const txt=dec?(+v).toFixed(dec):String(Math.round(v));vv.textContent=unit==="°"?txt+"°":unit?txt+" "+unit:txt}
+    const lb=document.querySelector(`[data-lock="${key}"]`);if(lb){lb.checked=!!B.lock[key];$("kn_"+key).classList.toggle("locked",lb.checked)}}
+  const held=T.knobs.filter(n=>B.lock[n[0]]).map(n=>n[1].split(",")[0].toLowerCase());
+  $("lockNote").textContent=held.length?`Locked, Solve leaves alone: ${held.join(", ")}.`:"Tick lock on any knob Solve must leave alone.";
   const kd=$("kDip");kd.min=Math.round(B.f0*0.5);kd.max=Math.round(B.f0*1.5);kd.step=B.f0<500?0.1:1;kd.value=B.dip;if(document.activeElement!==$("nDip"))$("nDip").value=fF(B.dip);$("vDip").textContent=`${fF(B.dip)} MHz`;
 }
 $("type").addEventListener("change",()=>{S.type=$("type").value;buildKnobs();render();window.scrollTo({top:0,behavior:"smooth"})});
@@ -910,15 +920,17 @@ $("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(
 const SOLVE={
   dipole:{lim:{arm:[50,125]},limWhy:"the window mount's whips slide from about 50 to 125 mm each",
     note:()=>{const tb=0.25*lam(1800);return `<b>Textbook starting point, not the station's answer.</b> At 1800 MHz a quarter wave is ${f1(tb)} mm per whip (${f1(tb*0.95)} with the 0.95 end effect), yet four measured lengths put the best at <b>60 mm</b>: −16.6 dB on 1799.98 MHz, against −20.7 at 50, −17.6 at 75 and −24.5 at 100. The model knows nothing of the LaNA at the feed, the glass or the L, and with an amplifier at the feed the pattern counts for more than the match. The archive outranks this.`}},
-  discone:{after:p=>{p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
+  discone:{after:(p,locked)=>{if(!locked("flow"))p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);if(!locked("disc"))p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
     note:()=>"The cone slant is what Solve moves; the disc follows at 0.7 × the cone bottom and the lowest-frequency knob follows the cutoff. One frequency puts it on the first dip, which is the smallest discone that hears it."},
-  lpda:{custom:(freqs,p,T)=>{const one=freqs.length===1,m=one?1.15:1.05;const q={...p};
-      q.flo=clamp(Math.round(Math.min(...freqs)/m),100,2187);q.fhi=clamp(Math.round(Math.max(...freqs)*m),150,3000);
-      q.sig=clamp(Math.round((0.243*q.tau-0.051)/0.002)*0.002,0.04,0.22);Object.assign(q,T.design(0,q));return q},
+  lpda:{custom:(freqs,p,T,locked)=>{const one=freqs.length===1,m=one?1.15:1.05;const q={...p};
+      if(!locked("flo"))q.flo=clamp(Math.round(Math.min(...freqs)/m),100,2187);if(!locked("fhi"))q.fhi=clamp(Math.round(Math.max(...freqs)*m),150,3000);
+      if(!locked("sig"))q.sig=clamp(Math.round((0.243*q.tau-0.051)/0.002)*0.002,0.04,0.22);if(!locked("Z0"))Object.assign(q,T.design(0,q));return q},
     note:()=>"Nothing on an LPDA is trimmed. Solve puts the band edges 5 percent outside the frequencies asked (15 percent either side of a single one), sets σ to Carrel's optimum for your τ, and sets the feeder to the impedance that gives 50 Ω. τ is the size-against-gain choice and stays yours; 0.9 is a fair middle."},
   helix:{key:"cl",direct:()=>1,note:()=>"Nothing on a helix is trimmed. Solve sets the circumference to one wavelength at the centre frequency, the middle of the axial-mode band, and the plate to 0.75 λ there; the turns and pitch are yours."}
 };
 const knobOf=(T,k)=>T.knobs.find(x=>x[0]===k);
+// calibration factors describe the wire, not the build: Solve never moves them, so they carry no lock
+const CAL=new Set(["K","Kq"]);
 // "1090, 1265" is two frequencies; "2110-2155" is a band, taken as five points spaced evenly in ratio.
 function parseFreqs(text,T,f0){const out=[],dropped=[];const t=String(text||"").replace(/mhz/ig," ").trim();
   if(!t)return {freqs:[f0],dropped};
@@ -928,10 +940,10 @@ function parseFreqs(text,T,f0){const out=[],dropped=[];const t=String(text||"").
     else{const v=parseFloat(tok);if(isFinite(v)&&v>0)add(v);else dropped.push(tok)}}
   return {freqs:[...new Set(out)].sort((a,b)=>a-b),dropped}}
 function solveFor(T,B,freqs){
-  const sp=SOLVE[T.id]||{};
+  const sp=SOLVE[T.id]||{};const locked=k=>!!B.lock[k];const held=T.knobs.filter(n=>locked(n[0])).map(n=>n[0]);
   // a design with no single trimmed dimension (the LPDA) sets its own band edges; it is reported like the helix, centred
   if(sp.custom){const gm=Math.exp(freqs.reduce((a,f)=>a+Math.log(f),0)/freqs.length);
-    return {p:sp.custom(freqs,{...B.p},T),f0:Math.round(gm*10)/10,mode:"centre",edge:null,ideal:null,compromise:null,key:null,gm,clamped:[],limWhy:null}}
+    return {p:sp.custom(freqs,{...B.p},T,locked),f0:Math.round(gm*10)/10,mode:"centre",edge:null,ideal:null,compromise:null,key:null,gm,clamped:[],limWhy:null,held}}
   const key=sp.key||T.trim.key;
   const range=k=>{const n=knobOf(T,k);return (sp.lim&&sp.lim[k])||[n[2],n[3]]};
   const n0=knobOf(T,key);const stp=n0[6]==="mm"?Math.min(n0[4],0.1):Math.pow(10,-n0[5]);
@@ -939,9 +951,22 @@ function solveFor(T,B,freqs){
   const single=freqs.length===1;const fT0=Math.round((single?freqs[0]:gm)*10)/10;
   // build-once dimensions from the design rule at the centre, held inside the knobs' ranges
   const p0={...B.p};const d=T.design(fT0,p0,T.model(p0,fT0));const base={...p0};const clamped=[];
-  for(const [k,v] of Object.entries(d)){const n=knobOf(T,k);if(!n||n[2]===null||typeof v!=="number"||k===key){if(k!==key)base[k]=v;continue}
+  for(const [k,v] of Object.entries(d)){if(locked(k))continue;const n=knobOf(T,k);if(!n||n[2]===null||typeof v!=="number"||k===key){if(k!==key)base[k]=v;continue}
     const [lo,hi]=range(k);base[k]=clamp(v,lo,hi);if(base[k]!==v)clamped.push([k,v])}
-  const at=x=>{const q={...base,[key]:x};if(sp.after)sp.after(q);return q};
+  const at=x=>{const q={...base,[key]:x};if(sp.after)sp.after(q,locked);return q};
+  // the dimension Solve normally moves is locked: search every other unlocked knob instead, one at a time, three rounds
+  // (coordinate descent: a coarse scan of each knob's range, then golden-section in the best cell, rounded to the knob's step)
+  if(locked(key)){const single=freqs.length===1;
+    const free=T.knobs.filter(n=>n[2]!==null&&!CAL.has(n[0])&&!locked(n[0])).map(n=>n[0]);
+    const score=q=>{const M=T.model(q,fT0);if(single)return M.swr(fT0)+(T.trim?10*Math.abs((M.goal||M.fres)-fT0)/fT0:0);return Math.max(...freqs.map(f=>M.swr(f)))};
+    let q={...base};if(sp.after)sp.after(q,locked);
+    for(let pass=0;pass<3;pass++)for(const k of free){const n=knobOf(T,k);const [a0,b0]=range(k);const st=n[4];const rk=x=>clamp(Math.round(x/st)*st,a0,b0);
+      const with_=x=>{const t={...q,[k]:rk(x)};if(sp.after)sp.after(t,locked);return t};
+      const m=48;let bx=q[k],bs=score(q);for(let i=0;i<=m;i++){const x=a0+(b0-a0)*i/m;const s=score(with_(x));if(s<bs-1e-9){bs=s;bx=rk(x)}}
+      let a=Math.max(a0,bx-(b0-a0)/m),b=Math.min(b0,bx+(b0-a0)/m);for(let i=0;i<30;i++){const m1=a+(b-a)*0.382,m2=a+(b-a)*0.618;if(score(with_(m1))<score(with_(m2)))b=m2;else a=m1}
+      const xg=rk((a+b)/2);if(score(with_(xg))<bs)bx=xg;q=with_(bx)}
+    const moved=free.filter(k=>q[k]!==B.p[k]);
+    return {p:q,f0:fT0,mode:moved.length?"free":"none",free,edge:null,ideal:null,compromise:null,key,gm,clamped,limWhy:null,held}}
   const [lo,hi]=range(key);const rnd=x=>clamp(Math.round(x/stp)*stp,lo,hi);
   const worst=q=>{const M=T.model(q,fT0);return Math.max(...freqs.map(f=>M.swr(f)))};
   const dipOf=q=>{const M=T.model(q,fT0);return M.goal||M.fres};
@@ -960,7 +985,7 @@ function solveFor(T,B,freqs){
   const ideal=edge&&mode!=="minimax"?resonate(fT0,lo*0.05,hi*20).x:null;
   // of the two knob steps either side of the solved length, keep the one whose dip lands nearer
   let xr=rnd(x);if(mode==="resonant"||mode==="centred"){const a=rnd(Math.floor(x/stp)*stp),b=rnd(Math.ceil(x/stp)*stp);xr=Math.abs(dipOf(at(a))-fT0)<=Math.abs(dipOf(at(b))-fT0)?a:b}
-  return {p:at(xr),f0:fT0,mode,edge,ideal,compromise,key,gm,clamped,limWhy:edge?sp.limWhy:null}}
+  return {p:at(xr),f0:fT0,mode,edge,ideal,compromise,key,gm,clamped,limWhy:edge?sp.limWhy:null,held}}
 function doSolve(){const T=T_(),B=cur();const {freqs,dropped}=parseFreqs($("solveFor").value,T,B.f0);
   if(!freqs.length){toast(`Nothing to solve for between ${T.f0.min} and ${T.f0.max} MHz.`);return}
   const old={p:{...B.p},f0:B.f0,dip:B.dip};const r=solveFor(T,B,freqs);
@@ -978,7 +1003,7 @@ function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true
   const rows=[];if(Math.abs(s.old.f0-s.f0)>1e-9)rows.push(`<tr><td>Target</td><td class="n">${fF(s.old.f0)} → <b>${fF(s.f0)}</b> MHz</td><td class="small muted">${s.freqs.length>1?"geometric mean":"the frequency asked"}</td></tr>`);
   for(const n of T.knobs){const k=n[0],a=s.old.p[k],b=s.newP[k];if(a===b||(typeof a==="number"&&Math.abs(a-b)<1e-9))continue;
     const cl=s.clamped.find(c=>c[0]===k);
-    const why=k===s.key?(s.edge?`<span class="chip bad">at the ${s.edge==="lo"?"short":"long"} limit</span>`:`<span class="chip good">solved</span>`):cl?`<span class="chip warn">clamped</span> rule says ${fmt(n,cl[1])}`:SOLVE[T.id]?.custom?"set by Solve":SOLVE[T.id]?.after?"follows":"design rule";
+    const why=s.mode==="free"&&s.free.includes(k)?`<span class="chip good">solved</span>`:k===s.key?(s.edge?`<span class="chip bad">at the ${s.edge==="lo"?"short":"long"} limit</span>`:`<span class="chip good">solved</span>`):cl?`<span class="chip warn">clamped</span> rule says ${fmt(n,cl[1])}`:SOLVE[T.id]?.custom?"set by Solve":SOLVE[T.id]?.after?"follows":"design rule";
     rows.push(`<tr><td>${esc(n[1].split(",")[0])}</td><td class="n">${fmt(n,a)} → <b>${fmt(n,b)}</b>${unit(n)}</td><td class="small muted">${why}</td></tr>`)}
   const fr=s.freqs.map(f=>{const so=Mo.swr(f),sn=Mn.swr(f),g=Mn.gam(f),rl=-20*Math.log10(Math.max(g,1e-4));
     return `<tr><td class="n">${fF(f)}</td><td class="n muted">${so<50?f2(so):"»10"}</td><td class="n"><span class="chip ${cls(sn)}">${sn<50?f2(sn):"»10"}:1</span></td><td class="n">${rl>=40?"≥40":rl.toFixed(1)} dB</td></tr>`}).join("");
@@ -987,6 +1012,8 @@ function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true
   if(s.mode==="resonant")sum=`Predicted ${Mn.goal?"first dip":"dip"} at <b>${fF(dipN)} MHz</b>, ${Math.abs(off)<0.05?"on":(off>=0?"+":"−")+fT(Math.abs(off))+" MHz from"} ${fF(s.f0)}.`;
   else if(s.mode==="minimax")sum=`Worst SWR across the ${s.freqs.length} frequencies: <b>${f2(wN)}:1</b>, all under 2:1. Predicted ${Mn.goal?"first dip":"dip"} at ${fF(dipN)} MHz.`;
   else if(s.mode==="centred")sum=`No single ${kname} gets all of them under 2:1; the best compromise still left ${s.compromise<50?f2(s.compromise):"»10"}:1. Centred instead on the geometric mean, <b>${fF(s.f0)} MHz</b> (dip at ${fF(dipN)}). It gives up <b>${lost.map(fF).join(", ")||"nothing"} MHz</b>.`;
+  else if(s.mode==="free"||s.mode==="none"){const what=`The ${kname} is locked`;const res=s.freqs.length===1?`${T.trim?`Predicted ${Mn.goal?"first dip":"dip"} at <b>${fF(dipN)} MHz</b>, `:""}<b>${f2(Mn.swr(s.f0))}:1</b> at ${fF(s.f0)} MHz.`:`Worst SWR across the ${s.freqs.length} frequencies: <b>${f2(wN)}:1</b>${lost.length?`, above 2:1 at ${lost.map(fF).join(", ")} MHz`:", all under 2:1"}.`;
+    sum=s.mode==="free"?`${what}, so Solve moved the unlocked knobs instead. ${res}`:`${what}, and no unlocked knob improves the match: nothing changed. ${res} Unlock something to give Solve room.`}
   else sum=`Centred on <b>${fF(s.f0)} MHz</b>; worst SWR across them ${f2(wN)}:1${lost.length?`, above 2:1 at ${lost.map(fF).join(", ")} MHz`:""}.`;
   if(s.mode==="minimax"&&lost.length)sum+=` Above 2:1 at ${lost.map(fF).join(", ")} MHz.`;
   const notes=[];
@@ -994,6 +1021,8 @@ function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true
   for(const [k,v] of s.clamped){const n=knobOf(T,k);notes.push(`${esc(n[1].split(",")[0])}: the design rule wants ${fmt(n,v)}${unit(n)}, outside the knob's ${n[2]}–${n[3]}${unit(n)}; held at the end of the range.`)}
   if(!s.edge&&s.mode!=="centre"&&Mn.swr(dipN)>1.5)notes.push(`At its dip this antenna presents about ${f0_(Mn.R0)} Ω, so the best it can show on 50 Ω is ${f2(Mn.swr(dipN))}:1 whatever the length. That is the match's job (${esc(Mn.feedNote)}), not the saw's.`);
   if(s.dropped.length)notes.push(`Left out, outside ${T.f0.min}–${T.f0.max} MHz for this antenna: ${s.dropped.map(v=>esc(v)).join(", ")}.`);
+  if(s.held&&s.held.length)notes.push(`<b>Held, locked:</b> ${s.held.map(k=>{const n=knobOf(T,k);return `${esc(n[1].split(",")[0].toLowerCase())} ${fmt(n,s.newP[k])}${unit(n)}`}).join(", ")}.`);
+  if(s.mode==="free")notes.push("With the usual dimension locked, Solve searches each unlocked knob in turn, three rounds, for the lowest predicted SWR"+(T.trim?" with the dip on the frequency":"")+". It can move things you might not want moved, such as the wire diameter: lock those too.");
   if(SOLVE[T.id]?.note)notes.push(SOLVE[T.id].note());
   const moved=Math.abs(B.f0-s.f0)>1e-9||T.knobs.some(n=>B.p[n[0]]!==s.newP[n[0]]);
   el.innerHTML=`<p class="sum">${sum}</p>
