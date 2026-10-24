@@ -454,6 +454,21 @@ intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, an
 entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
 probe. Full table in CLAUDE.md "Block H2".
 
+### H5. UWB on the dipole's outlined spot (pre-registered 2026-10-23, 13:30) - NEXT
+
+Same fingerprint as H4 (`custom 30m --freq 1241M:2148M:50k -g 29 -i 120 --skip-warmup 10`),
+UWB moved from its spot onto the dipole's outline on the glass, nothing else touched. Read on
+the same within-run plateaus against the four whip runs. If H4's shortfall was the spot:
+
+- **PCS 1930-1990 plateau: at least +1.0 dB above the whip mean** (H4 at its own spot: -1.39).
+- **AWS 2124-2147: at least +1.0 dB** above the whip mean (H4: +0.25; the same-spot deep tile at
+  g42 gave +1.8 to +2.3, which g29's squeeze toward the digital floor shrinks to ~+1.3).
+- **1633.47 MHz returns to +7 dB or more** over the floor (H4: +1.4; whip runs +7.6 to +10.9),
+  if it is a near-field source by the dipole's spot rather than a property of the antenna.
+
+If PCS and AWS stay where H4 put them, the spot is not the explanation and the 2049 deep-tile
+win was specific to g42 or to that evening.
+
 ### H3. Cold-start top edge (pre-registered 2026-10-23, 11:20)
 
 XTR idle (powered, not streaming) since 23:18 the night before, 12 h. Cold `rtl_test -t` at
