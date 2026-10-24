@@ -295,8 +295,12 @@ function mkZ(Zf,fres){
   const gam=f=>{const [R,X]=Zf(f);return Math.min(gammaRX(R,X),0.999)};
   const swr=f=>{const g=gam(f);return (1+g)/(1-g)};
   const ml=f=>{const g=gam(f);return -10*Math.log10(1-g*g)};
+  // 2:1 edges: walk out in 1 % steps, then bisect the last step down to 1 MHz (0.1 below 500 MHz). Walking in 1 MHz
+  // steps cost up to 9000 evaluations per model on a discone, which made Solve's searches take a second.
   const st=fres>=500?1:0.1;let lo=fres,hi=fres;
-  if(swr(fres)<=1.98){while(swr(lo-st)<=2&&lo>fres*0.5)lo-=st;while(swr(hi+st)<=2&&hi<fres*10)hi+=st}
+  const edge=dir=>{const big=Math.max(st,fres*0.01),stop=dir<0?fres*0.5:fres*10;let a=fres;
+    for(;;){const n=a+dir*big;if(dir<0?n<stop:n>stop)return a;if(swr(n)>2){let b=n;while(Math.abs(b-a)>st){const m=(a+b)/2;if(swr(m)<=2)a=m;else b=m}return a}a=n}};
+  if(swr(fres)<=1.98){lo=edge(-1);hi=edge(1)}
   return {Z:Zf,gam,swr,ml,bwLo:lo,bwHi:hi};
 }
 // Series-resonant style impedance: R grows with f^2 as the element gets electrically longer, X is a straight line in f/fres.
@@ -903,13 +907,15 @@ function sync(){const T=T_(),B=cur();
   const kd=$("kDip");kd.min=Math.round(B.f0*0.5);kd.max=Math.round(B.f0*1.5);kd.step=B.f0<500?0.1:1;kd.value=B.dip;if(document.activeElement!==$("nDip"))$("nDip").value=fF(B.dip);$("vDip").textContent=`${fF(B.dip)} MHz`;
 }
 $("type").addEventListener("change",()=>{S.type=$("type").value;buildKnobs();render();window.scrollTo({top:0,behavior:"smooth"})});
-$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;render();toast(`${b.textContent}: design dimensions set`)});
+// The design buttons fill in every dimension the rule gives, except the ones locked for Solve: a lock means "leave this".
+function applyDesign(B,d){const kept=[];for(const [k,v] of Object.entries(d)){if(B.lock[k]){if(B.p[k]!==v)kept.push(k);continue}B.p[k]=v}return kept.length?" (locked knobs kept)":""}
+$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));const k=applyDesign(B,d);if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;render();toast(`${b.textContent}: design dimensions set${k}`)});
 $("kF0").addEventListener("input",()=>{cur().f0=+$("kF0").value;render()});
 $("nF0").addEventListener("change",()=>{const v=parseFloat($("nF0").value);if(!isFinite(v)){sync();return}cur().f0=clamp(v,+$("kF0").min,+$("kF0").max);render()});
 $("kDip").addEventListener("input",()=>{const B=cur();B.dip=+$("kDip").value;B.dipFromMeas=false;render()});
 $("nDip").addEventListener("change",()=>{const B=cur();const v=parseFloat($("nDip").value);if(!isFinite(v)){sync();return}B.dip=Math.round(clamp(v,+$("kDip").min,+$("kDip").max)*10)/10;B.dipFromMeas=false;render()});
-$("bStart").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);if(T.trim)B.p[T.trim.key]=r5(B.p[T.trim.key]*1.10);render();toast("Start-long lengths set")};
-$("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));Object.assign(B.p,d);render();toast(T.trim?"Predicted final lengths set":"Design dimensions set")};
+$("bStart").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));const k=applyDesign(B,d);const tl=T.trim&&B.lock[T.trim.key];if(T.trim&&!tl)B.p[T.trim.key]=r5(B.p[T.trim.key]*1.10);render();toast(tl?`The ${T.trim.label} is locked, so it was left as it is${k?"; other locked knobs kept too":""}`:"Start-long lengths set"+k)};
+$("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));const k=applyDesign(B,d);render();toast((T.trim?"Predicted final lengths set":"Design dimensions set")+k)};
 
 /* ---------- Solve: dimensions for the frequencies asked ---------- */
 // Solve moves one dimension, the one the cut guide trims (a helix has none, so its circumference), after setting the
@@ -1019,14 +1025,18 @@ function renderSolve(T,B){const el=$("solveOut"),s=B.solve;if(!s){el.hidden=true
   const notes=[];
   if(s.edge){const n=knobOf(T,s.key);notes.push(`<b>Limit reached.</b> ${s.ideal!=null?`The textbook ${kname} here is ${f1(s.ideal)}${unit(n)}, `:""}${s.edge==="lo"?"shorter":"longer"} than ${s.limWhy||"this knob goes"}; held at ${fmt(n,s.newP[s.key])}${unit(n)}, so the dip lands at ${fF(dipN)} MHz instead.`)}
   for(const [k,v] of s.clamped){const n=knobOf(T,k);notes.push(`${esc(n[1].split(",")[0])}: the design rule wants ${fmt(n,v)}${unit(n)}, outside the knob's ${n[2]}–${n[3]}${unit(n)}; held at the end of the range.`)}
-  if(!s.edge&&s.mode!=="centre"&&Mn.swr(dipN)>1.5)notes.push(`At its dip this antenna presents about ${f0_(Mn.R0)} Ω, so the best it can show on 50 Ω is ${f2(Mn.swr(dipN))}:1 whatever the length. That is the match's job (${esc(Mn.feedNote)}), not the saw's.`);
+  // only meaningful once the dip is on the frequency; with the dip far off, the miss is the cause, not the feed
+  const belowCut=T.id==="can"&&s.f0<=Mn.fc*1.02;
+  if(!s.edge&&!belowCut&&s.mode!=="centre"&&Math.abs(off)<=s.f0*0.01&&Mn.swr(dipN)>1.5)notes.push(`At its dip this antenna presents about ${f0_(Mn.R0)} Ω, so the best it can show on 50 Ω is ${f2(Mn.swr(dipN))}:1 whatever the length. That is the match's job (${esc(Mn.feedNote)}), not the saw's.`);
   if(s.dropped.length)notes.push(`Left out, outside ${T.f0.min}–${T.f0.max} MHz for this antenna: ${s.dropped.map(v=>esc(v)).join(", ")}.`);
   if(s.held&&s.held.length)notes.push(`<b>Held, locked:</b> ${s.held.map(k=>{const n=knobOf(T,k);return `${esc(n[1].split(",")[0].toLowerCase())} ${fmt(n,s.newP[k])}${unit(n)}`}).join(", ")}.`);
   if(s.mode==="free")notes.push("With the usual dimension locked, Solve searches each unlocked knob in turn, three rounds, for the lowest predicted SWR"+(T.trim?" with the dip on the frequency":"")+". It can move things you might not want moved, such as the wire diameter: lock those too.");
+  if(belowCut)notes.push(`<b>The can is too narrow.</b> At ${f1(s.newP.D)} mm its TE11 cutoff is ${f0_(Mn.fc)} MHz, at or above ${fF(s.f0)}, so no probe length or position can make it work. ${s.held.includes("D")?"Unlock the diameter, or find a can at least "+f0_(0.586*lam(s.f0))+" mm across.":"It needs at least "+f0_(0.586*lam(s.f0))+" mm across."}`);
+  if((s.mode==="free"||s.mode==="none")&&s.held.length&&Math.abs(off)>s.f0*0.01&&T.trim)notes.push(`The dip is still ${fT(Math.abs(off))} MHz ${off>0?"above":"below"} ${fF(s.f0)}: what is locked keeps it there. Unlocking the ${kname} is the direct fix.`);
   if(SOLVE[T.id]?.note)notes.push(SOLVE[T.id].note());
   const moved=Math.abs(B.f0-s.f0)>1e-9||T.knobs.some(n=>B.p[n[0]]!==s.newP[n[0]]);
   el.innerHTML=`<p class="sum">${sum}</p>
-    <div class="scroll"><table><thead><tr><th>Changed</th><th>Before → after</th><th></th></tr></thead><tbody>${rows.join("")||'<tr><td colspan="3" class="muted">Nothing moved: already there.</td></tr>'}</tbody></table></div>
+    <div class="scroll"><table><thead><tr><th>Changed</th><th>Before → after</th><th></th></tr></thead><tbody>${rows.join("")||`<tr><td colspan="3" class="muted">${s.mode==="none"?"Nothing moved.":"Nothing moved: already there."}</td></tr>`}</tbody></table></div>
     <div class="scroll"><table><thead><tr><th>MHz</th><th>SWR before</th><th>SWR after</th><th>Return loss</th></tr></thead><tbody>${fr}</tbody></table></div>
     ${notes.map(t=>`<p class="note">${t}</p>`).join("")}
     <p class="note">${moved?"Knobs moved since Solve; the tables show what it set. ":""}Predicted, not measured: the bridge has the last word.</p>
