@@ -454,6 +454,29 @@ intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, an
 entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
 probe. Full table in CLAUDE.md "Block H2".
 
+### H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
+
+H3 put the warm XTR's PLL gap at 1086-1230 MHz, so 1090 (ADS-B) sits inside it once warm; cold it
+was 1094-1239, with 1090 just below. XTR idle since 00:17 (10 h). Whips on the dipole's outline
+as left by H5-A2, nothing touched.
+
+1. **Cold:** `adsb_check.py --seconds 600 --gain 29 --device 0`, straight away.
+2. **Warm it usefully:** 1 h LS at the H5 fingerprint, whips on the outline - a morning whip
+   reference beside H5's evening blocks.
+3. **Warm:** the same `adsb_check.py`, straight after.
+4. `rtl_test -t`, warm, to read the gap edge at that moment.
+
+Predictions, on the DF17 count (not ICAO, which is inflated):
+
+- **Gap reaches 1090 when warm:** warm DF17 falls **more than 5x** below cold (or to near zero),
+  and the warm `rtl_test -t` puts the gap's lower edge at or below 1090.
+- **It does not:** warm and cold DF17 within **2x** of each other (10 min counts swing, so 2x is
+  the noise band for a single pair an hour apart).
+- Between 2x and 5x: unreadable on one pair; repeat with the v5 running beside it as a traffic
+  control.
+- The cold run warms the dongle itself for 10 min, but the gap edge needs most of an hour to
+  move 4 MHz past 1090, so the cold count stands.
+
 ### H5. Whip / UWB / whip on the dipole's outlined spot, same day (pre-registered 2026-10-23, 13:40) - NEXT
 
 *Revised before any run, at the owner's prompt:* the four whip runs H4 was scored against are 2-4
