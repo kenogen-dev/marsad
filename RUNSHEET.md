@@ -484,6 +484,13 @@ mean of A1 and A2.
 If the UWB does not beat the whips here, the 2049 deep-tile win was specific to g42 or that
 evening, and H4 is not about the spot.
 
+**DONE 00:17.** Bracket failed (A2-A1: PCS -2.06, AWS +1.07, the late-evening network), but B sat
+above both whips on both downlinks: **PCS +1.45, AWS +1.32 dB against the better whip - held.**
+1241-1341 within +/-2: held. 1633.47 +7 in all three: failed for the UWB (+5.7). On the same spot
+the **whips beat the UWB by 6-9 dB on the narrow carriers** 1799.98 and 1633.47 - likely
+polarization - which withdraws H4's "near-field source by the dipole spot". Details in CLAUDE.md
+"Block H5". Possible follow-up: UWB rotated horizontal, 10 min, same spot.
+
 ### H3. Cold-start top edge (pre-registered 2026-10-23, 11:20)
 
 XTR idle (powered, not streaming) since 23:18 the night before, 12 h. Cold `rtl_test -t` at

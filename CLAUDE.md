@@ -1082,15 +1082,61 @@ The clean test is the UWB moved onto the dipole's outline, 30 min at this finger
 **Incidentals, same run:**
 
 - **1633.47 MHz is almost gone with the UWB**: +1.4 dB over the floor, against +7.6 to +10.9 in
-  all four whip runs. The external carrier 1799.98 MHz dropped only 1-7 dB by comparison (+16.6
-  against +17.6 to +23.9). A line that falls ~8 dB more than a distant carrier when the antenna
-  moves 8 inches is a **near-field source close to the dipole's spot**, which fits Block H2 and
-  the Block E outside result. That is where the probe hunt should start.
+  all four whip runs. *The inference first drawn here - "a near-field source close to the
+  dipole's spot" - is WITHDRAWN by Block H5:* on the same spot, same evening, 1799.98 MHz (a
+  distant carrier) reads ~8 dB weaker on the UWB than on the whips, and 1633.47 ~6 dB weaker.
+  Both narrow carriers favour the whip by about the same margin, so the antenna, not proximity,
+  is most of what moved.
 - **1799.98 MHz is back** at +16.6 dB, steady; retired as a yardstick on 2026-10-20 and not
   reinstated on one run.
 - **1435.92 MHz** (aeronautical telemetry, previously seen only with the antenna outside) at
   +7.9 dB median, against +1.1 to +3.6 in the whip runs. The UWB at its spot hears it; the whip
   did not.
+
+### Block H5, whip / UWB / whip on the dipole's outline (2026-10-23, 21:40-00:17): the UWB wins the downlinks, the whip wins the carriers
+
+Pre-registered (and revised before any run) in RUNSHEET H5. Three 30 min blocks at the LS
+fingerprint, g29, `--skip-warmup 10` (5 of 10 sweeps analysed each), all three antennas on the
+dipole's outlined spot, only the antenna swapped: A1 whips 21:40, B UWB 22:38, A2 whips 23:46.
+
+Within-run plateaus (block median minus the run's own 2049-2099 block):
+
+| Block | A1 whip | **B UWB** | A2 whip | A2 - A1 | B - mean(A) | B - best whip |
+|---|---|---|---|---|---|---|
+| 1241-1341 | 7.79 | 6.29 | 6.11 | -1.68 | -0.66 | -1.50 |
+| 1341-1441 | 3.72 | 4.39 | 2.79 | -0.94 | +1.14 | +0.67 |
+| 1441-1541 | 4.64 | 3.13 | 3.91 | -0.73 | -1.14 | -1.51 |
+| 1930-1990 PCS downlink | 7.84 | **9.29** | 5.77 | **-2.06** | +2.49 | **+1.45** |
+| 2110-2124 | 4.38 | 2.16 | 2.32 | -2.07 | -1.19 | -2.22 |
+| 2124-2147 AWS downlink | 2.24 | **4.63** | 3.31 | +1.07 | +1.86 | **+1.32** |
+
+| Line, peak over floor | A1 whip | B UWB | A2 whip |
+|---|---|---|---|
+| 1799.98 MHz | +29.1 | **+20.0** | +27.5 |
+| 1633.47 MHz | +13.9 | **+5.7** | +9.9 |
+| 1435.92 MHz | +0.8 | +1.3 | +1.3 |
+
+**Against the predictions:** A1 and A2 within 1.0 dB on PCS and AWS: **FAILED** (PCS -2.06,
+AWS +1.07; the late-evening network falls away, as in Block H1). But on both downlinks the UWB sits
+**above both whip runs**, so the verdict is read against the better whip, the strict reading:
+**PCS +1.45 and AWS +1.32 dB, both meeting "at least +1.0": held.** 1241-1341 within +/-2: held.
+1633.47 at +7 or more in all three: **failed for the UWB** (+5.7).
+
+**What it means.**
+
+- **On the same spot, the UWB is the better antenna for the broadband downlinks by ~1.3-1.5 dB
+  at g29**, matching the deep-tile result squeezed by the digital floor. H4's shortfall was the
+  UWB's own spot: moving it 8 inches onto the dipole's outline turned PCS from -1.4 to +1.45.
+- **The whips beat the UWB by 6-9 dB on narrow carriers** (1799.98, 1633.47), on the same spot.
+  The likeliest reason is polarization: the 90 deg L has a horizontal element and the UWB is
+  vertical only, while the base-station downlinks are usually slant +/-45 deg and reach both. That
+  is a hypothesis; rotating the UWB to horizontal for one 10 min block would test it.
+- **So H4's "1633.47 is a near-field source by the dipole's spot" is withdrawn**: 1633.47 behaves
+  like the distant 1799.98 carrier. It still moved +4.3 dB when the UWB moved onto the outline
+  (+1.4 -> +5.7), so the spot matters some, but the antenna matters more.
+- **Which antenna is "better" depends on the target**: UWB for cellular-style broadband, the L
+  dipole for whatever 1633/1800 are. The standing antenna should be chosen per survey, and the
+  chain text will say which.
 
 ### UWB biconical vs the 60 mm whip at 2.1 GHz (2026-10-21): the antenna was the limit, worth +2.3 dB
 
