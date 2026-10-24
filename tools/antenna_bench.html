@@ -702,10 +702,10 @@ TYPES.dipole={
 TYPES.discone={
   id:"discone",short:"Discone",name:"Discone",word:"cut",
   lede:"A disc over a cone, fed across the gap between them. The cone's slant length sets a cutoff; above it the discone sits near 50 Ω for several octaves with no radials and no reflector, so one small build covers ADS-B, the radar and the 2.1 GHz downlink at once. Omnidirectional, dipole gain.",
-  f0:{def:1090,min:300,max:2187},presets:[["1090 ADS-B",1090],["1265 radar",1265],["2130 downlink",2130]],
+  f0:{def:1090,min:300,max:2187},presets:[["1090 ADS-B",1090,{flow:1000}],["1265 radar",1265,{flow:1000}],["2130 downlink",2130,{flow:1000}],["LS wideband 1241–2187",1647,{flow:1070},"1241-2187"]],
   knobs:[["flow","Lowest frequency to cover",100,2187,1,0,"MHz"],["L","Cone slant, each wire",10,800,0.5,1,"mm"],["ang","Cone included angle",40,90,1,0,"°"],["disc","Disc diameter",5,600,0.5,1,"mm"],["gap","Disc to cone gap",1,20,0.5,1,"mm"],["N","Cone wires",6,24,1,0,""],["d","Wire diameter",0.5,4,0.01,2,"mm"]],
   init:{flow:1000,L:0,ang:60,disc:0,gap:3,N:12,d:1.63},
-  help:[["Lowest frequency.","The design knob. The cone's slant length is a quarter wave here, and the match holds from a little above it to roughly eight times it. 1000 MHz gives a 75 mm cone that covers 1090, 1265 and 2130 together."],["Slant.","Each cone wire, from the small end to the tip. The only thing that moves the cutoff, and the only trim. Shorter raises it."],["Angle.","60° included is the classic; wider (90°) lowers the impedance a little and shortens the build, narrower raises it. Between 50 and 70 nothing much changes."],["Disc.","0.7 times the cone's bottom diameter. It sets how well the top of the band matches, not where the band starts."],["Gap.","As small as the connector allows: the disc sits on the centre pin, the cone wires on the flange, so the gap is the pin's exposed length."],["Cone wires.","Eight is the minimum that behaves like a sheet at the top of the band; twelve or sixteen is better. A solid sheet cone is the same antenna, heavier."]],
+  help:[["Lowest frequency.","The design knob. The cone's slant length is a quarter wave here, and the match holds from a little above it to roughly eight times it. 1000 MHz gives a 75 mm cone that covers 1090, 1265 and 2130 together."],["LS wideband.","The preset for the station's whole LS range, 1241 to 2187 MHz: a 1070 MHz cutoff, a 70 mm cone and a 49 mm disc. The first dip lands near 1200 MHz, 40 MHz below the band, so a cone cut a little long or short still covers 1241; the predicted SWR stays under 1.33:1 to 2187. Solve on the band it fills in gives a slightly smaller cone with the dip inside the band and no such margin."],["Slant.","Each cone wire, from the small end to the tip. The only thing that moves the cutoff, and the only trim. Shorter raises it."],["Angle.","60° included is the classic; wider (90°) lowers the impedance a little and shortens the build, narrower raises it. Between 50 and 70 nothing much changes."],["Disc.","0.7 times the cone's bottom diameter. It sets how well the top of the band matches, not where the band starts."],["Gap.","As small as the connector allows: the disc sits on the centre pin, the cone wires on the flange, so the gap is the pin's exposed length."],["Cone wires.","Eight is the minimum that behaves like a sheet at the top of the band; twelve or sixteen is better. A solid sheet cone is the same antenna, heavier."]],
   trim:{key:"L",label:"cone wires"},
   pill:p=>`${p.N} wires, cutoff ${p.flow} MHz`,
   design(f0,p){const L=r5(0.25*lam(p.flow));const B=2*L*Math.sin(p.ang/2*RAD);return {L,disc:r5(0.7*B)}},
@@ -881,7 +881,7 @@ const T_=()=>TYPES[S.type];
 /* ---------- knob column ---------- */
 function buildKnobs(){const T=T_(),B=cur();
   $("type").innerHTML=ORDER.map(id=>`<option value="${id}"${id===S.type?" selected":""}>${esc(TYPES[id].name)}</option>`).join("");
-  $("presets").innerHTML=T.presets.map(([l,f])=>`<button class="btn sm" type="button" data-f0="${f}">${esc(l)}</button>`).join("");
+  $("presets").innerHTML=T.presets.map(([l,f],i)=>`<button class="btn sm" type="button" data-f0="${f}" data-i="${i}">${esc(l)}</button>`).join("");
   $("kF0").min=T.f0.min;$("kF0").max=T.f0.max;
   $("knobList").innerHTML=T.knobs.map(([key,label,min,max,step,dec,unit])=>{
     if(min===null){const opts=T.selects[key];return `<div class="knob"><label for="k_${key}">${esc(label)}</label><span></span><span class="sl"><select class="num" id="k_${key}" data-key="${key}">${opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select></span></div>`}
@@ -909,7 +909,10 @@ function sync(){const T=T_(),B=cur();
 $("type").addEventListener("change",()=>{S.type=$("type").value;buildKnobs();render();window.scrollTo({top:0,behavior:"smooth"})});
 // The design buttons fill in every dimension the rule gives, except the ones locked for Solve: a lock means "leave this".
 function applyDesign(B,d){const kept=[];for(const [k,v] of Object.entries(d)){if(B.lock[k]){if(B.p[k]!==v)kept.push(k);continue}B.p[k]=v}return kept.length?" (locked knobs kept)":""}
-$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const d=T.design(B.f0,B.p,T.model(B.p,B.f0));const k=applyDesign(B,d);if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;render();toast(`${b.textContent}: design dimensions set${k}`)});
+// A preset is [label, target] and may add knob values to set first and a band to put in the Solve box ("LS wideband").
+$("presets").addEventListener("click",e=>{const b=e.target.closest("[data-f0]");if(!b)return;const B=cur();B.f0=+b.dataset.f0;const T=T_();const [,,over,band]=T.presets[+b.dataset.i]||[];
+  const k0=over?applyDesign(B,over):"";if(band)$("solveFor").value=band;
+  const d=T.design(B.f0,B.p,T.model(B.p,B.f0));const k=applyDesign(B,d)||k0;if(!B.dipFromMeas)B.dip=Math.round((T.model(B.p,B.f0).goal||B.f0)*0.0915)*10;render();toast(`${b.textContent}: design dimensions set${k}`)});
 $("kF0").addEventListener("input",()=>{cur().f0=+$("kF0").value;render()});
 $("nF0").addEventListener("change",()=>{const v=parseFloat($("nF0").value);if(!isFinite(v)){sync();return}cur().f0=clamp(v,+$("kF0").min,+$("kF0").max);render()});
 $("kDip").addEventListener("input",()=>{const B=cur();B.dip=+$("kDip").value;B.dipFromMeas=false;render()});
@@ -926,7 +929,7 @@ $("bFinal").onclick=()=>{const T=T_(),B=cur();const d=T.design(B.f0,B.p,T.model(
 const SOLVE={
   dipole:{lim:{arm:[50,125]},limWhy:"the window mount's whips slide from about 50 to 125 mm each",
     note:()=>{const tb=0.25*lam(1800);return `<b>Textbook starting point, not the station's answer.</b> At 1800 MHz a quarter wave is ${f1(tb)} mm per whip (${f1(tb*0.95)} with the 0.95 end effect), yet four measured lengths put the best at <b>60 mm</b>: −16.6 dB on 1799.98 MHz, against −20.7 at 50, −17.6 at 75 and −24.5 at 100. The model knows nothing of the LaNA at the feed, the glass or the L, and with an amplifier at the feed the pattern counts for more than the match. The archive outranks this.`}},
-  discone:{after:(p,locked)=>{if(!locked("flow"))p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);if(!locked("disc"))p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
+  discone:{preferSmall:true,after:(p,locked)=>{if(!locked("flow"))p.flow=clamp(Math.round(C0/(4*p.L/1000)/1e6),100,2187);if(!locked("disc"))p.disc=r5(0.7*2*p.L*Math.sin(p.ang/2*RAD))},
     note:()=>"The cone slant is what Solve moves; the disc follows at 0.7 × the cone bottom and the lowest-frequency knob follows the cutoff. One frequency puts it on the first dip, which is the smallest discone that hears it."},
   lpda:{custom:(freqs,p,T,locked)=>{const one=freqs.length===1,m=one?1.15:1.05;const q={...p};
       if(!locked("flo"))q.flo=clamp(Math.round(Math.min(...freqs)/m),100,2187);if(!locked("fhi"))q.fhi=clamp(Math.round(Math.max(...freqs)*m),150,3000);
@@ -980,7 +983,9 @@ function solveFor(T,B,freqs){
   const resonate=(f,a,b)=>{const g=x=>dipOf(at(x))-f;if(g(a)<0)return {x:a,edge:"lo"};if(g(b)>0)return {x:b,edge:"hi"};
     for(let i=0;i<60;i++){const m=(a+b)/2;if(g(m)>0)a=m;else b=m}return {x:(a+b)/2,edge:null}};
   // coarse scan in ratio, then golden-section on the best cell: worst-case SWR against length is not always one smooth bowl
-  const minimax=()=>{const n=240,r=Math.pow(hi/lo,1/n);let bx=lo,bw=Infinity;for(let i=0;i<=n;i++){const x=lo*Math.pow(r,i);const w=worst(at(x));if(w<bw){bw=w;bx=x}}
+  const minimax=()=>{const n=240,r=Math.pow(hi/lo,1/n);let bx=lo,bw=Infinity;const scan=[];for(let i=0;i<=n;i++){const x=lo*Math.pow(r,i);const w=worst(at(x));scan.push([x,w]);if(w<bw){bw=w;bx=x}}
+    // a broadband antenna's ripple has many near-equal minima: take the smallest build within 0.05 of the best
+    if(sp.preferSmall){const s=scan.find(([,w])=>w<=bw+0.05);if(s){bx=s[0];bw=s[1]}}
     let a=Math.max(lo,bx/r),b=Math.min(hi,bx*r);for(let i=0;i<50;i++){const m1=a+(b-a)*0.382,m2=a+(b-a)*0.618;if(worst(at(m1))<worst(at(m2)))b=m2;else a=m1}return (a+b)/2};
   let x,mode,edge=null,compromise=null;
   if(sp.direct){x=clamp(sp.direct(),lo,hi);mode="centre"}
