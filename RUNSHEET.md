@@ -454,20 +454,35 @@ intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, an
 entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
 probe. Full table in CLAUDE.md "Block H2".
 
-### H5. UWB on the dipole's outlined spot (pre-registered 2026-10-23, 13:30) - NEXT
+### H5. Whip / UWB / whip on the dipole's outlined spot, same day (pre-registered 2026-10-23, 13:40) - NEXT
 
-Same fingerprint as H4 (`custom 30m --freq 1241M:2148M:50k -g 29 -i 120 --skip-warmup 10`),
-UWB moved from its spot onto the dipole's outline on the glass, nothing else touched. Read on
-the same within-run plateaus against the four whip runs. If H4's shortfall was the spot:
+*Revised before any run, at the owner's prompt:* the four whip runs H4 was scored against are 2-4
+days old and from other hours, so H5 brings its own same-day whip reference. Three 30 min blocks
+back to back at H4's fingerprint (`custom 30m --freq 1241M:2148M:50k -g 29 -i 120
+--skip-warmup 10`), **all on the dipole's outlined spot**, nothing else touched:
 
-- **PCS 1930-1990 plateau: at least +1.0 dB above the whip mean** (H4 at its own spot: -1.39).
-- **AWS 2124-2147: at least +1.0 dB** above the whip mean (H4: +0.25; the same-spot deep tile at
-  g42 gave +1.8 to +2.3, which g29's squeeze toward the digital floor shrinks to ~+1.3).
-- **1633.47 MHz returns to +7 dB or more** over the floor (H4: +1.4; whip runs +7.6 to +10.9),
-  if it is a near-field source by the dipole's spot rather than a property of the antenna.
+| Block | Antenna on the dipole's outline | Tag |
+|---|---|---|
+| A1 | 60 mm whips, 90 deg L (the standing dipole) | `h5-A1-whip` |
+| B | UWB biconical | `h5-B-uwb` |
+| A2 | 60 mm whips again (the bracket) | `h5-A2-whip` |
 
-If PCS and AWS stay where H4 put them, the spot is not the explanation and the 2049 deep-tile
-win was specific to g42 or to that evening.
+Read on within-run plateaus (block median minus the run's own 2049-2099 block); B against the
+mean of A1 and A2.
+
+- **A1 and A2 agree within 1.0 dB** on the PCS and AWS plateaus, or the hour moved under the
+  block and B is not readable there.
+- **PCS 1930-1990: UWB at least +1.0 dB over the whips.** **AWS 2124-2147: at least +1.0 dB**
+  (same-spot deep tile at g42 gave +1.8 to +2.3; g29's squeeze toward the digital floor shrinks
+  that to about +1.3).
+- **1241-1341: within +/-2 dB.**
+- **1633.47 MHz: +7 dB or more over the floor in all three blocks** if it is a nearby source at
+  the spot (H4 at the UWB's own spot: +1.4). If it is strong with the whip and weak with the UWB
+  on the same spot, the antenna, not the spot, is what hears it (polarization: the whip's L has
+  a horizontal element, the UWB is vertical only).
+
+If the UWB does not beat the whips here, the 2049 deep-tile win was specific to g42 or that
+evening, and H4 is not about the spot.
 
 ### H3. Cold-start top edge (pre-registered 2026-10-23, 11:20)
 
