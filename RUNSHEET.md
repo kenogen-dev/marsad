@@ -410,6 +410,16 @@ between RFOUT and the DC block, same everything else. If the detector match is t
 open - load at 1241-1541 rises to **at least 20 dB**; if it stays ~12, that is the board's own
 directivity at these frequencies.
 
+**Pad-on-detector done (15:18 open, 15:27 load): REFUTED, the detector match is not the limit.**
+Open - load at 1241-1541 is **+9.3 to +11.8 dB**, against +10.7 to +13.1 with the pad at RFIN -
+the same within a dB. 1541-1841 +4 to +9; 1891-2041 the load reads **2.5-2.8 dB louder than open**,
+which is what poor directivity does (leakage and reflection add with a phase that turns with
+frequency); above 2041 floor-limited. So **~11 dB directivity at 1.2-1.5 GHz, ~5 at 1.6-1.8, none
+usable above 1.85 GHz**, against the listing's 30 dB. One cheap suspect left before blaming the
+board: the 50 ohm load itself. **Next:** repeat the load run with each of the other terminators,
+pad back at RFIN. A load that reads 10 dB+ lower than this one means the load was the limit; all
+loads within ~2 dB means it is the bridge.
+
 4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
    generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
    dB pad, no DC block, `--rx-floor-db -35.9`).
