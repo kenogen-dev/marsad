@@ -477,6 +477,13 @@ Predictions, on the DF17 count (not ICAO, which is inflated):
 - The cold run warms the dongle itself for 10 min, but the gap edge needs most of an hour to
   move 4 MHz past 1090, so the cold count stands.
 
+**First pass, 2026-10-24 (read 23:10): no loss seen, but the warm half was not warm.** Cold 11:16:
+**28,037 DF17** (3,793 frames/min). Warm-up survey 11:26-12:27. Warm check **12:57**, i.e. **30 min
+after streaming stopped**, not "straight after": **19,552 DF17** (2,656/min). Ratio **1.43x**,
+inside the 2x no-effect band, but the dongle had half an hour idle to cool back toward the cold
+gap edge, and no warm `rtl_test -t` was recorded. So it does not answer the question. **Rerun with
+the three steps chained, no gap between streaming and the warm check.**
+
 ### H5. Whip / UWB / whip on the dipole's outlined spot, same day (pre-registered 2026-10-23, 13:40) - NEXT
 
 *Revised before any run, at the owner's prompt:* the four whip runs H4 was scored against are 2-4
