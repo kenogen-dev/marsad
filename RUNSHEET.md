@@ -357,6 +357,21 @@ arrives, before it touches the radio:
 3. **Radio check:** RFOUT open reads near **-2 dB at 1.3 GHz** on the full LS span at g14 (same
    fingerprint as `nsrc-D14-LS`); RFOUT on the 50 ohm load reads **25 dB or more below** open
    (that gap is the bridge's directivity). Fail either and stop.
+**Replacement arrived; first checks 2026-10-25.** It is a different layout from the one the meter
+values above assumed: the board is cut into separate copper islands (shells are not common:
+RFIN-RFOUT shell 30.7 ohm, DET shell open to both), and DET centre-shell, RFOUT centre-shell and
+DET-RFOUT centre all read ~0.1 ohm, with R7 (49R9) reading 0.8-1.2 ohm in circuit against
+25.1 for R5 and R6. Workmanship matches the factory photos with no bridges; the low readings
+look like the layout (a link wire and coax braids at the junctions), not a fault. DC block on
+the coax end read 0.001 V before DET went on.
+
+Radio check 14:20/14:29, LS at g14, no pad: **open and load read the same** (every 50 MHz block
+within -1.6 to +1.2 dB) instead of 25 dB apart, so the pass mark failed. But both runs sit at the
+receiver's ceiling below 1.8 GHz (block medians +0.3 to -3, peaks +2.8), so compression could be
+flattening both. **Next: the same pair with a 10 dB pad between the generator and RFIN**
+(pre-registered: open about -12 dB at 1.3 GHz, load at least 20 dB below it or on the -38 floor).
+If open and load still match off the ceiling, the bridge does not balance.
+
 4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
    generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
    dB pad, no DC block, `--rx-floor-db -35.9`).
