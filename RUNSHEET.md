@@ -389,6 +389,27 @@ open, then DETECK on the 50 ohm load; g14, LS 2 min each. If the swap is right: 
 **at least 15 dB apart** across most of 1241-2147. If they still match: the board does not
 balance either way round, and it goes back.
 
+**Swap test done (15:07 open, 15:09 load). The ports were the other way round: DETECK is the test
+port, RFOUT is the detector output.** Open minus load, by 50 MHz block:
+
+| Band | open | load | open - load |
+|---|---|---|---|
+| 1241-1541 | -12.3 to -16.6 | -24.7 to -27.8 | **+10.7 to +13.1** |
+| 1541-1841 | -15.5 to -22.7 | -22.5 to -27.0 | +4.3 to +9.1 |
+| 1841-2041 | -28.4 to -31.9 | -29.6 to -33.2 | +0.2 to +2.4 |
+| 2041-2147 | -31.7 to -32.1 | -35.1 to -36.4 | +3.4 to +4.3 |
+
+Against the pre-registered mark (at least 15 dB across most of the band): **not met**, but the
+orientation question is settled - the same pad and gain gave ~0 dB the other way round. Two
+limits are visible: above ~1.85 GHz the open reading is only 6-9 dB over the g14 floor (-38), so
+the gap there is floor-limited, not a bridge figure; and at 1.24-1.54 GHz the load sits 11-13 dB
+*over* the floor, so ~12 dB is a real directivity there, far short of the listing's 30 dB. The
+usual cause is the detector port not seeing 50 ohm (the XTR's input through DC block, coax and
+bulkhead is not a clean 50 ohm). **Next, pre-registered:** move the 10 dB pad from RFIN to
+between RFOUT and the DC block, same everything else. If the detector match is the limit,
+open - load at 1241-1541 rises to **at least 20 dB**; if it stays ~12, that is the board's own
+directivity at these frequencies.
+
 4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
    generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
    dB pad, no DC block, `--rx-floor-db -35.9`).
