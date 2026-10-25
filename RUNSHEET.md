@@ -372,6 +372,23 @@ flattening both. **Next: the same pair with a 10 dB pad between the generator an
 (pre-registered: open about -12 dB at 1.3 GHz, load at least 20 dB below it or on the -38 floor).
 If open and load still match off the ceiling, the bridge does not balance.
 
+**Padded pair done (14:57 load, 15:02 open; the first was started as "open" with the load left
+on and was relabelled, see its `label_correction`).** Off the ceiling now (peaks -4.1/-4.4, the
+pad took 6-8 dB) and **open and load still match**: every 50 MHz block within -2.2 to +0.6 dB.
+
+**Reading, before calling the board bad: the ports may be the other way round.** In a bridge with
+a floating (balun-fed) source, the *detector* is the port that needs the second balun, because it
+sits across the two bridge midpoints, while the *test port* is ground-referenced. On this board
+the second ferrite pigtail goes to **RFOUT** and DETECK is wired straight to the junction. So RFOUT
+is probably the **detector output** and **DETECK the test (DUT) port** - and these runs loaded and
+unloaded the detector while the XTR's own 50 ohm input sat on the test port, which would change
+very little, exactly as measured.
+
+**Pre-registered swap test:** generator > 10 dB pad > RFIN; **RFOUT > DC block > XTR**; DETECK
+open, then DETECK on the 50 ohm load; g14, LS 2 min each. If the swap is right: open vs load
+**at least 15 dB apart** across most of 1241-2147. If they still match: the board does not
+balance either way round, and it goes back.
+
 4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
    generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
    dB pad, no DC block, `--rx-floor-db -35.9`).
