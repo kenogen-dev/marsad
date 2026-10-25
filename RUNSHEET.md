@@ -420,6 +420,16 @@ board: the 50 ohm load itself. **Next:** repeat the load run with each of the ot
 pad back at RFIN. A load that reads 10 dB+ lower than this one means the load was the limit; all
 loads within ~2 dB means it is the bridge.
 
+**Load test done, 16:16-16:23, all joints wrench-snugged first (the generator-side adapter had
+been loose enough to twist), pad still on the detector side.** Open - load B / open - load A:
+**+11.8 / +12.3 dB at 1241-1291**, +10.7 / +11.0 at 1441-1491, +6 to +8 at 1591-1741, about 0
+or negative at 1841-2041, +2.4 to +4.9 at 2041-2147 (floor-limited). The two loads agree within
+~1 dB everywhere that matters, and the tightened open reads within 1 dB of the earlier one.
+**Verdict, as pre-registered: it is the bridge, not the load or the joints.** Measured
+directivity ~12 dB at 1.25 GHz, falling to ~6 by 1.7 GHz and nothing usable above ~1.85 GHz,
+against the listing's 30 dB. Not usable for the discone (1.5-2.2 GHz) or anything in LS above
+~1.6 GHz. Untested: how it does below 1 GHz, where boards like this are usually designed to work.
+
 4. Only then `marsad response` (`open`, `load`, `antenna`) using the commands the Antenna Bench
    generates, `--rx-floor-db -38.1` on the XTR. Antennas below 1766 MHz go on the v5 (g15.7, 10
    dB pad, no DC block, `--rx-floor-db -35.9`).
