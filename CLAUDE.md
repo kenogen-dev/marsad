@@ -2158,6 +2158,20 @@ SDR until then). Endpoints: `GET /hunt/reports`, `GET /hunt/candidates?bg&dev&bl
 fingerprint mismatch is refused in plain words. While a run started from the page records,
 the server reads its CSV twice a second instead of every 2 s.
 
+**Device state and the room catalogue (2026-10-26).** The Probe form has a **State** picker
+(unplugged / off / idle / active, or free text such as "printing"). It goes into the tag
+(`probe-printer-idle-stub-a`), the conditions (`device state idle`, which `hunt.report_info`
+reads back) and a **State** column in ROOM_RF.md; rows from before the column carry an empty
+cell. `marsad/room.py` (stdlib, on `hunt.rank`) backs the "Room equipment catalogue" panel:
+pick a device and every state is differenced bin by bin on `median_db` against the device's
+own newest **unplugged** run (or any chosen background), in a sentence ("printing adds 15.0 dB
+at 120.31 MHz over unplugged; 3 blocks rise 6 dB or more"), with a warning when the probe was
+held somewhere else. "Loudest devices" ranks each device's active state (anything but
+unplugged/off/idle) against its own unplugged run of the same fingerprint, and lists devices
+still missing a run. A fingerprint mismatch is refused per run in a sentence. Hunt tiles are
+left out. Endpoints `GET /room/targets`, `/room/compare?target&bg&block`, `/room/loudest?block`;
+`tests/test_room.py` pins it on a synthetic printer.
+
 `marsad response` (2026-10-21) - an antenna's return loss and SWR at every bin from three
 runs through the return-loss bridge with the noise generator on its input: `open` (nothing on
 the test port, total reflection, the 0 dB reference), `load` (50 ohm on the port, the bridge's
@@ -2172,6 +2186,16 @@ sentence. Writes `response.csv` (every bin), `response.md` (dip, best SWR, 2:1 b
 trusted bins, the range the bridge vouches for at >= 15 dB directivity, flagged fractions,
 offset from `--f0`) and `atlas.json` for the Antenna Atlas import, thinned to 800 points
 with the dip bin always kept. `tests/test_response.py` pins the arithmetic on a synthetic trio.
+
+**Weak bridge (2026-10-26).** When the bridge vouches nowhere (directivity under 15 dB at every
+bin) or under 5% of bins are trusted, response.md no longer names a dip: it says "dip not
+resolvable with this bridge" and gives where the raw smoothed return loss is highest, marked
+AT THE BRIDGE'S CEILING. (Before, it named the best *trusted* bin, i.e. the best of the
+worst-matched bins: the 1265 GP's "dip 1462.8 MHz, SWR 4.30".) Every bin also carries the true
+SWR's range, `swr_lo` / `swr_hi`: the leak adds with unknown phase, so the true reflection is
+`rho_m +/- 10^(-floor/20)`, clipped to 0..1. response.md shows it at the dip or ceiling and at
+`--f0`. On the GP trio, 1241 MHz reads SWR 1.00 to 2.9-3.0: the bridge cannot tell that
+antenna from a perfect match there.
 
 **`--rx-floor-db` is a number you supply, not the run's floor column**, because with the
 generator on the analyser's floor (20th percentile over time, rolling median over frequency)
