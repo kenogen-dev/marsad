@@ -6,6 +6,8 @@ which is inside the 6 dB margin of the directivity and must be flagged
 at-least. A fourth run with a different gain in its sidecar must be refused.
 """
 import json
+import tempfile
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -126,3 +128,74 @@ def test_different_fingerprints_are_refused():
     an["fingerprint"] = "2100.000-2160.000 MHz | 50.0000 kHz | g42 | i10 | c0.25 | F9 | xtr"
     with pytest.raises(SystemExit, match="different fingerprints"):
         response.check_same_fingerprint({"open": op, "antenna": an})
+
+
+def test_swr_bounds_from_the_bridge_leak():
+    # 20 dB return loss through a 30 dB bridge: rho 0.1 +/- 0.0316
+    op, ld = survey(-10.0), survey(-40.0)
+    an = survey(-10.0, dips=[(DIP, 20.0)])
+    df = response.compute(op, an, ld, gaps_mhz=[], smooth_mhz=0.0)
+    lo, hi = 0.1 - 10 ** -1.5, 0.1 + 10 ** -1.5
+    assert df.loc[DIP, "swr_lo"] == pytest.approx((1 + lo) / (1 - lo), abs=1e-3)   # 1.141
+    assert df.loc[DIP, "swr_hi"] == pytest.approx((1 + hi) / (1 - hi), abs=1e-3)   # 1.303
+    # return loss deeper than the directivity: the bridge cannot rule out a perfect match
+    an2 = survey(-10.0, dips=[(DIP, 35.0)])
+    df2 = response.compute(op, an2, ld, gaps_mhz=[], smooth_mhz=0.0)
+    assert df2.loc[DIP, "swr_lo"] == 1.0
+    # without a load run the range is unknown, not invented
+    df3 = response.compute(op, an, None, gaps_mhz=[], smooth_mhz=0.0)
+    assert df3["swr_lo"].isna().all() and df3["swr_hi"].isna().all()
+
+
+def test_weak_bridge_says_dip_not_resolvable():
+    # 12 dB directivity everywhere, as the 3-port bridge measured at 1.25 GHz. The
+    # antenna reads 11 dB return loss at one end (within the margin: at-least) and
+    # 4 dB elsewhere (trusted). The old headline named the best trusted bin, a 4 dB
+    # "dip"; the honest one says the bridge cannot resolve it and points at the
+    # at-the-ceiling end instead.
+    op, ld = survey(-10.0), survey(-22.0)
+    an = survey(-14.0, dips=[(i, 7.0) for i in range(0, 40)])
+    df = response.compute(op, an, ld, gaps_mhz=[], smooth_mhz=0.2, margin_db=6.0)
+    head = response.headline(df, f0_mhz=2101.0, has_load=True)
+    assert head["dip"] is None and head["bw2"] is None
+    assert "vouches nowhere" in head["unresolved"]
+    assert head["ceiling"]["freq_mhz"] < 2102.0
+    assert head["ceiling"]["rl_db"] == pytest.approx(11.0)
+    assert head["ceiling"]["swr_lo"] == pytest.approx(1.06, abs=0.01)    # rho 0.282 - 0.251
+    assert "offset" not in head and head["at_f0"]["freq_mhz"] == pytest.approx(2101.0, abs=0.05)
+
+    class A:
+        smooth_mhz = 0.2; margin_db = 6.0; rx_floor_db = None
+    hl = response.write_outputs(Path(tempfile.mkdtemp()), "weak", {"open": op, "load": ld, "antenna": an},
+                                df, head, 2101.0, A)
+    assert any("not resolvable with this bridge" in line for line in hl)
+    assert any("AT THE BRIDGE'S CEILING" in line for line in hl)
+
+
+def test_few_trusted_bins_is_not_a_dip():
+    # a good bridge (30 dB) but the receiver floor flags almost everything
+    op, ld = survey(-10.0), survey(-40.0)
+    an = survey(-10.0, dips=[(DIP, 20.0)])
+    df = response.compute(op, an, ld, gaps_mhz=[], smooth_mhz=0.0, rx_floor_db=-9.0)
+    head = response.headline(df, None, has_load=True)
+    assert head["pct_ok"] < 5.0
+    assert head["dip"] is None and "trusted" in head["unresolved"]
+
+
+GP = ("br3-gp-open", "br3-gp-load", "br3-gp1265-cut0")
+
+
+@pytest.mark.skipif(not all(any((ROOT / "surveys").glob(f"*{t}_*.csv")) for t in GP),
+                    reason="the 2026-10-25 1265 GP bridge runs are not on this machine")
+def test_real_1265_gp_trio_is_unresolved_with_bounds():
+    from marsad.config import Station
+    st = Station.load()
+    runs = {k: response.load_run(st, t) for k, t in zip(("open", "load", "antenna"), GP)}
+    df = response.compute(runs["open"], runs["antenna"], runs["load"], gaps_mhz=[],
+                          smooth_mhz=5.0, margin_db=6.0, rx_floor_db=-38.1)
+    head = response.headline(df, 1265.0, has_load=True)
+    assert head["dip"] is None and head["unresolved"]          # not "dip 1462.8 MHz, SWR 4.30"
+    assert head["ceiling"]["freq_mhz"] < 1245.0
+    row = df.iloc[(df["freq_mhz"] - 1241.0).abs().argsort()[:1]].iloc[0]
+    assert row["swr_lo"] == pytest.approx(1.0, abs=0.05)
+    assert 2.7 <= row["swr_hi"] <= 3.2
