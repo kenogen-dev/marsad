@@ -555,14 +555,35 @@ dip needs the v5 (no PLL gap) over ~1150-1400.
 scan (open minus load) is a flat **11-12 dB** from 1241 to 1441, 10.5-11 above. Against it, the
 GP's return loss: **11.8 at 1241 (0.1 dB under the ceiling), 11.2 at 1261 (0.5 under)**, then
 10.2 / 9.0 / 7.6 / 6.1 / 4.0 dB at 1281 / 1301 / 1341 / 1401 / 1461-1481. So **at 1241-1270 the
-GP is pinned at the bridge's ceiling**: its true return loss there is at least ~12 dB (SWR 1.7 or
-better) and could be much better; the dip is at or below ~1270. Verdict against the prediction:
+GP is pinned at the bridge's ceiling**. *Corrected 2026-10-25, same evening:* this first said "its
+true return loss there is at least ~12 dB (SWR 1.7 or better)". That is wrong. A scalar bridge
+sees reflection plus leak with unknown relative phase, so the true reflection lies between
+(measured - leak) and (measured + leak) in linear terms. At 1241, measured 0.257 and leak 0.254
+give a true SWR anywhere from ~1.0 to ~3.1; at 1301, ~1.2 to ~4.2; at 1461, ~2.1 or worse. What
+the data do support: the GP reflects much more at 1.46 GHz than near 1.25 GHz, so its resonance
+is low in the scan, at or below ~1270, as designed. Verdict against the prediction:
 **consistent, not resolved.** `marsad response` (reports/response/1265-GP-cut-0_20261025-1934)
 headlines a "dip" at 1462.8 MHz, SWR 4.3: that is an artefact of its trust filter, which keeps only
 bins well below the directivity, i.e. the worst-matched ones. With a 12 dB bridge 94% of bins are
 `at-least`. Its own line "bridge vouches nowhere" is the true summary. **Tool follow-up:** when no
 bin is vouched for, response.md should say "dip not resolvable with this bridge" instead of
 naming the best trusted bin as the dip.
+
+## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
+
+`burst23` (1263M:1267M:5k, g29, `-i 2`), 15 min per block, `--floor-window 0.3`, all on the
+dipole's outlined spot on the window, standing chain (antenna > notch > SMA adapter > LaNA >
+3 ft coax > XTR). A1 whips 60 mm 90 deg L, B the 1265 GP, A2 whips again. Statistic: the
+1265.0-1265.9 MHz band's peak over the local floor, per sweep; graded on the **median of the
+top 10% of sweeps** (the main-beam hits; the radar sweeps past every 12 s, so most sweeps miss
+it), B against the mean of A1 and A2.
+
+- A1 and A2 within 2 dB, or the radar's own variation decides nothing.
+- **GP minus whips between -3 and +3 dB:** both are near resonance at 1265 (the 60 mm whips are a
+  quarter wave at ~1250), so a fair build should land level.
+- **Above +3 dB:** the GP is genuinely better here, likely polarization (fully vertical against
+  the L's one vertical arm) if the radar is vertically polarized.
+- Below -3: the GP is worse in this spot, or its radials couple to the glass and frame.
 
 ## H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
 
