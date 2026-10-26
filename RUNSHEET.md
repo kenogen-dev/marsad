@@ -541,6 +541,16 @@ open / GP / load, 2 min each.
   the curve falls toward the bottom edge with no visible bottom, which reads as "slightly long".
 - Only the dip's **frequency** is graded; with ~12 dB directivity its depth is not.
 
+**Open (18:29) and GP (18:38) ran; the load (G3) did not.** Return loss (open minus GP), 10 MHz
+blocks: **11.9 dB at 1241**, 11.4 at 1261, 10.4 at 1281, 9.3 at 1301, 8.0 at 1331, 6.2 at 1401,
+4.0 at 1461-1491 (worst, about SWR 4.4), recovering to 5.7 by 1531. Best at the bottom edge and
+falling steadily upward: **the dip is at or below ~1270 MHz**, consistent with the 1264
+prediction or with "slightly long". It cannot be placed closer, because 11-12 dB is also this
+bridge's directivity at 1.24-1.29 GHz: the GP is at least as good as the bridge can show there.
+Above ~1290 the readings are below the directivity limit and mean roughly SWR 2 at 1300, 2.3 at
+1330, 2.9 at 1400. **Do not trim yet**: the load run on this scan is still owed, and placing the
+dip needs the v5 (no PLL gap) over ~1150-1400.
+
 ## H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
 
 H3 put the warm XTR's PLL gap at 1086-1230 MHz, so 1090 (ADS-B) sits inside it once warm; cold it
