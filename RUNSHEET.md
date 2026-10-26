@@ -551,6 +551,19 @@ Above ~1290 the readings are below the directivity limit and mean roughly SWR 2 
 1330, 2.9 at 1400. **Do not trim yet**: the load run on this scan is still owed, and placing the
 dip needs the v5 (no PLL gap) over ~1150-1400.
 
+**Load run done (~19:30, an hour after the open; generator warm throughout).** Directivity on this
+scan (open minus load) is a flat **11-12 dB** from 1241 to 1441, 10.5-11 above. Against it, the
+GP's return loss: **11.8 at 1241 (0.1 dB under the ceiling), 11.2 at 1261 (0.5 under)**, then
+10.2 / 9.0 / 7.6 / 6.1 / 4.0 dB at 1281 / 1301 / 1341 / 1401 / 1461-1481. So **at 1241-1270 the
+GP is pinned at the bridge's ceiling**: its true return loss there is at least ~12 dB (SWR 1.7 or
+better) and could be much better; the dip is at or below ~1270. Verdict against the prediction:
+**consistent, not resolved.** `marsad response` (reports/response/1265-GP-cut-0_20261025-1934)
+headlines a "dip" at 1462.8 MHz, SWR 4.3: that is an artefact of its trust filter, which keeps only
+bins well below the directivity, i.e. the worst-matched ones. With a 12 dB bridge 94% of bins are
+`at-least`. Its own line "bridge vouches nowhere" is the true summary. **Tool follow-up:** when no
+bin is vouched for, response.md should say "dip not resolvable with this bridge" instead of
+naming the best trusted bin as the dip.
+
 ## H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
 
 H3 put the warm XTR's PLL gap at 1086-1230 MHz, so 1090 (ADS-B) sits inside it once warm; cold it
