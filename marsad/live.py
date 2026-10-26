@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import chain, host, hunt, probe, rpf
+from . import chain, host, hunt, probe, room, rpf
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        parse_freq_spec)
@@ -923,6 +923,24 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     out = hunt.candidates(station, (q.get("bg") or [""])[0], (q.get("dev") or [""])[0],
                                           float((q.get("block") or [hunt.BLOCK_MHZ])[0]),
                                           int((q.get("top") or [hunt.TOP])[0]))
+                except ValueError as exc:
+                    self._send(json.dumps({"error": str(exc)}).encode(), code=400)
+                    return
+                body = json.dumps(out).encode()
+            elif u.path == "/room/targets":
+                body = json.dumps({"targets": room.targets(station),
+                                   "block_choices_mhz": hunt.BLOCK_CHOICES_MHZ,
+                                   "block_mhz": hunt.BLOCK_MHZ}).encode()
+            elif u.path in ("/room/compare", "/room/loudest"):
+                # A device's states against its background, or the devices against each
+                # other. A refusal is a plain-language `error`, as for /hunt/candidates.
+                try:
+                    block = float((q.get("block") or [hunt.BLOCK_MHZ])[0])
+                    if u.path == "/room/compare":
+                        out = room.compare(station, (q.get("target") or [""])[0],
+                                           (q.get("bg") or [""])[0] or None, block)
+                    else:
+                        out = room.loudest(station, block)
                 except ValueError as exc:
                     self._send(json.dumps({"error": str(exc)}).encode(), code=400)
                     return

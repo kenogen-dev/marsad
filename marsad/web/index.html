@@ -92,6 +92,10 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 #hu-cands table td{font-size:12px;text-align:right;white-space:nowrap}
 #hu-cands table td.l,#hu-cands table th{text-align:left}
 #hu-cands tr.chosen{background:rgba(79,211,232,.12)}
+#rm-out table td,#rm-loud table td{font-size:12px;text-align:right;white-space:nowrap}
+#rm-out table td.l,#rm-out table th,#rm-loud table td.l,#rm-loud table th{text-align:left}
+.say{font-size:14px;margin:10px 0 4px}
+.say b{color:var(--accent)}
 /* Chain tab */
 .pal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
 .pal .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-right:-6px}
@@ -204,6 +208,8 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <div class="frm">
         <label>Target <select id="pb-target"></select></label>
         <label id="pb-other-l" hidden>Other <input id="pb-target-other" placeholder="e.g. desk lamp" size="22"></label>
+        <label title="What the target was doing. Survey one device in several states with the probe fixed in place; the catalogue below differences each state against the unplugged one.">State <select id="pb-devstate" style="min-width:150px"></select></label>
+        <label id="pb-devstate-other-l" hidden>State <input id="pb-devstate-other" placeholder="e.g. printing" size="16"></label>
         <label>Probe <select id="pb-probe"></select></label>
         <label style="flex:1">Held <input id="pb-where" class="wide" placeholder="required: e.g. against the PSU fan grille (background runs default to 'in open air')"></label>
       </div>
@@ -274,6 +280,26 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       </div>
       <div class="bar"><div id="hu-bar"></div></div>
       <div class="note" id="hu-stat" style="margin-top:4px"></div>
+    </div>
+    <div class="wrap" id="rm">
+      <div class="lab">Room equipment catalogue — what each device adds, state by state</div>
+      <p class="note">Record one <b>wide</b> run per state of a device (unplugged, off, idle, active) with the probe fixed in place and the
+        <b>State</b> set in the form above. Each state is then subtracted from the background bin by bin (median over sweeps, as in Hunt),
+        by default the device's own <b>unplugged</b> run: whatever the device adds over its own absence. Only runs with the same fingerprint
+        are subtracted; any other pair is refused and says why.</p>
+      <div class="frm">
+        <label>Device <select id="rm-target" style="min-width:220px"></select></label>
+        <label>Background <select id="rm-bg" style="min-width:320px"></select></label>
+        <label>Blocks <select id="rm-block" style="min-width:80px"></select></label>
+        <button class="btn" id="rm-go">Compare its states</button>
+        <button class="btn" id="rm-reload" title="re-read reports/">↻</button>
+      </div>
+      <div id="rm-out" style="margin-top:8px"></div>
+      <div class="lab" style="margin-top:18px">Loudest devices in the room</div>
+      <p class="note">Each device's active state (anything but unplugged, off or idle) against its own unplugged run with the same fingerprint:
+        the block whose strongest bin rose most, and how many blocks rose 6 dB or more.</p>
+      <div class="frm"><button class="btn" id="rm-loudgo">Rank the devices</button></div>
+      <div id="rm-loud" style="margin-top:8px"></div>
     </div>
     <div class="wrap">
       <div class="lab">This run <span style="float:right;font-weight:normal;opacity:.75"><a href="#" id="pb-toscan" style="color:var(--accent)">watch it on the Scan tab</a></span></div>
@@ -922,10 +948,11 @@ function pbChainFor(id){
   const r=(pbCfg.receivers||[]).find(x=>x.id===id);
   return {tail:r?r.chain_tail:'',note:`no probe chain for the ${id.toUpperCase()} on the Chain tab, so the built-in probe chain is used`};
 }
-const PB_KEYS=['target','target-other','probe','where','min','range','centre','receiver','device','attenuator','notes','chain'];
+const PB_KEYS=['target','target-other','devstate','devstate-other','probe','where','min','range','centre','receiver','device','attenuator','notes','chain'];
 const pbEl=id=>document.getElementById('pb-'+id);
 function pbForm(){
   return {target:pbEl('target').value, target_other:pbEl('target-other').value,
+          state:pbEl('devstate').value, state_other:pbEl('devstate-other').value,
           probe:pbEl('probe').value, where:pbEl('where').value, minutes:pbEl('min').value,
           range:pbEl('range').value, centre:pbEl('centre').value, receiver:pbEl('receiver').value,
           device:pbEl('device').value, attenuator:pbEl('attenuator').value,
@@ -971,6 +998,7 @@ function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'
   for(const k of PB_KEYS)if(o[k]!==undefined&&o[k]!=='')pbEl(k).value=o[k];}catch(e){}}
 function pbShowFields(){
   pbEl('other-l').hidden=pbEl('target').value!=='other';
+  pbEl('devstate-other-l').hidden=pbEl('devstate').value!=='other';
   pbEl('centre-l').hidden=pbEl('range').value!=='hunt';
   // the pad sits ahead of the LaNA, which only the XTR chain has; and when the chain
   // text already names one, the chain is the record and the picker steps aside
@@ -988,6 +1016,8 @@ async function probeInit(){
     pbRxLabels();
     pbEl('target').innerHTML=c.targets.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')
       +'<option value="other">other…</option>';
+    pbEl('devstate').innerHTML='<option value="">not recorded</option>'
+      +(c.states||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')+'<option value="other">other…</option>';
     pbEl('probe').innerHTML=c.probes.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} — ${esc(p.desc)}</option>`).join('');
     pbEl('range').innerHTML=c.ranges.map(r=>`<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
     pbEl('attenuator').innerHTML=c.attenuators_db.map(a=>`<option value="${a}">${a?a+' dB':'none'}</option>`).join('');
@@ -1010,6 +1040,7 @@ async function probeInit(){
   pbShowFields();
   pbPreview();
   huInit();
+  rmInit();
   if(!pbPolling){pbPolling=true;pbPoll();}
   pbDetect();          // a read-only look at what is plugged in; skipped by the server if the SDR is busy
 }
@@ -1066,7 +1097,7 @@ function pbRender(d){
   if(d.state==='recording')s+=`  ${d.elapsed} elapsed, ${d.remaining} left`;
   pbEl('state').innerHTML=s;
   if(d.state==='idle')return;
-  let h=`<b>${esc(d.tag)}</b> — ${esc(d.target)}, ${esc(d.probe)} held ${esc(d.held)}, ${esc(d.range_label)}, started ${esc(String(d.started_local).slice(11,16))}`;
+  let h=`<b>${esc(d.tag)}</b> — ${esc(d.target)}${d.device_state?' ('+esc(d.device_state)+')':''}, ${esc(d.probe)} held ${esc(d.held)}, ${esc(d.range_label)}, started ${esc(String(d.started_local).slice(11,16))}`;
   if(d.csv)h+=`<br>CSV: surveys/${esc(d.csv)}`;
   if(d.state==='done'){
     const su=d.summary||{};const st=su.strongest;
@@ -1081,7 +1112,7 @@ function pbRender(d){
   if(d.state==='failed')h+=`<br><span class="bad">${esc(d.message||'')}</span>`;
   pbEl('run').innerHTML=h;
   pbEl('log').textContent=d.log_tail||'';
-  if(d.state==='done'&&pbLastState!=='done')loadProbeMap();
+  if(d.state==='done'&&pbLastState!=='done'){loadProbeMap();rmLoad();}
   pbLastState=d.state;
   huStatus(d);
 }
@@ -1318,6 +1349,80 @@ function huInit(){
   huEl('vol').oninput=()=>{if(hu.over!==null)huSound(hu.over);};
   try{const c=localStorage.getItem('sdr-hunt-centre');if(c&&!huEl('centre').value)huEl('centre').value=parseFloat(c).toFixed(3);}catch(e){}
   huTick();huClicks();
+}
+// ---------------------------------------------------------------- Room catalogue
+// The server groups the probe runs by target and state and does the subtraction
+// (/room/compare, /room/loudest, both on hunt.rank); the page only draws the answer.
+const rmEl=id=>document.getElementById('rm-'+id);
+let rmReady=false;
+const sgn=x=>(x>0?'+':'')+x.toFixed(1);
+async function rmLoad(){
+  try{
+    const [t,r]=await Promise.all([fetch('/room/targets').then(x=>x.json()),fetch('/hunt/reports').then(x=>x.json())]);
+    const tSel=rmEl('target').value, bSel=rmEl('bg').value;
+    const devs=(t.targets||[]).filter(x=>!x.background);
+    rmEl('target').innerHTML=devs.length?devs.map(x=>`<option value="${esc(x.target)}">${esc(x.target)} — `
+      +esc(Object.entries(x.states).map(([s,n])=>s+(n>1?' ×'+n:'')).join(', '))+'</option>').join('')
+      :'<option value="">no device runs yet</option>';
+    if(tSel&&devs.some(x=>x.target===tSel))rmEl('target').value=tSel;
+    rmEl('bg').innerHTML='<option value="">its own unplugged run (newest)</option>'
+      +(r.reports||[]).filter(i=>!(i.tag||'').startsWith('hunt-')).map(i=>`<option value="${esc(i.name)}" title="${esc(i.fingerprint||'')}">${esc(huLabel(i))}${i.state?' · '+esc(i.state):''}</option>`).join('');
+    rmEl('bg').value=bSel;
+    if(!rmEl('block').options.length)rmEl('block').innerHTML=(t.block_choices_mhz||[10]).map(b=>`<option value="${b}"${b===t.block_mhz?' selected':''}>${b} MHz</option>`).join('');
+  }catch(e){rmEl('out').innerHTML=`<span class="bad">could not list the catalogue: ${esc(e)}</span>`;}
+}
+async function rmCompare(){
+  if(!rmEl('target').value){rmEl('out').innerHTML='<span class="note">No device has a probe run with a report yet.</span>';return;}
+  rmEl('go').disabled=true;rmEl('out').innerHTML='<span class="note">subtracting…</span>';
+  try{
+    const q=`target=${encodeURIComponent(rmEl('target').value)}&bg=${encodeURIComponent(rmEl('bg').value)}&block=${rmEl('block').value}`;
+    const d=await (await fetch('/room/compare?'+q)).json();
+    if(d.error){rmEl('out').innerHTML=`<div class="bad">${esc(d.error).replace(/\n/g,'<br>')}</div>`;return;}
+    const bg=d.background;
+    let h=`<div class="note">Background: <b>${esc(huLabel(bg))}${bg.state?' · '+esc(bg.state):''}</b>${bg.held?', probe held '+esc(bg.held):''}. `
+      +`Blocks of ${d.block_mhz} MHz; a block "rises" when its strongest bin is up ${d.loud_db} dB or more.</div>`;
+    for(const st of d.states){
+      h+=st.sentence?`<div class="say"><b>${esc(st.sentence)}</b></div>`:`<div class="say">${esc(st.state)}</div>`;
+      for(const r of st.runs){
+        const when=String(r.started||'').slice(5,16).replace('T',' ');
+        if(r.is_background){h+=`<div class="note">${esc(when)} · this is the background</div>`;continue;}
+        if(r.refused){h+=`<div class="warn">${esc(when)} · refused: ${esc(r.refused)}</div>`;continue;}
+        if(r.same_position===false)h+=`<div class="warn">⚠ ${esc(when)}: probe held "${esc(r.held)}", the background "${esc(bg.held)}" — not the same position</div>`;
+        // only blocks that moved: a state that adds nothing should not show a table of 0.0 dB
+        const moved=r.candidates.filter(x=>x.peak_rise_db>=1);
+        h+=`<div class="note">${esc(when)} · ${esc(r.run)} · ${r.loud_blocks} of ${r.blocks} blocks rise ${d.loud_db} dB or more`
+          +(moved.length?'':'; no block rose by 1 dB or more')+'</div>';
+        if(moved.length)h+='<table><thead><tr><th>#</th><th>Block</th><th>Peak at</th><th>Peak rise</th><th>Floor rise</th><th>Level</th><th>Tag</th></tr></thead><tbody>'
+          +moved.map(x=>`<tr><td class="l">${x.rank}</td><td class="l">${x.lo_mhz}–${x.hi_mhz} MHz</td><td>${x.peak_mhz.toFixed(4)}</td>`
+            +`<td><b>${sgn(x.peak_rise_db)}</b> dB</td><td>${sgn(x.floor_rise_db)} dB</td><td>${x.device_db.toFixed(1)} dB</td>`
+            +`<td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}</td></tr>`).join('')+'</tbody></table>';
+      }
+    }
+    rmEl('out').innerHTML=h;
+  }catch(e){rmEl('out').innerHTML=`<span class="bad">comparison failed: ${esc(e)}</span>`;}
+  finally{rmEl('go').disabled=false;}
+}
+async function rmLoudest(){
+  rmEl('loudgo').disabled=true;rmEl('loud').innerHTML='<span class="note">subtracting every device…</span>';
+  try{
+    const d=await (await fetch('/room/loudest?block='+rmEl('block').value)).json();
+    if(d.error){rmEl('loud').innerHTML=`<div class="bad">${esc(d.error)}</div>`;return;}
+    let h=d.ranked.length?'<table><thead><tr><th>#</th><th>Device</th><th>State</th><th>Strongest rise</th><th>At</th><th>Blocks ≥ '+d.loud_db+' dB</th><th>Tag</th></tr></thead><tbody>'
+      +d.ranked.map(x=>`<tr><td class="l">${x.rank}</td><td class="l">${esc(x.target)}</td><td class="l">${esc(x.state)}</td>`
+        +`<td><b>${sgn(x.peak_rise_db)}</b> dB</td><td>${x.peak_mhz.toFixed(3)} MHz</td><td>${x.loud_blocks} of ${x.blocks}</td>`
+        +`<td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}${x.same_position===false?' <span class="warn">probe moved</span>':''}</td></tr>`).join('')+'</tbody></table>'
+      :'<p class="note">No device has both an unplugged run and an active run yet.</p>';
+    if(d.skipped.length)h+='<div class="note" style="margin-top:6px">Not ranked: '+d.skipped.map(x=>`${esc(x.target)} (${esc(x.reason)})`).join('; ')+'</div>';
+    rmEl('loud').innerHTML=h;
+  }catch(e){rmEl('loud').innerHTML=`<span class="bad">ranking failed: ${esc(e)}</span>`;}
+  finally{rmEl('loudgo').disabled=false;}
+}
+function rmInit(){
+  if(rmReady)return;rmReady=true;
+  rmLoad();
+  rmEl('reload').onclick=rmLoad;
+  rmEl('go').onclick=rmCompare;
+  rmEl('loudgo').onclick=rmLoudest;
 }
 async function pbPoll(){
   try{const d=await (await fetch('/probe/status')).json();pbRender(d);}catch(e){}

@@ -45,6 +45,10 @@ TOP = 12
 # The two tiles the tracking half can start, by the probe catalogue's range id.
 TRACK_RANGES = ["tile", "hunt"]
 
+# Probe runs carry the device state and the probe position in their conditions
+# text (probe.compose writes "..., <probe> held <where>, device state <state>, ...").
+STATE_RE = re.compile(r"device state ([^,;]+)")
+HELD_RE = re.compile(r"probe(?: [AB])? held ([^,;]+)")
 TARGET_RE = re.compile(r"near-field probe survey: (.+?), (?:large|medium|small|extra-small|E-field)")
 
 
@@ -73,7 +77,7 @@ def report_info(station: Station, name: str) -> dict:
     side = station.surveys / f"{name}.json"
     info = {"name": name, "has_bins": (rep / "bins.csv").exists(), "started": None,
             "preset": None, "tag": None, "target": None, "probe_run": False,
-            "fingerprint": None, "conditions": "", "chain": ""}
+            "fingerprint": None, "conditions": "", "chain": "", "state": None, "held": None}
     try:
         sc = json.loads(side.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -94,6 +98,12 @@ def report_info(station: Station, name: str) -> dict:
     if m:
         info["target"] = m.group(1)
         info["probe_run"] = True
+    m = STATE_RE.search(info["conditions"])
+    if m:
+        info["state"] = m.group(1).strip()
+    m = HELD_RE.search(info["conditions"])
+    if m:
+        info["held"] = m.group(1).strip()
     info["background"] = bool(info["target"] and info["target"].lower().startswith("background"))
     return info
 
