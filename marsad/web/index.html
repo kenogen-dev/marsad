@@ -54,6 +54,12 @@ pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-siz
        line-height:1.6;color:var(--ink);padding:16px;margin:0}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px}
 .stale{background:#e8b14f}
+.key[hidden]{display:none}
+.fctl{clear:both;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:12px;color:var(--dim);margin:0 0 6px}
+.fctl .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.fctl label{display:inline-flex;align-items:center;gap:4px}
+.fctl input[type=number]{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:1px 4px;font:12px ui-monospace,Consolas,monospace}
+.fctl .btn{padding:2px 8px;font-size:12px}
 #builder{width:100%;height:calc(100vh - 84px);border:0;background:var(--bg);display:block}
 .note{font-size:12px;color:var(--dim);margin:0 0 8px}
 .term{color:#e8b14f}
@@ -168,9 +174,20 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <label><input type="checkbox" id="mk-hop"><i class="vert" style="background:rgba(133,153,168,.7);height:5px"></i>hop centres (ticks at the bottom)</label>
       <span id="key-refused" hidden><i style="background:repeating-linear-gradient(135deg,rgba(232,120,120,.55) 0 2px,transparent 2px 5px);height:10px;width:18px;border:1px solid rgba(232,120,120,.6)"></i>hop the tuner refused (PLL would not lock): no data there</span>
     </div>
+    <div class="key under" id="key-sel" hidden><span><i style="background:#c58bff;height:3px"></i><span id="key-sel-t">selected sweep</span></span>
+      <a href="#" id="sel-clear" style="color:var(--accent)">clear</a></div>
     <div class="key under"><span class="pk" id="pk" style="margin-left:0"></span></div></div>
-  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
-    <canvas id="fall"></canvas><div class="xs" id="xf"></div></div>
+  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number and its start time<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
+    <div class="fctl">
+      <span class="grp">sweep height</span><span id="fh-btns"></span>
+      <span class="grp" style="margin-left:14px">layers</span>
+      <label title="The floor of each sweep on its own: a running median over about 2 MHz of that sweep, so it follows the floor moving in time"><input type="checkbox" id="ly-noise" checked>noise</label>
+      <label title="Power above that sweep's floor, where it is at least the threshold over it"><input type="checkbox" id="ly-signal" checked>signal ≥ floor +<input type="number" id="ly-thr" value="6" min="0" max="40" step="1" style="width:46px"> dB</label>
+      <label title="The receiver's own lines (14.4 MHz clock family, hop-centre DC spikes) and, when one matches, a terminated run's floor"><input type="checkbox" id="ly-internal" checked>internal</label>
+      <span class="note" id="ly-note" style="margin:0"></span>
+    </div>
+    <canvas id="fall"></canvas><div class="xs" id="xf"></div>
+    <div class="note" id="ly-int" style="margin:4px 0 0"></div></div>
   <div class="wrap"><div class="lab">Whole-sweep median — the cage statistic, per sweep</div>
     <canvas id="trend"></canvas>
     <div class="ax"><span id="t0">—</span><span id="t1">—</span></div></div>
@@ -362,6 +379,10 @@ const COLS=1200;
 let rows=[], meds=[], lo=null, hi=null, total=0, have=0, lastBytes=0, stale=0;
 let partial=null, cursorPct=null, hoverPct=null;
 let liveFile=null, curFile=null, surveys=[];
+let stamps=[];                 // start time of each held sweep, parallel to rows
+let selSweep=null;             // sweep number clicked in the waterfall, drawn on the spectrum
+let hoverRow=null;             // sweep number under the mouse in the waterfall
+let stepK=null;                // bin width, kHz: the spur tolerance
 let FAMILIES=[14.4,28.8,24,25,100], THR=10;
 let peaks=[], hopC=[], refused=[], engine='rtl_power';
 let hatch=null;
@@ -469,6 +490,14 @@ function drawSpec(floor,span){
       const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
       if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
     x.stroke();}
+  const sel=selRow();
+  if(sel){x.beginPath();x.lineWidth=1.4;x.strokeStyle='#c58bff';let on=false;
+    for(let i=0;i<COLS;i++){const v=sel[i];if(v===null||v===undefined){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();
+    x.save();x.font='11px ui-monospace,Consolas,monospace';x.fillStyle='#c58bff';x.textAlign='right';
+    x.fillText(`sweep #${selSweep}  ${stampOf(selSweep)||''}`,W-6,13);x.restore();}
   if(partial){x.beginPath();x.lineWidth=1;x.strokeStyle='rgba(79,211,232,.45)';let on=false;
     for(let i=0;i<COLS;i++){const v=partial[i];if(v===null){on=false;continue;}
       const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
@@ -533,21 +562,98 @@ function nearestPeak(hp){
     if(d<=6&&(best===null||d<best.d))best={p,d};}
   return best?best.p:null;
 }
+// Sweep numbers, times and rows. Sweep #s (1-based, counted from the start of the
+// recording) is rows[rows.length-1-(total-s)] while it is still held.
+function rowOf(s){const i=rows.length-1-(total-s);return (s>=1&&i>=0&&i<rows.length)?i:null;}
+function selRow(){if(selSweep===null)return null;const i=rowOf(selSweep);return i===null?null:rows[i];}
+function stampOf(s,full){const i=rowOf(s);const t=i===null?null:stamps[i];if(!t)return null;
+  if(full)return t;
+  // the date only when the held sweeps cross midnight
+  const multi=stamps.length&&stamps[0]&&stamps[stamps.length-1]&&stamps[0].slice(0,10)!==stamps[stamps.length-1].slice(0,10);
+  return (multi?t.slice(5,10)+' ':'')+t.slice(11,16);}
+// Which sweep a waterfall pixel row shows: fit mode squeezes every sweep in memory
+// into the canvas; history mode is view.ry pixel rows per sweep, starting view.top
+// sweeps back from the newest.
+function fallN(FH){return Math.min(rows.length,FH);}
+function idxAtY(ry,FH){return view.fit?Math.floor(ry/FH*fallN(FH)):view.top+Math.floor(ry/view.ry);}
+function sweepAtY(ry,FH){if(ry<0||ry>=FH)return null;const idx=idxAtY(ry,FH);return (idx>=0&&idx<rows.length&&total-idx>=1)?total-idx:null;}
+
+// ---- layers: noise / signal / internal
+// An estimate, composed in linear power so that all three together give back the
+// measured value exactly: per sweep and per column,
+//   floor N  = running median of that sweep (block medians a quarter of ~2 MHz wide,
+//              then the median of the five around each column: the live peaks' floor)
+//   base     = min(P, N);  excess E = P - base
+//   internal = min(terminated floor, base) when a terminated run matches, plus E on a
+//              column holding a 14.4 MHz harmonic or a hop centre
+//   signal   = E where P is at least the threshold over N (and not internal)
+//   noise    = the rest of base, plus E below the threshold
+const layers={noise:true,signal:true,internal:true};
+let sigThr=6, intData=null, layerVer=0;
+const layerCache=new WeakMap();
+function allLayers(){return layers.noise&&layers.signal&&layers.internal;}
+let spurMask=null;
+function buildMask(){
+  spurMask=new Uint8Array(COLS);
+  if(lo===null||hi<=lo)return;
+  const span=hi-lo, colM=span/(COLS-1), tol=Math.max((stepK||10)*1.5,10)/1e3;
+  const mark=f=>{const a=Math.round((f-tol-lo)/colM),b=Math.round((f+tol-lo)/colM);
+    for(let c=Math.max(0,a);c<=Math.min(COLS-1,b);c++)spurMask[c]=1;};
+  for(const base of (intData&&intData.families_mhz)||[14.4])
+    for(let n=Math.ceil(lo/base);n*base<=hi;n++)mark(n*base);
+  // hop centres only where a column is fine enough to hold one without its hop:
+  // on the 52-1660 MHz overview a column is wider than half a hop
+  const hopW=hopC.length>1?(hopC[hopC.length-1]-hopC[0])/(hopC.length-1):0;
+  if(hopW&&colM<hopW/4)for(const h of hopC)mark(h);
+}
+function sweepFloor(r){
+  const colM=(hi-lo)/(COLS-1);
+  const w=Math.max(8,Math.round(2/colM)), b=Math.max(1,Math.round(w/4));
+  const nb=Math.ceil(COLS/b), bm=new Array(nb).fill(null);
+  for(let k=0;k<nb;k++){const v=[];for(let c=k*b;c<Math.min(COLS,(k+1)*b);c++)if(r[c]!==null&&r[c]!==undefined)v.push(r[c]);
+    if(v.length){v.sort((a,b)=>a-b);bm[k]=v[v.length>>1];}}
+  const out=new Float32Array(COLS);
+  for(let k=0;k<nb;k++){const v=[];for(let j=k-2;j<=k+2;j++)if(j>=0&&j<nb&&bm[j]!==null)v.push(bm[j]);
+    v.sort((a,b)=>a-b);const fl=v.length?v[v.length>>1]:NaN;
+    for(let c=k*b;c<Math.min(COLS,(k+1)*b);c++)out[c]=fl;}
+  return out;
+}
+// The row as it is drawn under the current layer choice, in dB (NaN = nothing there).
+function layerRow(r){
+  const key=(layers.noise?1:0)|(layers.signal?2:0)|(layers.internal?4:0);
+  const tag=key+'|'+sigThr+'|'+layerVer;
+  const hit=layerCache.get(r);if(hit&&hit.tag===tag)return hit.v;
+  if(!spurMask)buildMask();
+  const fl=sweepFloor(r), term=intData&&intData.found?intData.floor:null;
+  const out=new Float32Array(COLS);
+  for(let c=0;c<COLS;c++){
+    const v=r[c];if(v===null||v===undefined||isNaN(fl[c])){out[c]=NaN;continue;}
+    const P=Math.pow(10,v/10), N=Math.pow(10,fl[c]/10);
+    const base=Math.min(P,N), E=P-base;
+    const T=(term&&term[c]!==null)?Math.min(Math.pow(10,term[c]/10),base):0;
+    let noise=base-T, internal=T, signal=0;
+    if(spurMask[c])internal+=E;else if(v-fl[c]>=sigThr)signal=E;else noise+=E;
+    const sum=(layers.noise?noise:0)+(layers.signal?signal:0)+(layers.internal?internal:0);
+    out[c]=sum>0?10*Math.log10(sum):NaN;}
+  layerCache.set(r,{tag,v:out});
+  return out;
+}
+
 let fallImg=null;
 function drawFall(floor,span){
   const f=document.getElementById('fall'),g=fit(f),FW=f.width,FH=f.height;
   const img=g.createImageData(FW,FH);
-  const n=Math.min(rows.length,FH);
   const vl=vlo(),vw=vhi()-vl;
+  const raw=allLayers();               // all three on is the measurement itself, untouched
+  let lastIdx=-1,src=null;
   for(let ry=0;ry<FH;ry++){
-    // fit mode squeezes every sweep in memory into the canvas; history mode is one
-    // sweep per pixel row, starting view.top sweeps back from the newest.
-    const idx=view.fit?Math.floor(ry/FH*n):view.top+Math.floor(ry/view.ry);
-    const src=idx<rows.length?rows[rows.length-1-idx]:null;
+    const idx=idxAtY(ry,FH);
+    if(idx!==lastIdx){lastIdx=idx;const r=idx<rows.length?rows[rows.length-1-idx]:null;
+      src=r?(raw?r:layerRow(r)):null;}
     for(let px=0;px<FW;px++){
       const v=src?src[Math.min(COLS-1,Math.floor((vl+px/FW*vw)*COLS))]:null;
       const o=(ry*FW+px)*4;
-      const rgb=(v===null||v===undefined)?[18,26,34]:cmap((v-floor)/span);
+      const rgb=(v===null||v===undefined||v!==v)?[18,26,34]:cmap((v-floor)/span);
       img.data[o]=rgb[0];img.data[o+1]=rgb[1];img.data[o+2]=rgb[2];img.data[o+3]=255;}}
   fallImg=img;
   overlayFall();
@@ -580,7 +686,8 @@ function overlayFall(){
       g.beginPath();g.moveTo(0,y);g.lineTo(FW,y);g.stroke();
       const sweep=total-(view.fit?0:view.top)-k;
       if(sweep<1||k%labelEvery)continue;
-      const txt='#'+sweep;
+      const t=stampOf(sweep);
+      const txt='#'+sweep+(t?' '+t:'');
       const w=g.measureText(txt).width;
       g.fillStyle='rgba(10,14,19,.72)';
       g.fillRect(2,y+1,w+6,11);
@@ -589,6 +696,13 @@ function overlayFall(){
     }
     g.restore();
   }
+  // the selected sweep, outlined
+  if(selSweep!==null&&rowOf(selSweep)!==null){
+    const idx=total-selSweep;
+    let y0=null,y1=null;
+    if(view.fit){y0=idx/n*FH;y1=(idx+1)/n*FH;}else if(idx>=view.top){y0=(idx-view.top)*view.ry;y1=y0+view.ry;}
+    if(y0!==null&&y0<FH){g.save();g.strokeStyle='#c58bff';g.lineWidth=1;
+      g.strokeRect(.5,Math.round(y0)-.5,FW-1,Math.max(1,Math.round(y1-y0))+1);g.restore();}}
   if(cursorPct!==null&&(view.fit||view.top===0)){const cx=fx(cursorPct,FW);
     g.strokeStyle='rgba(232,177,79,.85)';g.lineWidth=1.5;
     g.beginPath();g.moveTo(cx,0);g.lineTo(cx,Math.max(1,yOf(1)));g.stroke();}
@@ -599,7 +713,8 @@ function overlayFall(){
   const vi=document.getElementById('vinfo');
   if(vi)vi.textContent=(view.z>1?`zoom ${view.z.toFixed(1)}×  ${fLo().toFixed(1)}–${fHi().toFixed(1)} MHz  ·  `:'')
     +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}, ${view.ry} px per sweep`)
-    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · ctrl+wheel: sweep height · double-click: reset';
+    +'  ·  wheel: zoom · drag: pan · shift+wheel: history · ctrl+wheel: sweep height · click: that sweep on the spectrum · double-click: reset';
+  document.querySelectorAll('#fh-btns .btn').forEach(b=>b.classList.toggle('on',b.dataset.ry==='fit'?view.fit:(!view.fit&&+b.dataset.ry===view.ry)));
 }
 
 let mh=[];
@@ -633,6 +748,7 @@ function redrawLight(){
   drawSpec(lastFloor,lastSpan);overlayFall();readout();
 }
 
+function i2col(hf){return Math.round(hf*(COLS-1));}
 function readout(){
   const el=document.getElementById('readout');
   if(hoverPct===null||!rows.length){el.innerHTML='&nbsp;';return;}
@@ -647,6 +763,9 @@ function readout(){
     +(hold!==null?`  max-hold <b>${hold.toFixed(1)}</b> dB`:'')
     +(cur!==null&&lastFloor!==null?`  over floor <b>${(cur-lastFloor).toFixed(1)}</b> dB`:'')
     +(near?`  <span style="color:#e8b14f">≈ ${near.k} MHz × ${near.n}</span>`:'');
+  if(hoverRow!==null){const i=rowOf(hoverRow);const v=i===null?null:rows[i][i2col(hf)];
+    el.innerHTML+=`<br><span style="color:var(--dim)">waterfall row: <b style="color:var(--ink)">sweep #${hoverRow}</b>`
+      +`  started ${esc(stampOf(hoverRow,true)||'?')}${v!==null&&v!==undefined?`  ·  <b style="color:var(--ink)">${v.toFixed(1)}</b> dB here`:''}</span>`;}
   const pk=nearestPeak(hoverPct);
   if(pk)el.innerHTML+=`<br><span style="color:${MARK_COL[pk.kind]}">▲ ${pk.f.toFixed(4)} MHz  `
     +`${pk.snr.toFixed(1)} dB over floor  ${pk.w} kHz wide  —  ${esc(pk.tags||'untagged: possible signal')}</span>`;
@@ -657,11 +776,19 @@ function hook(id){
   let drag=null;
   c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
     const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    hoverRow=id==='fall'?sweepAtY((e.clientY-r.top)*c.height/r.height,c.height):null;
     if(drag!==null&&view.z>1){view.c-=(p-drag)/view.z;drag=p;clampView();hoverPct=p;redrawView();return;}
     hoverPct=p;redrawLight();});
-  c.addEventListener('mouseleave',()=>{hoverPct=null;drag=null;redrawLight();});
+  c.addEventListener('mouseleave',()=>{hoverPct=null;hoverRow=null;drag=null;redrawLight();});
+  let down=null;
   c.addEventListener('mousedown',e=>{if(e.button!==0)return;const r=c.getBoundingClientRect();
-    drag=(e.clientX-r.left)/r.width;e.preventDefault();});
+    drag=(e.clientX-r.left)/r.width;down=[e.clientX,e.clientY];e.preventDefault();});
+  // a click (not a drag) on the waterfall picks that sweep; clicking it again clears it
+  if(id==='fall')c.addEventListener('click',e=>{
+    if(!down||Math.abs(e.clientX-down[0])>3||Math.abs(e.clientY-down[1])>3)return;
+    const r=c.getBoundingClientRect();
+    const s=sweepAtY((e.clientY-r.top)*c.height/r.height,c.height);
+    selectSweep(s===selSweep?null:s);});
   addEventListener('mouseup',()=>{drag=null;});
   c.addEventListener('wheel',e=>{
     e.preventDefault();
@@ -682,7 +809,13 @@ function hook(id){
     }
     clampView();redrawView();
   },{passive:false});
-  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true,ry:1};redrawView();});
+  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true,ry:1};selectSweep(null);});
+}
+function selectSweep(s){
+  selSweep=s;
+  document.getElementById('key-sel').hidden=s===null;
+  if(s!==null)document.getElementById('key-sel-t').textContent=`sweep #${s}, started ${stampOf(s,true)||'?'} (clicked in the waterfall)`;
+  redrawView();
 }
 
 function trend(){
@@ -710,6 +843,8 @@ function fmt(s){if(s===null||s===undefined)return '—';
 
 function resetView(){
   view={z:1,c:0.5,top:0,fit:true,ry:1};
+  stamps=[];selSweep=null;hoverRow=null;intData=null;spurMask=null;layerVer++;stepK=null;
+  document.getElementById('key-sel').hidden=true;document.getElementById('ly-int').textContent='';
   rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
   peaks=[];hopC=[];refused=[];engine='rtl_power';document.getElementById('pk').textContent='';
   document.getElementById('engine').hidden=true;document.getElementById('key-refused').hidden=true;
@@ -1456,11 +1591,13 @@ async function tick(){
     if(curFile&&d.file!==curFile){setTimeout(tick,500);return;}   // response for a file we left
     if(d.lo!==null){lo=d.lo;hi=d.hi;}
     document.getElementById('file').textContent=d.file;
-    if(d.rows.length){rows=rows.concat(d.rows);meds=meds.concat(d.medians||[]);
+    if(d.rows.length){rows=rows.concat(d.rows);meds=meds.concat(d.medians||[]);stamps=stamps.concat(d.stamps||[]);
       have=d.from+d.rows.length;
-      if(rows.length>400){rows=rows.slice(-400);meds=meds.slice(-400);}}
+      if(rows.length>400){rows=rows.slice(-400);meds=meds.slice(-400);stamps=stamps.slice(-400);}}
+    if(d.step_khz&&d.step_khz!==stepK){stepK=d.step_khz;spurMask=null;layerVer++;}
     partial=d.partial||null;
-    if(d.hop_centres_mhz)hopC=d.hop_centres_mhz;
+    if(d.hop_centres_mhz){hopC=d.hop_centres_mhz;spurMask=null;layerVer++;}
+    if(intData===null&&lo!==null)loadInternal();
     engine=d.engine||'rtl_power';
     refused=d.refused_mhz||[];
     const eng=document.getElementById('engine');
@@ -1508,6 +1645,33 @@ async function tick(){
   }catch(e){}
   setTimeout(tick,2500);
 }
+// The internal layer's floor: a terminated run with this recording's fingerprint.
+async function loadInternal(){
+  intData={found:false,pending:true};
+  const want=curFile;
+  try{const d=await (await fetch('/internal'+(curFile?'?file='+encodeURIComponent(curFile):''))).json();
+    if(want!==curFile)return;
+    intData=d;}catch(e){intData={found:false,reason:'could not ask the server: '+e};}
+  spurMask=null;layerVer++;layerNote();if(!allLayers())redrawView();
+}
+function layerNote(){
+  document.getElementById('ly-note').textContent=allLayers()
+    ?'all three on = the raw measurement'
+    :'an estimate of the split, composed in linear power; all three on is the raw measurement';
+  const el=document.getElementById('ly-int');
+  if(!intData||intData.pending){el.textContent='';return;}
+  el.textContent='Internal layer: 14.4 MHz clock family and hop centres (hop centres only where a column is finer than a quarter hop); '
+    +(intData.found?`receiver floor from the terminated run ${intData.name}.`:`${intData.reason||'no terminated run matches'}.`);
+}
+document.getElementById('fh-btns').innerHTML=['fit',1,2,4,8,16].map(v=>`<button class="btn" data-ry="${v}">${v==='fit'?'fit':v+' px'}</button>`).join(' ');
+document.querySelectorAll('#fh-btns .btn').forEach(b=>b.onclick=()=>{
+  if(b.dataset.ry==='fit')view.fit=true;else{view.fit=false;view.ry=+b.dataset.ry;}
+  clampView();redrawView();});
+for(const k of ['noise','signal','internal']){const el=document.getElementById('ly-'+k);
+  el.onchange=()=>{layers[k]=el.checked;layerNote();redrawView();};}
+document.getElementById('ly-thr').oninput=e=>{const v=parseFloat(e.target.value);if(isFinite(v)){sigThr=v;redrawView();}};
+document.getElementById('sel-clear').onclick=e=>{e.preventDefault();selectSweep(null);};
+layerNote();
 addEventListener('resize',draw);
 hook('spec');hook('fall');
 for(const k of ['sig','spur','art','grid','hop']){const el=document.getElementById('mk-'+k);
