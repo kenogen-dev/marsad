@@ -527,7 +527,21 @@ intermod drop allows. B is ~5 dB below mean(A,C): fits -10 inside the wander, an
 entry after the pad. The pad also dropped the floor 2.5 dB. Next: hunt it in the room with a
 probe. Full table in CLAUDE.md "Block H2".
 
-### H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
+### G-GP. 1265 MHz ground plane on the bridge (pre-registered 2026-10-25, before the antenna run)
+
+Owner-built quarter-wave GP: vertical **52.0 mm**, four radials **59.0 mm** at **45 deg** droop,
+1.63 mm wire, 3 mm feed stub. The Antenna Bench's model at those dimensions: effective length
+(55 + 0.5 x 59) / 1.5 = 56.3 mm, end-effect 0.95, so **predicted dip 1264 MHz**. Bridge:
+generator > RFIN, GP on DETECK, RFOUT > 10 dB pad > DC block > XTR, g14, `1241M:1541M:50k -i 10`,
+open / GP / load, 2 min each.
+
+- **Dip between 1241 and ~1290 MHz** if the build matches the model (+/-2% for the end-effect
+  factor, +/-1 mm of cutting).
+- About even odds the true dip sits **at or just below 1241**, inside the XTR's PLL gap: then
+  the curve falls toward the bottom edge with no visible bottom, which reads as "slightly long".
+- Only the dip's **frequency** is graded; with ~12 dB directivity its depth is not.
+
+## H6. Does a warm XTR lose 1090 MHz? (pre-registered 2026-10-24, 10:00) - NEXT
 
 H3 put the warm XTR's PLL gap at 1086-1230 MHz, so 1090 (ADS-B) sits inside it once warm; cold it
 was 1094-1239, with 1090 just below. XTR idle since 00:17 (10 h). Whips on the dipole's outline
