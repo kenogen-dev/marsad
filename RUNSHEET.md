@@ -569,6 +569,25 @@ bins well below the directivity, i.e. the worst-matched ones. With a 12 dB bridg
 bin is vouched for, response.md should say "dip not resolvable with this bridge" instead of
 naming the best trusted bin as the dip.
 
+## M1. Milair / milsat 12 h map (planned 2026-10-26, 03:00-15:00)
+
+`milair` preset 225-400 MHz, 12.5 kHz requested (10.85 kHz actual, FFT 256, 84 hops), g29,
+**`-i 30`** (87% listening, 1,440 sweeps, ~193 MB), dipole whips extended to 125 mm on the
+standing chain, 5 min shakedown first. Exploratory: occupancy and levels only, no audio or
+content (ground rules). What it can and cannot see, written down first:
+
+- Each frequency is heard ~0.3 s of every 30 s sweep (447 s over 12 h). **Steady carriers**
+  (satellite downlinks, beacons) will show at ~100% occupancy; **short voice calls** are sampled,
+  so a busy channel shows as low but non-zero occupancy that rises in the day.
+- Expected if the window sees enough sky: **MUOS downlink 360-380 MHz** as one or more ~5 MHz
+  wide plateaus that never switch off; **legacy UHF satcom downlinks 243-270 MHz** as narrow steady
+  or long-on carriers; milair voice scattered across 225-400, quieter at night.
+- An empty 360-380 is not proof of nothing: the 125 mm whips are a short dipole at these
+  frequencies and the satellites sit low over the southern horizon.
+
+Adaptive dwell (skipping quiet bins) is deliberately **not** used: it would bias every occupancy
+figure. The follow-up is a second, narrow run on whatever this map shows is busy.
+
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 
 `burst23` (1263M:1267M:5k, g29, `-i 2`), 15 min per block, `--floor-window 0.3`, all on the
