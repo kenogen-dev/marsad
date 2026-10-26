@@ -102,6 +102,7 @@ class Tailer:
         self.last_growth = time.time()    # for --exit-after-idle
         self.hops = None      # rows per sweep; the sidecar fills this in
         self.cur_rows = 0
+        self.cur_stamp = None   # the first row's time: when this sweep started
         self.step_hz = None
         self.hop_centres: set = set()   # Hz, from each row's low/high: where zero-IF DC spikes sit
         self.maxhold: dict = {}         # kHz -> highest dB ever seen, at full resolution
@@ -160,8 +161,11 @@ class Tailer:
         self.rows += 1
         self.readings += len(vals)
         self.nonfinite += sum(1 for v in vals if v != v)
+        stamp = parts[0].strip() + " " + parts[1].strip()
         if self.last_lo is not None and lo <= self.last_lo:
-            self._finish(parts[0].strip() + " " + parts[1].strip())
+            self._finish(self.cur_stamp or stamp)
+        if self.cur_rows == 0:
+            self.cur_stamp = stamp
         self.last_lo = lo
         self.cur_rows += 1
         self.step_hz = step
@@ -174,7 +178,7 @@ class Tailer:
         # Close the sweep the moment it is full rather than waiting for the next
         # one to start: rtl_power writes a whole interval's rows at once.
         if self.hops and self.cur_rows >= self.hops:
-            self._finish(parts[0].strip() + " " + parts[1].strip())
+            self._finish(self.cur_stamp or stamp)
 
     def _finish(self, stamp: str) -> None:
         if not self.cur:
@@ -730,6 +734,74 @@ def survey_list(station: Station) -> list:
     return out
 
 
+# The waterfall's "internal" layer: what the receiver makes on its own. The
+# confirmed internal families (CLAUDE.md: the 14.4 MHz clock family; 28.8 is half
+# of it) are tagged on the page; the floor comes from a terminated run with the
+# same fingerprint, the only honest measurement of it. Sub-MHz combs are left out:
+# at display resolution they would tag every column.
+INTERNAL_FAMILIES_MHZ = [14.4]
+
+
+def internal_floor(station: Station, name: str, lo_mhz, hi_mhz, cols: int) -> dict:
+    """The newest terminated run with the same fingerprint as `name`, its bins.csv
+    `median_db` put on the display grid (median per column), or why there is none.
+
+    Terminated is taken from occupancy.db when the survey is archived there (`mark`
+    is the record of fact), otherwise guessed from the sidecar text."""
+    from . import hunt
+    from .archive import looks_terminated, median
+    out = {"families_mhz": INTERNAL_FAMILIES_MHZ, "found": False, "floor": None}
+    stem = Path(name).stem
+    info = hunt.report_info(station, stem)
+    fp = info.get("fingerprint")
+    if not fp:
+        out["reason"] = "this recording has no sidecar fingerprint, so no terminated run can be matched to it"
+        return out
+    out["fingerprint"] = fp
+    flags = {}
+    if station.db.exists():
+        try:
+            from . import archive
+            con = archive.connect(station)
+            flags = {r["name"]: r["terminated"] for r in
+                     con.execute("SELECT name, terminated FROM surveys WHERE fingerprint = ?", (fp,))}
+            con.close()
+        except Exception:  # noqa: BLE001 - a broken db only loses the archive's flags
+            flags = {}
+    best = None
+    for rep_dir in station.reports.iterdir() if station.reports.exists() else []:
+        if rep_dir.name == stem or not (rep_dir / "bins.csv").exists():
+            continue
+        i = hunt.report_info(station, rep_dir.name)
+        if i.get("fingerprint") != fp:
+            continue
+        term = flags.get(rep_dir.name)
+        if term is None:
+            try:
+                sc = json.loads((station.surveys / f"{rep_dir.name}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            term = looks_terminated(sc)
+        if term and (best is None or (i.get("started") or "") > (best.get("started") or "")):
+            best = i
+    if best is None:
+        out["reason"] = ("no terminated run with this fingerprint, so the receiver's own floor "
+                         "is not known here; only the tagged clock lines are shown as internal")
+        return out
+    if lo_mhz is None or hi_mhz is None or hi_mhz <= lo_mhz:
+        out["reason"] = "the recording's frequency range is not known yet"
+        return out
+    span = hi_mhz - lo_mhz
+    per: list = [[] for _ in range(cols)]
+    for k, (_, med, _) in hunt.load_bins(station.reports / best["name"]).items():
+        c = int((k / 1e3 - lo_mhz) / span * (cols - 1))
+        if 0 <= c < cols:
+            per[c].append(med)
+    out.update({"found": True, "name": best["name"], "started": best.get("started"),
+                "floor": [round(median(v), 2) if v else None for v in per]})
+    return out
+
+
 def page_html() -> str:
     return (WEB / "index.html").read_text(encoding="utf-8")
 
@@ -880,6 +952,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 fw = float(pr.get("floor_window") or cfg["floor_window_mhz"])
                 pk = t.peaks(cfg["peak_threshold_db"], fw, cfg["spur_families"], cfg["readout_families"])
                 body = json.dumps({**t.payload(since), "peaks": pk, "live": live_name}).encode()
+            elif u.path == "/internal":
+                name = (q.get("file") or [None])[0] or (live["path"].name if live["path"] else None)
+                t = get_tailer(station, name, args.cols, args.keep) if name else None
+                if t is None:
+                    self.send_error(404); return
+                if t.lo is None:
+                    t.poll()
+                body = json.dumps(internal_floor(station, name, t.lo, t.hi, args.cols)).encode()
             elif u.path == "/surveys":
                 body = json.dumps({"live": live["path"].name if live["path"] else None,
                                    "follow": follow,
