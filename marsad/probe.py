@@ -53,6 +53,14 @@ TARGETS = [
     "SDR enclosure",
 ]
 
+# What the target was doing. The same device is surveyed in several states with
+# the probe fixed in place, and the per-device comparison differences each state
+# against the unplugged one: whatever the device adds over its own absence. Any
+# other text is accepted too ("printing", "scanning"); the loudest-devices ranking
+# counts every state that is not unplugged, off or idle as an active one.
+STATES = ["unplugged", "off", "idle", "active"]
+QUIET_STATES = {"unplugged", "off", "idle"}
+
 # id -> (label on the page, how the chain string names it)
 PROBES = {
     "large-loop": ("large loop", "large H-field loop probe"),
@@ -168,9 +176,12 @@ detection with the highest max-hold SNR in peaks.csv. "Tagged families" counts d
 carrying each spur-family tag; a lone 600 kHz comb tag is weak evidence (CLAUDE.md) and the
 spacing between neighbouring lines should be measured before it is believed.
 
-| When | Target | Probe | Held | Range | Duration | Survey | Detections | Strongest line | Tagged families |
-|---|---|---|---|---|---|---|---|---|---|
+| When | Target | State | Probe | Held | Range | Duration | Survey | Detections | Strongest line | Tagged families |
+|---|---|---|---|---|---|---|---|---|---|---|
 """
+# The State column arrived on 2026-10-26. Rows written before it get an empty cell
+# there the next time a row is appended, so the table keeps one shape.
+OLD_LOG_HEADER = "| When | Target | Probe | Held |"
 
 
 def chain_tails(station: Station) -> dict:
@@ -197,6 +208,7 @@ def catalog(station: Station) -> dict:
                  for rx, r in station.receivers.items()]
     return {
         "targets": list(over.get("targets") or TARGETS),
+        "states": list(over.get("states") or STATES),
         "probes": [{"id": k, "label": v[0], "desc": v[1]} for k, v in probes.items()],
         "ranges": [{"id": k, "label": v["label"]} for k, v in RANGES.items()],
         "receivers": receivers,
@@ -351,6 +363,13 @@ def compose(station: Station, form: dict) -> dict:
     except (TypeError, ValueError):
         raise ValueError("device index must be a whole number")
     notes = str(form.get("notes") or "").strip()
+    state = str(form.get("state") or "").strip()
+    if state == "other":
+        state = str(form.get("state_other") or "").strip()
+        if not state:
+            raise ValueError("type the device state under 'other', or pick one")
+    # commas and semicolons separate the parts of the conditions text
+    state = re.sub(r"\s+", " ", re.sub(r"[,;|]", " ", state)).strip()
 
     preset = station.presets.get(rng["preset"])
     if preset is None:
@@ -427,7 +446,8 @@ def compose(station: Station, form: dict) -> dict:
         raise ValueError("say where the probe is held (for example 'against the PSU fan grille')")
     # A tile around one frequency is a hunt whichever panel started it; the wide
     # overview is a probe survey. The prefix is how the two sort in surveys/.
-    tag = f"{'hunt' if tiled else 'probe'}-{slug(target)}-{slug(probe['id'], 20)}"
+    tag = (f"{'hunt' if tiled else 'probe'}-{slug(target)}"
+           + (f"-{slug(state, 20)}" if state else "") + f"-{slug(probe['id'], 20)}")
     tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
     try:
         pad_db = int(form.get("attenuator") or 0)
@@ -458,7 +478,8 @@ def compose(station: Station, form: dict) -> dict:
                 if pad_db else "no pad")
     chain = f"{probe['desc']}, held {held} > {padded}"
     conditions = (f"near-field probe survey: {target}, {probe['desc']} held {held}, "
-                  f"{range_label}, {dur_text}, {pad_text}")
+                  + (f"device state {state}, " if state else "")
+                  + f"{range_label}, {dur_text}, {pad_text}")
     if pad_db:
         range_label += f", {pad_db:g} dB pad"      # the room-map row's Range cell carries it
     if notes:
@@ -476,7 +497,7 @@ def compose(station: Station, form: dict) -> dict:
         "command_line": subprocess.list2cmdline(["marsad", "run", *args]),
         "rtl_power_line": " ".join(rtl) + " surveys/<name>.csv",
         "tag": tag, "chain": chain, "conditions": conditions,
-        "target": target, "probe": probe["label"], "probe_id": probe["id"], "held": held,
+        "target": target, "state": state, "probe": probe["label"], "probe_id": probe["id"], "held": held,
         "range": rng_id, "range_label": range_label,
         "preset": rng["preset"], "receiver": receiver, "freq": freq,
         "gain": gain, "integration": integration, "device": device,
@@ -542,15 +563,43 @@ def log_row(when: dt.datetime, plan: dict, stem: str, summary: dict,
     fams = "; ".join(f"{k} x{v}" for k, v in sorted(summary.get("families", {}).items(),
                                                       key=lambda kv: -kv[1])) or "none"
     det = f"{summary['detections']} ({summary['untagged']} untagged)"
-    cells = [f"{when:%Y-%m-%d %H:%M}", plan["target"], plan["probe"], plan["held"],
+    cells = [f"{when:%Y-%m-%d %H:%M}", plan["target"], plan.get("state", ""), plan["probe"],
+             plan["held"],
              plan["range_label"], dur, stem, det, strongest, fams]
     return "| " + " | ".join(_cell(c) for c in cells) + " |"
+
+
+CELL_SPLIT = re.compile(r"(?<!\\)\|")      # a cell boundary, not an escaped \| inside one
+
+
+def migrate_log(text: str) -> str:
+    """ROOM_RF.md with the State column added: the header swapped for the current
+    one and an empty State cell put into every row written before it. A file that
+    already has the column comes back unchanged."""
+    if OLD_LOG_HEADER not in text:
+        return text
+    head, _, table = text.partition(OLD_LOG_HEADER)
+    rows = table.split("\n", 2)[2] if table.count("\n") >= 2 else ""
+    out = []
+    for line in rows.splitlines():
+        if line.startswith("| "):
+            cells = CELL_SPLIT.split(line)        # ['', ' when ', ' target ', ...]
+            cells.insert(3, " ")
+            line = "|".join(cells)
+        out.append(line)
+    new_head = ROOM_RF_HEADER[ROOM_RF_HEADER.index("| When |"):]
+    return head + new_head + "\n".join(out) + ("\n" if out else "")
 
 
 def append_log(station: Station, row: str) -> Path:
     """Append one row to ROOM_RF.md, writing the header the first time."""
     path = station.root / LOG_NAME
     new = not path.exists() or path.stat().st_size == 0
+    if not new:
+        text = path.read_text(encoding="utf-8")
+        migrated = migrate_log(text)
+        if migrated != text:
+            path.write_text(migrated, encoding="utf-8", newline="\n")
     with open(path, "a", encoding="utf-8", newline="\n") as fh:
         if new:
             fh.write(ROOM_RF_HEADER)
@@ -692,7 +741,8 @@ class ProbeRunner:
             message = "\n".join(lines[-6:]) if lines else "the run produced no output"
         return {
             "state": state,
-            "tag": plan["tag"], "target": plan["target"], "probe": plan["probe"],
+            "tag": plan["tag"], "target": plan["target"], "device_state": plan["state"],
+            "probe": plan["probe"],
             "held": plan["held"], "range_label": plan["range_label"],
             "started_local": job["started_local"],
             "duration_s": plan["duration_s"],

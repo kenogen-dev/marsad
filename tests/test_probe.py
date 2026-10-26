@@ -14,7 +14,7 @@ from conftest import PY, ROOT, run
 
 sys.path.insert(0, str(ROOT))
 
-from marsad import probe                      # noqa: E402
+from marsad import hunt, probe                # noqa: E402
 from marsad.config import Station             # noqa: E402
 from marsad.rtlpower import parse_freq_spec   # noqa: E402
 
@@ -185,7 +185,7 @@ def test_summary_and_room_log_row(tmp_path):
     plan = probe.compose(st, {**FORM, "where": "on the lid | near the fan"})
     when = dt.datetime(2026, 10, 20, 12, 0)
     row = probe.log_row(when, plan, rep.name, s, 97.3, True)
-    assert row.startswith("| 2026-10-20 12:00 | PC power supply | large loop | on the lid \\| near the fan |")
+    assert row.startswith("| 2026-10-20 12:00 | PC power supply |  | large loop | on the lid \\| near the fan |")
     assert "5m (stopped at 1.6 min)" in row
     assert "1633.4700 MHz, -17.2 dB (22.2 dB SNR, 100% on)" in row
     assert "4 (1 untagged)" in row
@@ -224,3 +224,50 @@ def test_record_refuses_a_span_rtl_power_cannot_plan():
     assert "1610.6 MHz" in r.stderr and "Invalid sample rate" in r.stderr
     run([PY, "-m", "marsad", "run", "custom", "5m", "--freq", "52M:1662.6M:100k",
          "--tag", "pytest", "--dry-run"])
+
+
+def test_device_state_reaches_the_tag_the_conditions_and_the_room_map(tmp_path):
+    st = Station.load(ROOT)
+    d = probe.compose(st, {**FORM, "target": "printer", "state": "idle"})
+    assert d["state"] == "idle" and d["tag"] == "probe-printer-idle-large-loop"
+    assert ", device state idle, " in d["conditions"]
+    # the hunt module reads it back out of a sidecar's conditions, target intact
+    assert hunt.STATE_RE.search(d["conditions"]).group(1) == "idle"
+    assert hunt.TARGET_RE.search(d["conditions"]).group(1) == "printer"
+    other = probe.compose(st, {**FORM, "target": "printer", "state": "other",
+                               "state_other": "printing, duplex; 20 pages"})
+    assert other["state"] == "printing duplex 20 pages"        # no separators left in it
+    assert other["tag"] == "probe-printer-printing-duplex-20-p-large-loop"   # state slug capped at 20
+    with pytest.raises(ValueError, match="device state"):
+        probe.compose(st, {**FORM, "state": "other", "state_other": " "})
+    none = probe.compose(st, FORM)
+    assert none["state"] == "" and "device state" not in none["conditions"]
+    assert "states" in probe.catalog(st) and "unplugged" in probe.catalog(st)["states"]
+    row = probe.log_row(dt.datetime(2026, 10, 26, 9, 0), d, "survey_x",
+                        probe.summarise_report(ROOT / "nope"), None, False)
+    assert row.startswith("| 2026-10-26 09:00 | printer | idle | large loop |")
+
+
+def test_room_map_gains_the_state_column_and_old_rows_stay_valid(tmp_path):
+    old = ("# Room RF map\n\nintro\n\n"
+           "| When | Target | Probe | Held | Range | Duration | Survey | Detections | Strongest line | Tagged families |\n"
+           "|---|---|---|---|---|---|---|---|---|---|\n"
+           "| 2026-10-20 12:20 | background | large loop | on the lid \\| near the fan | wide | 10m | s1 | 80 | x | y |\n")
+    (tmp_path / "ROOM_RF.md").write_text(old, encoding="utf-8")
+
+    class Fake:
+        root = tmp_path
+    new_row = "| 2026-10-26 09:00 | printer | idle | large loop | h | wide | 5m | s2 | 1 | x | y |"
+    probe.append_log(Fake(), new_row)
+    lines = (tmp_path / "ROOM_RF.md").read_text(encoding="utf-8").splitlines()
+    table = [ln for ln in lines if ln.startswith("|")]
+    assert table[0].startswith("| When | Target | State | Probe |")
+    assert table[1].count("|") == 12
+    assert table[2] == ("| 2026-10-20 12:20 | background | | large loop | on the lid \\| near the fan "
+                        "| wide | 10m | s1 | 80 | x | y |")
+    assert table[3] == new_row
+    assert all(len(probe.CELL_SPLIT.split(t)) == 13 for t in table)    # one shape throughout
+    assert lines[:4] == ["# Room RF map", "", "intro", ""]
+    # a second append does not migrate twice
+    probe.append_log(Fake(), new_row)
+    assert (tmp_path / "ROOM_RF.md").read_text(encoding="utf-8").count("| When |") == 1
