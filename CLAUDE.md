@@ -2241,6 +2241,43 @@ SDR until then). Endpoints: `GET /hunt/reports`, `GET /hunt/candidates?bg&dev&bl
 fingerprint mismatch is refused in plain words. While a run started from the page records,
 the server reads its CSV twice a second instead of every 2 s.
 
+**Hunt mode after its first shakedown (2026-10-26).** The owner's first hand-held hunt
+(`survey_deep_10m_hunt-printer-unplugged-stub-a_20261026-2305` tile, `..._custom_10m_..._2316`
+5 MHz hunt; sidecars carry a `conditions_correction`) found four faults, all fixed:
+
+- *Too slow to follow by hand* (a reading every 3 s on the tile, 1 s on the 5 MHz hunt, which is
+  rtl_power's minimum). New range **`live`**: one rtl_power_fftw hop, 2.4 MS/s, 512 bins
+  (4.69 kHz), `-t 0.1`, g29, tuned **0.6 MHz (a quarter hop) below the target** so the line sits
+  between the DC spike and the cropped edge (`probe.live_spec`). One hop never retunes between
+  spectra, so a pass is 0.1 s + the 59 ms overhead = 0.159 s. **Measured on the radio
+  2026-10-26 23:40** (XTR, 855.6 MHz, scratch station, test viewer on 8745): **5.84 spectra a
+  second reach the page**, a new reading every 160 ms (max 334), none skipped; ~4.2 MB of
+  `.dat` per minute. `DatTailer` closes a one-hop pass the moment its block ends instead of
+  waiting for the next block to wrap it. The page asks `GET /hunt/reading` every 150 ms on
+  `live` (500 ms on the tiles) and shows the measured rate beside the planned one
+  (`updates_per_s`, from when sweeps reached the server, 5 s window). The tailer's file
+  reading now holds `poll_lock`, so the request handler and the background loop can both read.
+- *The strongest-line follower jumped between unrelated carriers* (855.6, 806.4, 864.0, 888.0,
+  891.0, 903.8 MHz). `hunt.Follower`, server side, stepped once per new sweep however often the
+  page asks: it stays on its line until another is **6 dB stronger for 3 sweeps in a row**, or
+  its own line has been under 3 dB over the floor for 3 sweeps; it tracks a drift of up to
+  max(2 bins, 15 kHz) but never onto a noise bin. **🔒 Lock line** pins it (a faded locked line
+  keeps its frequency). Bins within max(1.5 bins, 25 kHz) of a hop centre never win.
+- *Broadband emitters were invisible* (blade on Bluetooth headphone cases and Wi-Fi bulb bases:
+  the tile median jumped from -31 to -15/-18 dB, so line-over-floor barely moved or fell).
+  Follow mode **floor level** turns the span's median, against the quietest median of this run,
+  into the tone. The HUD always shows both: line over the floor, and floor level with its rise.
+- *Hunt runs inherited the catalogue form's target, state and held text.* Every Hunt-panel start
+  opens a box showing the target, state and held text the run will record, held defaulting to
+  **"hand-held, moved around"** (`probe.HUNT_HELD_DEFAULT`, also compose's default for any tile
+  or live run with no held text); "Narrow" reuses what was confirmed. `ProbeRunner.start`
+  refuses a tile/hunt/live run without `confirmed` in the form; the catalogue form's own Start
+  sends it, being pressed beside those fields.
+
+`tests/test_hunt_follow.py` pins the live geometry, the confirmation, the follower's hysteresis,
+lock and floor mode (on the shakedown's -31 -> -15 dB numbers), the one-hop pass close and the
+once-per-sweep stepping.
+
 **Device state and the room catalogue (2026-10-26).** The Probe form has a **State** picker
 (unplugged / off / idle / active, or free text such as "printing"). It goes into the tag
 (`probe-printer-idle-stub-a`), the conditions (`device state idle`, which `hunt.report_info`
@@ -2669,6 +2706,10 @@ Ready-made ranges:
   1420.4058 MHz, 2048 bins, 60 s, v5) exists, but the 21 cm line needs a directional antenna
   aimed at the sky; an omni such as the UWB will almost certainly show nothing. Research
   horn and small-dish designs before building.
+- **Pinned 2026-10-27: both receivers at once.** The owner has two Flamingo+ notches, one per
+  radio. Running the XTR and the v5 together needs either two antennas (or one antenna through a
+  splitter after the LaNA, ~3.5 dB per arm) and a second SMA path into its own enclosure. Until
+  then one notch is used, at the window, ahead of whichever receiver is on the antenna.
 - rtl_433 config/logging for 915 MHz sensors.
 - URH workflow for bursts found in surveys (own devices only).
 - SatDump for Meteor-M LRPT (137.9 MHz; needs a 137 MHz V-dipole), later GOES/HRPT with a dish.
