@@ -601,7 +601,10 @@ baseline, not a comparison.
 - **Legacy UHF satcom 243-270: two steady carriers, 259.58 and 262.65 MHz**, plus 296.93 MHz, all
   near -13 dB, 85-100% on from 03:00 - and **all three switched off together at 13:35-13:45**.
   A geostationary downlink does not switch off; three lines leaving in the same ten minutes point
-  at one local source. Unidentified.
+  at one local source. Unidentified. *The owner was out from 12:30 until after the run*, so the
+  13:40 switch-off was not a person in this room: a timer, a thermostat, or a neighbour's device.
+  The hump's **12:29 drop (-2.4 dB) matches the owner leaving at 12:30** - whatever was switched
+  off or unplugged on the way out is a hump suspect.
 - **380-390 MHz is the busiest real activity:** a continuous carrier sat on **385.04 MHz until
   08:30, moved to 385.76 + 387.43 MHz from 08:30 to 13:22, then moved back** - the pattern of a
   trunked land-mobile system rotating its control channel; 386.50 and 386.98 MHz come and go
