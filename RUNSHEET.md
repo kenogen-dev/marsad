@@ -831,6 +831,26 @@ brought down, so every V1 level is suspect until this is fixed. **Discriminator,
 v5 at 385.04 MHz, move its gain slider with AGC off.** If the level moves there, the fault is in
 rtl-sdr/'s dll path; if not, in the dongle.
 
+**Narrowed the same morning (09:30-09:50): the dongle is fine; rtl_power is the fault.** Owner moved
+SDR++'s gain slider on the v5 at 385.04 MHz, AGC off: carrier -84 / -73 / -55 / -44 / -35 dB at
+g0 / 7.7 / 28 / 40.2 / 49.6, floor flat at -88 until ~g29.7 then -77 at 40.2 and -71 at 49.6. Then
+the same `rtlsdr.dll`, g7.7 against g40.2 (32.5 dB asked), carrier at 385.04:
+
+| Tool | g7.7 | g40.2 | change |
+|---|---|---|---|
+| `rtl_sdr` (one tune, raw IQ; rms 0.7 / 6.3 counts, no clipping) | 44.7 | 74.0 | **+29.3** |
+| `rtl_power_fftw`, one hop | -48.4 | -19.2 | **+29.2** |
+| `rtl_power_fftw`, 380-390 MHz, several hops | -47.4 | -18.3 | **+29.1** |
+| `rtl_power`, one hop (384.6-385.6, no retune) | -3.1 | +1.6 | **+4.7**, floor -20.6 / -20.8 |
+
+So it is **rtl_power with the R820T/R860**, even on a single hop, not retuning and not the dll (the
+other two tools use the same one). The XTR's E4000 gain works in rtl_power. **Every archived v5
+rtl_power run (19 of them, 2026-10-16 to 10-19) was at g29.7**, so this was never exercised before
+today; those runs are internally comparable but their levels are whatever rtl_power actually set.
+The v5's raw signal is far from clipping (rms 6.3 counts of 127 at g40.2), so rtl_power's "+2 dB
+at 385.04" was never ADC clipping either. Route forward: v5 surveys on **rtl_power_fftw** (gain
+proven) until rtl_power's handling is understood.
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.
