@@ -271,3 +271,67 @@ def test_room_map_gains_the_state_column_and_old_rows_stay_valid(tmp_path):
     # a second append does not migrate twice
     probe.append_log(Fake(), new_row)
     assert (tmp_path / "ROOM_RF.md").read_text(encoding="utf-8").count("| When |") == 1
+
+
+# ---------------------------------------------------------------- 2026-10-26 fixes
+def test_chain_tail_drops_a_leading_probe_and_empty_segments():
+    # the Chain tab's placeholder, or a probe typed into the box, must not make a second probe
+    tail = ("near-field probe (held where the Probe tab says) > SMA DC block > 8 ft coax > "
+            "LaNA > XTR > PC")
+    assert probe.clean_tail(tail) == "SMA DC block > 8 ft coax > LaNA > XTR > PC"
+    # what deleting the placeholder by hand left behind
+    assert probe.clean_tail(" > > SMA DC block >  > XTR > PC > ") == "SMA DC block > XTR > PC"
+    assert probe.clean_tail("") == ""
+    st = Station.load(ROOT)
+    d = probe.compose(st, {**FORM, "probe": "stub-a", "chain_tail": " > " + tail})
+    assert d["chain"].count("probe") == 1
+    assert d["chain"].startswith("E-field stub probe A, held against the PSU fan grille > SMA DC block")
+    assert not re.search(r">\s*>", d["chain"]) and not d["chain"].strip().endswith(">")
+
+
+def test_chain_tab_probe_chain_tail_has_no_probe():
+    from marsad import chain
+    parts = [{"type": "probe", "name": "near-field probe", "detail": "held where the Probe tab says"},
+             {"type": "dcblock", "name": "SMA DC block", "detail": ""},
+             {"type": "sdr", "name": "XTR", "detail": "", "rx": "xtr"}]
+    assert chain.tail_text(parts) == "SMA DC block > XTR"
+
+
+def test_compose_refuses_an_unknown_device_instead_of_guessing():
+    st = Station.load(ROOT)
+    with pytest.raises(ValueError, match="device number unknown"):
+        probe.compose(st, {**FORM, "device": ""})
+    assert probe.compose(st, {**FORM, "device": "0"})["device"] == 0
+
+
+def test_detect_receivers_with_only_the_xtr_plugged_in(monkeypatch):
+    # rtl_eeprom mocked: one dongle, the XTR, at index 0
+    st = Station.load(ROOT)
+    xtr = ("Found 1 device(s):\n  0:  Nooelec, SMArTee XTR v5ee, SN: 08701076\n\n"
+           "Using device 0: Generic RTL2832U OEM\nFound Elonics E4000 tuner\n\n"
+           "Product:\t\tSMArTee XTR v5ee\nSerial number:\t\t08701076\n")
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return type("R", (), {"stdout": xtr, "stderr": ""})()
+    monkeypatch.setattr(probe, "find_tool", lambda *a, **k: "rtl_eeprom")
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    out = probe.detect_receivers(st)
+    assert out["error"] is None
+    assert [(f["device"], f["receiver"]) for f in out["found"]] == [(0, "xtr")]
+    assert len(calls) == 1               # stops at the count rtl_eeprom reported
+
+
+def test_open_failure_names_a_wrong_index_not_another_program():
+    from marsad import record
+    out = ("Found 1 device(s):\n  0:  Nooelec, SMArTee XTR v5ee, SN: 08701076\n\n"
+           "Using device 1: \nFailed to open rtlsdr device #1.\n")
+    assert record.eeprom_listing(out) == [(0, "Nooelec, SMArTee XTR v5ee, SN: 08701076")]
+    msg = record.open_failure_message(out, 1, [])
+    assert "No receiver at index 1" in msg and "SMArTee XTR v5ee, SN: 08701076 at 0" in msg
+    assert "Another program" not in msg
+    # index present but will not open: blame another program only when one is running
+    busy = ("Found 1 device(s):\n  0:  Nooelec XTR\n\nUsing device 0: x\nusb_open error -3\n")
+    assert "Another program" in record.open_failure_message(busy, 0, ["SDR++.exe"])
+    assert "Another program" not in record.open_failure_message(busy, 0, [])

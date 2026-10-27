@@ -115,6 +115,10 @@ class Tailer:
         self.readings = 0
         self.nonfinite = 0    # saturation diagnostic: NaNs land on the strongest bins
         self.lock = threading.Lock()
+        # The background loop and a request handler may both read the file (the live
+        # hunt hop reads it on every request); one reader at a time keeps the offset sane.
+        self.poll_lock = threading.Lock()
+        self.finish_times: list = []    # wall clock of the last few completed sweeps
 
     def _sidecar(self) -> dict:
         """The .json beside the CSV carries the range and the target duration,
@@ -208,10 +212,28 @@ class Tailer:
         self.cur = []
         self.cur_rows = 0
         self.last_finish = time.time()
+        self.finish_times.append(self.last_finish)
+        del self.finish_times[:-40]
         while len(self.sweeps) > self.keep:
             self.sweeps.pop(0); self.stamps.pop(0); self.medians.pop(0); self.dropped += 1
 
     def poll(self) -> None:
+        with self.poll_lock:
+            self._poll()
+
+    def updates_per_s(self, window_s: float = 5.0):
+        """Sweeps completed per second over the last few seconds, as they reached
+        this server: the update rate the page can actually have."""
+        with self.lock:
+            t = list(self.finish_times)
+        now = time.time()
+        recent = [x for x in t if now - x <= window_s]
+        if len(recent) < 2:
+            return None
+        span = max(recent[-1] - recent[0], 1e-6)
+        return round((len(recent) - 1) / span, 2)
+
+    def _poll(self) -> None:
         try:
             size = self.path.stat().st_size
         except OSError:
@@ -489,7 +511,7 @@ class DatTailer(Tailer):
         if "Session duration elapsed" in text:
             self.ended = True
 
-    def poll(self) -> None:
+    def _poll(self) -> None:
         self._poll_log()
         try:
             size = self.path.stat().st_size
@@ -570,6 +592,10 @@ class DatTailer(Tailer):
         if self.hops is None or len(self.hop_centres) < self.hops:
             self.hop_centres.add(round(centre))
         self.cur.extend((fi / 1e6, vi) for fi, vi in zip(f, v))
+        # A one-hop plan (the live hunt hop) is exact: every block is a whole pass,
+        # so close it now instead of waiting for the next block to wrap it.
+        if self.planned == 1:
+            self._finish(self._pass_stamp or "")
         # No early close on a hop count: hops drop out as the tuner refuses them
         # (tonight's run lost eight, one at a time), so only the frequency wrap is
         # exact. The pass in progress is on screen anyway, as the partial trace.
@@ -817,6 +843,42 @@ def roadmap_text(station: Station) -> str:
 TAILERS: dict = {}
 TAIL_LOCK = threading.Lock()
 LAST_REQUEST = [time.time()]      # any HTTP hit defers the idle shutdown
+FOLLOWERS: dict = {}              # recording name -> the Hunt panel's line follower
+
+
+def hunt_reading(t, name: str, mode: str = "strongest", centre_mhz=None, lock_mhz=None,
+                 reset: bool = False, spectrum: bool = True) -> dict:
+    """One Hunt-panel reading from a tailer: the followed line, the floor, and the
+    rate sweeps are arriving at. The follower steps once per NEW sweep, however
+    often the page asks, so its hysteresis counts sweeps and not requests."""
+    if mode not in hunt.FOLLOW_MODES:
+        raise ValueError(f"follow mode must be one of {', '.join(hunt.FOLLOW_MODES)}")
+    with TAIL_LOCK:
+        slot = FOLLOWERS.get(name)
+        if slot is None or reset or slot["mode"] != mode or slot["centre"] != centre_mhz:
+            slot = {"f": hunt.Follower(), "seen": -1, "last": None, "mode": mode,
+                    "centre": centre_mhz, "lock": lock_mhz}
+            FOLLOWERS[name] = slot
+    with t.lock:
+        total = t.dropped + len(t.sweeps)
+        latest = dict(t.latest)
+        centres = sorted(t.hop_centres)
+        step = t.step_hz / 1e3 if t.step_hz else None
+    if total != slot["seen"] or lock_mhz != slot["lock"]:
+        slot["lock"] = lock_mhz
+        r = slot["f"].update(latest, centres, step, mode, centre_mhz, lock_mhz) if latest else None
+        if total != slot["seen"]:
+            slot["seen"] = total
+        if r is not None:
+            slot["last"] = r
+            slot["spectrum"] = hunt.spectrum_strip(latest, centres, step)
+    meta = t.sidecar or {}
+    return {"file": name, "sweeps": total, "reading": slot["last"],
+            "spectrum": slot.get("spectrum") if spectrum else None,
+            "updates_per_s": t.updates_per_s(),
+            "age_s": round(time.time() - t.last_finish, 2) if t.last_finish else None,
+            "lo": t.lo, "hi": t.hi, "engine": meta.get("engine", "rtl_power"),
+            "finished": bool(meta.get("finished_local")) or bool(getattr(t, "ended", False))}
 
 
 def get_tailer(station: Station, name: str, cols: int, keep: int):
@@ -992,6 +1054,23 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     body = json.dumps(probe.detect_receivers(station)).encode()
             elif u.path == "/probe/status":
                 body = json.dumps(runner.status()).encode()
+            elif u.path == "/hunt/reading":
+                # The Hunt panel's meter: polled several times a second while a hunt
+                # run records, so it reads the file itself instead of waiting for the loop.
+                name = (q.get("file") or [""])[0]
+                t = get_tailer(station, name, args.cols, args.keep) if name else None
+                if t is None:
+                    self._send(json.dumps({"error": "no such recording yet", "reading": None}).encode())
+                    return
+                t.poll()
+                num = lambda k: float(q[k][0]) if (q.get(k) and q[k][0] not in ("", "null")) else None
+                try:
+                    out = hunt_reading(t, name, (q.get("mode") or ["strongest"])[0], num("centre"),
+                                       num("lock"), (q.get("reset") or ["0"])[0] == "1")
+                except ValueError as exc:
+                    self._send(json.dumps({"error": str(exc)}).encode(), code=400)
+                    return
+                body = json.dumps(out).encode()
             elif u.path == "/hunt/reports":
                 body = json.dumps({"reports": hunt.report_list(station),
                                    "block_choices_mhz": hunt.BLOCK_CHOICES_MHZ,

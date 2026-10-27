@@ -95,6 +95,25 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .hud-u{font-size:12px;color:var(--dim)}
 .bar{height:10px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden;margin-top:10px}
 .bar div{height:100%;width:0;background:linear-gradient(90deg,#4fcf96,#e8b14f 60%,#ff8a65);transition:width .3s}
+/* Hunt meter: history strip, mini spectrum, and the big arm's-length mode */
+.bar{position:relative}
+.bar i{position:absolute;top:-2px;bottom:-2px;width:3px;margin-left:-1px;background:var(--ink);display:none}
+#hu-meter{margin-top:10px}
+#hu-meter canvas{height:90px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
+#hu-meter canvas#hu-spec{height:110px}
+.hm-l{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin:8px 0 3px}
+.hm-big{display:none}
+#hu-meter.big{position:fixed;inset:10px;z-index:60;display:flex;flex-direction:column;padding:16px 20px;border:2px solid var(--line);
+  border-radius:10px;background:var(--hm-heat,var(--panel))}
+#hu-meter.big .hm-big{display:block}
+#hu-meter.big .hm-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.hm-what{font-size:clamp(14px,2.4vh,22px);color:var(--ink);opacity:.85}
+.hm-v{font:700 clamp(90px,24vh,260px)/1 ui-monospace,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums;margin:4px 0}
+.hm-sub{font:500 clamp(16px,3vh,30px)/1.2 ui-monospace,Consolas,monospace;color:var(--ink);opacity:.85}
+#hu-meter.big .bar{height:clamp(28px,6vh,60px);border-radius:8px;margin-top:14px}
+#hu-meter.big .bar i{width:6px;margin-left:-3px}
+#hu-meter.big canvas{flex:1;min-height:60px;height:auto}
+#hu-meter.big .hm-l{font-size:13px;color:var(--ink);opacity:.8}
 #hu-cands table td{font-size:12px;text-align:right;white-space:nowrap}
 #hu-cands table td.l,#hu-cands table th{text-align:left}
 #hu-cands tr.chosen{background:rgba(79,211,232,.12)}
@@ -267,7 +286,11 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <b>2. Track.</b> An ordinary run on a tile around the chosen block; the strongest line in the tile (or the centre frequency) becomes
         a tone, <b>one octave per 10 dB</b> over the tile's floor, so the probe can be moved without looking. Target, probe, held, receiver,
         pad, notes and chain are taken from the form above; the tag becomes <code>hunt-&lt;target&gt;-&lt;probe&gt;</code>.
-        <b>3. Narrow.</b> When the line is strong, one click stops the tile and restarts a 5 MHz hunt tile centred on it.</p>
+        <b>3. Narrow.</b> When the line is strong, one click stops the tile and restarts a 5 MHz hunt tile centred on it.
+        <b>Live</b> is the fast follower: one 2.4 MHz hop on rtl_power_fftw, about six spectra a second, for moving the probe by ear.
+        Before any hunt run starts, the page shows the target and held text it will record; edit them or confirm.
+        <b>Follow</b>: <i>strongest line</i> stays on a line until another is 6 dB stronger for 3 updates in a row (🔒 Lock keeps it there
+        regardless); <i>floor level</i> turns the whole span's median into the tone, which is what a broadband emitter raises.</p>
       <div class="frm">
         <label>Background <select id="hu-bg" style="min-width:320px"></select></label>
         <label>At the device <select id="hu-dev" style="min-width:320px"></select></label>
@@ -278,11 +301,23 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <div id="hu-cands" style="margin-top:8px"></div>
       <div class="frm" style="margin-top:12px">
         <label>Centre <input id="hu-centre" type="number" step="0.001" placeholder="MHz"> MHz</label>
-        <label>Follow <select id="hu-follow" style="min-width:190px"><option value="strongest">strongest line in the tile</option><option value="typed">the centre frequency</option></select></label>
+        <label>Follow <select id="hu-follow" style="min-width:190px"><option value="strongest">strongest line in the tile</option><option value="typed">the centre frequency</option><option value="floor">floor level (broadband sources)</option></select></label>
+        <button class="btn" id="hu-lock" disabled title="stay on the line being followed, whatever else appears">🔒 Lock line</button>
         <button class="btn go" id="hu-tile" title="101 MHz, 25 kHz bins, g29, -i 3: 49 hops, 2.3 s retune floor">Start 100 MHz tile</button>
         <button class="btn go" id="hu-5" title="5 MHz, 5 kHz bins, g42, -i 1: 3 hops">Start 5 MHz hunt</button>
+        <button class="btn go" id="hu-live" title="one 2.4 MHz hop on rtl_power_fftw, 512 bins (4.7 kHz), g29, -t 0.1: about 6 spectra a second">Start live (fast)</button>
         <button class="btn halt" id="hu-stop" disabled>Stop</button>
         <button class="btn" id="hu-narrow" disabled title="stop the tile and restart a 5 MHz hunt tile centred on the line being followed">Narrow to 5 MHz here</button>
+      </div>
+      <div class="frm" id="hu-confirm" hidden style="margin-top:8px;padding:8px;border:1px solid var(--accent);border-radius:6px">
+        <span class="note" style="margin:0;width:100%">This <b id="hu-c-range"></b> run will be recorded as:</span>
+        <label>Target <input id="hu-c-target" style="min-width:200px"></label>
+        <label>State <input id="hu-c-state" style="min-width:110px" placeholder="not recorded"></label>
+        <label style="flex:1">Held <input id="hu-c-held" class="wide" list="hu-c-heldlist"></label>
+        <datalist id="hu-c-heldlist"></datalist>
+        <span id="hu-c-chips" style="width:100%"></span>
+        <button class="btn go" id="hu-c-ok">Record this and start</button>
+        <button class="btn" id="hu-c-cancel">Cancel</button>
       </div>
       <div class="frm" style="margin-top:8px">
         <button class="btn" id="hu-listen">🔊 Listen</button>
@@ -293,10 +328,30 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <div class="hud" id="hu-hud">
         <div><div class="hud-l">followed line</div><div class="hud-v" id="hu-f">—</div><div class="hud-u">MHz</div></div>
         <div><div class="hud-l">level</div><div class="hud-v" id="hu-db">—</div><div class="hud-u">dB (relative)</div></div>
-        <div><div class="hud-l">over the tile's floor</div><div class="hud-v big" id="hu-over">—</div><div class="hud-u">dB · floor <span id="hu-floor">—</span> dB</div></div>
+        <div><div class="hud-l">line over the floor</div><div class="hud-v big" id="hu-over">—</div><div class="hud-u">dB · floor <span id="hu-floor">—</span> dB</div></div>
+        <div><div class="hud-l">floor level (median)</div><div class="hud-v big" id="hu-flv">—</div><div class="hud-u">dB · <span id="hu-rise">—</span> over the quietest this run</div></div>
+        <div><div class="hud-l">updates</div><div class="hud-v" id="hu-rate">—</div><div class="hud-u">per second · planned <span id="hu-plan">—</span></div></div>
       </div>
-      <div class="bar"><div id="hu-bar"></div></div>
+      <div class="bar"><div id="hu-bar"></div><i id="hu-barpk" title="best so far"></i></div>
       <div class="note" id="hu-stat" style="margin-top:4px"></div>
+      <div class="frm" style="margin-top:8px">
+        <button class="btn" id="hu-bigbtn" title="fill the screen with the reading, readable at arm's length (Esc to leave)">⛶ Big meter</button>
+        <span class="state">best so far <b id="hu-best">—</b> <span id="hu-bestf"></span></span>
+        <button class="btn" id="hu-bestreset" title="forget the best reading and start a new sweep of the probe">Reset best</button>
+      </div>
+      <div id="hu-meter">
+        <div class="hm-big">
+          <div class="hm-top"><span class="hm-what" id="hu-m-what"></span>
+            <span><button class="btn" id="hu-m-listen">🔊 Listen</button> <button class="btn" id="hu-m-reset">Reset best</button> <button class="btn" id="hu-m-exit">✕ Exit (Esc)</button></span></div>
+          <div class="hm-v" id="hu-m-v">—</div>
+          <div class="hm-sub" id="hu-m-sub"></div>
+          <div class="bar"><div id="hu-m-fill"></div><i id="hu-m-pk"></i></div>
+        </div>
+        <div class="hm-l">history, last 45 s — <span id="hu-h-what">the value that drives the tone</span>; dashed line = best so far</div>
+        <canvas id="hu-hist"></canvas>
+        <div class="hm-l">spectrum of the latest sweep — marker = followed line (orange when locked), dashed = a stronger line waiting to take over, grey = DC spike, never followed</div>
+        <canvas id="hu-spec"></canvas>
+      </div>
     </div>
     <div class="wrap" id="rm">
       <div class="lab">Room equipment catalogue — what each device adds, state by state</div>
@@ -1067,6 +1122,11 @@ async function chUse(){
 // The form is sent to the server as-is; Python composes the tag, chain and
 // conditions and the command, so the page never holds a second copy of the rules.
 let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null, pbCfg=null, pbFound=[], pbChain=null;
+// Device index: only ever what detection found, or what was typed by hand since the
+// page opened. station.json's number and the last run's are not used: USB numbering
+// moves when a dongle is unplugged, and a remembered 1 sent runs to an empty index
+// (2026-10-26). pbDetErr holds why detection last failed, shown on the page.
+let pbDevTyped=false, pbDetErr=null;
 // The Chain tab's current drawing is the authority for the chain after the probe,
 // when its receiver matches the one picked here; otherwise the built-in text for
 // that receiver is used. Either way the box stays editable for a one-off change.
@@ -1091,12 +1151,14 @@ function pbForm(){
           probe:pbEl('probe').value, where:pbEl('where').value, minutes:pbEl('min').value,
           range:pbEl('range').value, centre:pbEl('centre').value, receiver:pbEl('receiver').value,
           device:pbEl('device').value, attenuator:pbEl('attenuator').value,
-          notes:pbEl('notes').value, chain_tail:pbEl('chain').value};
+          notes:pbEl('notes').value, chain_tail:pbEl('chain').value,
+          // Start on this form is pressed right beside the target and held fields, so it
+          // counts as confirming them; the Hunt panel sends its own after its own box.
+          confirmed:true};
 }
-// Receiver -> device index. The index comes from what is actually plugged in when
-// "Find receivers" has run, else from station.json's guess; either way it stays editable.
-function pbRxDefault(id){const f=pbFound.find(x=>x.receiver===id);if(f)return f.device;
-  const r=(pbCfg.receivers||[]).find(x=>x.id===id);return r?r.device:0;}
+// Receiver -> device index, from what detection found plugged in; null when it was
+// not found, so the box is left empty rather than holding a guess.
+function pbRxDefault(id){const f=pbFound.find(x=>x.receiver===id);return f?f.device:null;}
 function pbRxLabels(){
   pbEl('receiver').innerHTML=(pbCfg.receivers||[]).map(r=>{
     const f=pbFound.find(x=>x.receiver===r.id);
@@ -1105,7 +1167,7 @@ function pbRxLabels(){
 }
 function pbRxChanged(resetChain){
   const id=pbEl('receiver').value;
-  pbEl('device').value=pbRxDefault(id);
+  if(!pbDevTyped){const d=pbRxDefault(id);pbEl('device').value=d===null?'':d;}
   const cf=pbChainFor(id);
   if(resetChain){pbEl('chain').value=cf.tail;pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
   pbEl('chainnote').textContent=cf.note;
@@ -1114,7 +1176,7 @@ async function pbDetect(){
   pbEl('detect').disabled=true;pbEl('rxnote').textContent='asking each dongle what it is…';
   try{
     const d=await (await fetch('/probe/receivers')).json();
-    pbFound=d.found||[];
+    pbFound=d.found||[];pbDetErr=d.error||null;
     const sel=pbEl('receiver').value;pbRxLabels();pbEl('receiver').value=sel;
     const unk=pbFound.filter(f=>!f.receiver);
     pbEl('rxnote').innerHTML=d.error?`<span class="warn">${esc(d.error)}</span>`
@@ -1123,18 +1185,25 @@ async function pbDetect(){
     if(!d.error){const mine=pbFound.find(f=>f.receiver===sel);
       if(!mine&&pbFound.length&&pbFound[0].receiver){pbEl('receiver').value=pbFound[0].receiver;
         pbEl('rxnote').innerHTML+=` — switched to the ${pbFound[0].receiver.toUpperCase()}, the only one plugged in`;pbRxChanged(true);}
-      else pbRxChanged(false);}
+      else pbRxChanged(false);
+      if(!pbFound.find(f=>f.receiver===pbEl('receiver').value))
+        pbEl('rxnote').innerHTML+=` — <span class="bad">the ${esc(pbEl('receiver').value.toUpperCase())} is not plugged in</span>`;}
+    else pbRxChanged(false);
+    if(pbDevTyped)pbEl('rxnote').innerHTML+=` — device ${esc(pbEl('device').value)} was typed by hand and is kept`;
+    else if(pbEl('device').value==='')pbEl('rxnote').innerHTML+=` — <span class="bad">device number unknown; type it by hand to run anyway</span>`;
     pbSave();pbPreview();
-  }catch(e){pbEl('rxnote').innerHTML=`<span class="bad">detection failed: ${esc(e)}</span>`;}
+  }catch(e){pbFound=[];pbDetErr=String(e);if(!pbDevTyped)pbEl('device').value='';
+    pbEl('rxnote').innerHTML=`<span class="bad">detection failed: ${esc(e)}; device number unknown, type it by hand to run anyway</span>`;}
   pbEl('detect').disabled=false;
 }
 function pbSave(){try{const o={};for(const k of PB_KEYS)o[k]=pbEl(k).value;localStorage.setItem('sdr-probe',JSON.stringify(o));}catch(e){}}
 function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'{}');
-  for(const k of PB_KEYS)if(o[k]!==undefined&&o[k]!=='')pbEl(k).value=o[k];}catch(e){}}
+  // never the device: a remembered index is exactly the stale number to avoid
+  for(const k of PB_KEYS)if(k!=='device'&&o[k]!==undefined&&o[k]!=='')pbEl(k).value=o[k];}catch(e){}}
 function pbShowFields(){
   pbEl('other-l').hidden=pbEl('target').value!=='other';
   pbEl('devstate-other-l').hidden=pbEl('devstate').value!=='other';
-  pbEl('centre-l').hidden=pbEl('range').value!=='hunt';
+  pbEl('centre-l').hidden=!['hunt','tile','live'].includes(pbEl('range').value);
   // the pad sits ahead of the LaNA, which only the XTR chain has; and when the chain
   // text already names one, the chain is the record and the picker steps aside
   const chainText=pbEl('chain').value;
@@ -1169,6 +1238,8 @@ async function probeInit(){
   pbEl('receiver').addEventListener('change',()=>pbRxChanged(true));
   for(const k of PB_KEYS){const el=pbEl(k);el.addEventListener('input',pbChanged);el.addEventListener('change',pbChanged);}
   pbEl('detect').onclick=pbDetect;
+  // only a person typing fires 'input'; the page setting the box does not
+  pbEl('device').addEventListener('input',()=>{pbDevTyped=pbEl('device').value!=='';});
   pbEl('start').onclick=pbStart;
   pbEl('stop').onclick=pbStop;
   pbEl('toscan').onclick=e=>{e.preventDefault();curFile=null;resetView();showPane('scan');};
@@ -1197,6 +1268,12 @@ async function pbPreview(){
 }
 async function pbStart(){
   pbEl('start').disabled=true;
+  // Look again at what is plugged in, so the run uses the index it has now.
+  await pbDetect();
+  if(pbEl('device').value===''){
+    pbEl('warn').innerHTML=`<div class="bad">Not started: the ${esc(pbEl('receiver').value.toUpperCase())} was not found plugged in`
+      +(pbDetErr?` (${esc(pbDetErr)})`:'')+`. Plug it in and press Start again, or type the device number by hand.</div>`;
+    pbEl('start').disabled=false;return;}
   // "Still built like this?" - asked when the current chain has not been touched
   // since its last run, unless it is marked static.
   try{
@@ -1248,6 +1325,9 @@ function pbRender(d){
   pbEl('run').innerHTML=h;
   pbEl('log').textContent=d.log_tail||'';
   if(d.state==='done'&&pbLastState!=='done'){loadProbeMap();rmLoad();}
+  // a run has just let go of the SDR: look again, so the next run's index is current
+  const was=['starting','recording','stopping','analysing'].includes(pbLastState);
+  if(was&&!busy)pbDetect();
   pbLastState=d.state;
   huStatus(d);
 }
@@ -1260,7 +1340,7 @@ function pbRender(d){
 // far it stands over the floor. The sound is made here with the Web Audio API.
 const huEl=id=>document.getElementById('hu-'+id);
 const hu={reports:[],csv:null,have:0,lo:null,hi:null,cols:null,hopC:[],stepK:null,range:null,
-          state:'idle',lastSweep:0,sweeps:0,over:null,f:null,narrowTo:null,
+          state:'idle',lastSweep:0,sweeps:0,over:null,f:null,narrowTo:null,lock:null,pending:null,who:null,reset:false,hist:[],best:null,bestF:null,spec:null,last:null,big:false,
           audio:null,osc:null,toneG:null,clickOsc:null,clickG:null,on:false,clickAt:0,clickTimer:null};
 function huVol(){return parseFloat(huEl('vol').value)||0;}
 function huWhen(i){return i.started?String(i.started).slice(5,16).replace('T',' '):'?';}
@@ -1315,19 +1395,45 @@ function huPick(f){
   huEl('note').textContent=`centre set to ${f.toFixed(3)} MHz — start the 100 MHz tile, then narrow once the line is found`;
   try{localStorage.setItem('sdr-hunt-centre',String(f));}catch(e){}
 }
-async function huStart(range){
+const HU_RANGE={tile:'100 MHz tile',hunt:'5 MHz hunt',live:'live (fast)'};
+// Every hunt run goes through this box first: it shows the target, state and held text
+// the run will carry and lets them be changed, because the form above is for the
+// catalogue and a hunt is usually a hand-held walk (2026-10-26 shakedown).
+function huStart(range){
   const centre=huEl('centre').value;
   if(!centre){huEl('note').innerHTML='<span class="bad">type a centre frequency, or click Track on a candidate</span>';return;}
-  huEl('tile').disabled=huEl('5').disabled=true;
-  const form={...pbForm(),range,centre};
+  const f=pbForm();
+  const target=f.target==='other'?f.target_other:f.target;
+  const state=f.state==='other'?f.state_other:f.state;
+  hu.pending=range;
+  huEl('c-range').textContent=`${HU_RANGE[range]||range} on ${parseFloat(centre).toFixed(3)} MHz`;
+  if(!hu.who){huEl('c-target').value=target;huEl('c-state').value=state;huEl('c-held').value=(pbCfg&&pbCfg.hunt_held_default)||'hand-held, moved around';}
+  const ch=(pbCfg&&pbCfg.hunt_held_choices)||['hand-held, moved around','hand-held on a wand, moved around'];
+  huEl('c-heldlist').innerHTML=ch.map(x=>`<option value="${esc(x)}">`).join('');
+  huEl('c-chips').innerHTML='quick: '+ch.map(x=>`<button class="btn" data-held="${esc(x)}" style="padding:3px 9px;font-size:12px">${esc(x)}</button>`).join(' ');
+  huEl('c-chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{huEl('c-held').value=b.dataset.held;});
+  huEl('confirm').hidden=false;huEl('c-target').focus();
+}
+function huButtons(off){huEl('tile').disabled=huEl('5').disabled=huEl('live').disabled=off;}
+async function huGo(range,who){
+  const centre=huEl('centre').value;
+  huButtons(true);
+  await pbDetect();          // the index the receiver has now, as for Start
+  const form={...pbForm(),range,centre,target:who.target,target_other:'',state:who.state,state_other:'',where:who.held,confirmed:true};
   try{
     const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
     const d=await r.json();
-    if(d.error){huEl('note').innerHTML=`<span class="bad">${esc(d.error)}</span>`;huEl('tile').disabled=huEl('5').disabled=false;return;}
-    hu.csv=null;hu.have=0;hu.sweeps=0;hu.over=null;hu.f=null;hu.hopC=[];
-    huEl('note').textContent=`started ${d.tag}`;
+    if(d.error){huEl('note').innerHTML=`<span class="bad">${esc(d.error)}</span>`;huButtons(false);return;}
+    hu.csv=null;hu.have=0;hu.sweeps=0;hu.over=null;hu.f=null;hu.lock=null;hu.reset=true;hu.plan=null;huLockBtn();huBestReset();
+    huEl('note').textContent=`started ${d.tag} — recorded as ${who.target}${who.state?' ('+who.state+')':''}, held ${who.held}`;
     pbRender(d);
-  }catch(e){huEl('note').innerHTML=`<span class="bad">start failed: ${esc(e)}</span>`;huEl('tile').disabled=huEl('5').disabled=false;}
+  }catch(e){huEl('note').innerHTML=`<span class="bad">start failed: ${esc(e)}</span>`;huButtons(false);}
+}
+function huConfirm(){
+  const who={target:huEl('c-target').value.trim(),state:huEl('c-state').value.trim(),held:huEl('c-held').value.trim()};
+  if(!who.target||!who.held){huEl('note').innerHTML='<span class="bad">the run needs a target and a held text</span>';return;}
+  hu.who=who;huEl('confirm').hidden=true;
+  const r=hu.pending;hu.pending=null;huGo(r,who);
 }
 function huNarrow(){
   if(hu.f===null)return;
@@ -1342,76 +1448,152 @@ function huStatus(d){
   if(!pbReady)return;
   const busy=['starting','recording','stopping','analysing'].includes(d.state);
   hu.state=d.state;
-  const tiled=/^(tile|hunt) /.test(d.range_label||'');
+  const tiled=/^(tile|hunt|live) /.test(d.range_label||'');
   hu.range=tiled?(d.range_label||'').split(' ')[0]:null;
-  huEl('tile').disabled=huEl('5').disabled=busy;
+  huButtons(busy);
+  if(d.planned_per_s)huEl('plan').textContent=d.planned_per_s.toFixed(1);
   huEl('stop').disabled=d.state!=='recording';
-  huEl('narrow').disabled=!(d.state==='recording'&&hu.range==='tile'&&hu.f!==null);
+  huEl('narrow').disabled=!(d.state==='recording'&&hu.range!=='hunt'&&hu.f!==null);
   if(d.csv&&busy&&d.csv!==hu.csv){hu.csv=d.csv;hu.have=0;hu.sweeps=0;hu.hopC=[];hu.lo=hu.hi=null;}
   if(!busy){
     if(hu.narrowTo!==null&&(d.state==='done'||d.state==='failed'||d.state==='idle')){
-      const f=hu.narrowTo;hu.narrowTo=null;huEl('centre').value=f.toFixed(3);huStart('hunt');return;}
+      // the narrow step keeps what was confirmed for the tile it replaces
+      const f=hu.narrowTo;hu.narrowTo=null;huEl('centre').value=f.toFixed(3);
+      if(hu.who)huGo('hunt',hu.who);else huStart('hunt');return;}
     if(hu.csv&&d.state!=='recording'){hu.csv=null;huMute();
       if(d.state==='done')huEl('stat').textContent+=' · run finished, report written';}
   }
 }
-// One poll of /data for the run being hunted, roughly once a second while it records.
+// The meter. The server keeps the follower (hunt.Follower: hysteresis, lock, floor
+// level) and steps it once per new sweep; the page asks for the latest reading often
+// enough not to add delay: every 150 ms on the live hop, which makes ~6 spectra a
+// second, and every 500 ms on the tiles, which make one every 1-3 s.
+function huLockBtn(){
+  const b=huEl('lock');
+  b.classList.toggle('on',hu.lock!==null);
+  b.textContent=hu.lock!==null?`🔓 Unlock ${hu.lock.toFixed(hu.range==='tile'?3:4)}`:'🔒 Lock line';
+  b.disabled=!(hu.csv&&huEl('follow').value==='strongest'&&(hu.lock!==null||hu.f!==null));
+}
+function huToggleLock(){hu.lock=hu.lock===null?hu.f:null;huLockBtn();}
 async function huTick(){
+  let wait=1000;
   try{
     if(hu.csv&&(hu.state==='recording'||hu.state==='starting')){
-      const r=await fetch(`/data?since=${hu.have}&file=${encodeURIComponent(hu.csv)}`);
+      wait=hu.range==='live'?150:500;
+      const mode=huEl('follow').value;
+      const q=`file=${encodeURIComponent(hu.csv)}&mode=${mode}&centre=${encodeURIComponent(huEl('centre').value||'')}`
+        +(hu.lock!==null&&mode==='strongest'?`&lock=${hu.lock}`:'')+(hu.reset?'&reset=1':'');
+      const r=await fetch('/hunt/reading?'+q);
       if(r.ok){
-        const d=await r.json();
-        if(d.file===hu.csv){
-          if(d.lo!==null){hu.lo=d.lo;hu.hi=d.hi;hu.cols=d.cols;}
-          if(d.hop_centres_mhz)hu.hopC=d.hop_centres_mhz;
-          if(d.step_khz)hu.stepK=d.step_khz;
-          if(d.rows&&d.rows.length){
-            hu.have=d.from+d.rows.length;hu.sweeps=d.total;hu.lastSweep=Date.now();
-            const meds=d.medians||[];
-            huReading(d.rows[d.rows.length-1],meds.length?meds[meds.length-1]:null);
-          }
-        }
+        const d=await r.json();hu.reset=false;
+        if(d.reading&&d.sweeps!==hu.sweeps){hu.sweeps=d.sweeps;hu.lastSweep=Date.now();hu.lo=d.lo;hu.hi=d.hi;hu.spec=d.spectrum||hu.spec;huShow(d);}
+        huEl('rate').textContent=d.updates_per_s!=null?d.updates_per_s.toFixed(1):'—';
       }
       const age=hu.lastSweep?(Date.now()-hu.lastSweep)/1000:null;
-      if(age!==null&&age>6){huEl('stat').textContent=`no new sweep for ${age.toFixed(0)} s — rtl_power flushes in bursts, or the run is ending`;huMute();}
+      if(age!==null&&age>6){huEl('stat').textContent=`no new sweep for ${age.toFixed(0)} s — the recorder flushes in bursts, or the run is ending`;huMute();}
     }
   }catch(e){}
-  setTimeout(huTick,1000);
+  setTimeout(huTick,wait);
 }
-// From one complete sweep (1200 max-per-column values): the followed line's column,
-// its level, and the floor. The DC spike at every hop centre is excluded from
-// "strongest", exactly as the analyser tags it, or it would win every time.
-function huReading(row,med){
-  if(hu.lo===null||!row)return;
-  const n=row.length, span=hu.hi-hu.lo, colMHz=span/(n-1);
-  const colOf=f=>Math.round((f-hu.lo)/span*(n-1));
-  const fOf=c=>hu.lo+c/(n-1)*span;
-  const floor=(med!==null&&med!==undefined)?med:pct(row,0.5);
-  // The spike's skirt is about +/-20 kHz wide at 8 dB over the floor (burst23 file,
-  // 2.6 kHz bins), so at least +/-25 kHz goes, and never less than two columns.
-  const skip=new Set();
-  const w=Math.max(2,Math.ceil(Math.max(1.5*(hu.stepK||0),25)/1e3/colMHz));
-  for(const h of hu.hopC){const c=colOf(h);for(let k=c-w;k<=c+w;k++)skip.add(k);}
-  let idx=-1, best=-1e9;
-  if(huEl('follow').value==='typed'){
-    const c=colOf(parseFloat(huEl('centre').value)||0);
-    for(let k=Math.max(0,c-1);k<=Math.min(n-1,c+1);k++)if(row[k]!==null&&row[k]>best){best=row[k];idx=k;}
-  }else{
-    for(let k=0;k<n;k++)if(row[k]!==null&&!skip.has(k)&&row[k]>best){best=row[k];idx=k;}
+function huShow(d){
+  const x=d.reading, mode=huEl('follow').value;
+  hu.f=x.f_mhz;hu.over=x.value_db;
+  if(hu.lock!==null&&x.locked&&x.f_mhz!==null)hu.lock=x.f_mhz;     // a locked line may drift a bin or two
+  const dig=hu.range==='tile'?3:4, sg=v=>(v>=0?'+':'')+v.toFixed(1);
+  huEl('f').textContent=x.f_mhz===null?'—':x.f_mhz.toFixed(dig);
+  huEl('db').textContent=x.level_db===null?'—':x.level_db.toFixed(1);
+  huEl('over').textContent=x.over_db===null?'—':sg(x.over_db);
+  huEl('floor').textContent=x.floor_db.toFixed(1);
+  huEl('flv').textContent=x.floor_db.toFixed(1);
+  huEl('rise').textContent=sg(x.floor_rise_db)+' dB';
+  // the number that drives the tone is bright; the other is shown dimmer
+  huEl('over').style.opacity=mode==='floor'?0.45:1;huEl('flv').style.opacity=mode==='floor'?1:0.45;
+  const v=x.value_db===null?0:x.value_db;
+  huEl('bar').style.width=Math.max(0,Math.min(100,v/40*100)).toFixed(0)+'%';
+  const what=mode==='floor'?'the floor level of the whole span drives the tone'
+    :mode==='typed'?'watching the centre frequency'
+    :x.locked?'locked on this line':`strongest line with hysteresis${x.challenger_mhz!==null?` · ${x.challenger_mhz.toFixed(dig)} is stronger (${x.challenger_n}/3)`:''}`;
+  huEl('stat').textContent=`sweep ${d.sweeps} · ${HU_RANGE[hu.range]||'run'} ${d.lo!=null?d.lo.toFixed(2)+'–'+d.hi.toFixed(2)+' MHz':''} · ${what}`
+    +(x.switched?' · moved to a new line':'')+` · ${new Date().toLocaleTimeString()}`;
+  huEl('narrow').disabled=!(hu.state==='recording'&&hu.range!=='hunt'&&hu.f!==null);
+  huLockBtn();
+  huMeter(x,v,mode);
+  huSound(v);
+}
+// ---- the visual meter, drawn in the same call that sets the tone so sight and sound
+// never disagree. Scale as the tone and the bar: 0-40 dB of the driving value.
+const HU_SPAN=40, HU_HIST_S=45;
+function huCss(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+// cool (blue, 0 dB) to hot (red, 40 dB): the hue walks 220 -> 0
+function huHeat(v,l){const x=Math.max(0,Math.min(1,v/HU_SPAN));return `hsl(${Math.round(220-220*x)} 70% ${l}%)`;}
+function huBestReset(){hu.best=null;hu.bestF=null;hu.hist=[];huEl('best').textContent='—';huEl('bestf').textContent='';huDrawHist();}
+function huMeter(x,v,mode){
+  const now=Date.now(), dig=hu.range==='tile'?3:4, sg=a=>(a>=0?'+':'')+a.toFixed(1);
+  hu.last={x,v,mode};
+  if(x.value_db!==null&&(hu.best===null||v>hu.best)){hu.best=v;hu.bestF=mode==='floor'?null:x.f_mhz;}
+  hu.hist.push({t:now,v});
+  while(hu.hist.length&&now-hu.hist[0].t>HU_HIST_S*1000)hu.hist.shift();
+  const pk=hu.best===null?null:Math.max(0,Math.min(100,hu.best/HU_SPAN*100));
+  for(const id of ['barpk','m-pk']){const e=huEl(id);e.style.display=pk===null?'none':'block';if(pk!==null)e.style.left=pk+'%';}
+  huEl('best').textContent=hu.best===null?'—':sg(hu.best)+' dB';
+  huEl('bestf').textContent=hu.bestF!=null?`at ${hu.bestF.toFixed(dig)} MHz`:(hu.best!==null&&mode==='floor'?'(floor level)':'');
+  const word=mode==='floor'?'floor level over the quietest this run':(x.locked?'locked line over the floor':'line over the floor');
+  huEl('h-what').textContent=word;
+  if(hu.big){
+    huEl('m-what').textContent=`${word} · ${HU_RANGE[hu.range]||''}`;
+    huEl('m-v').textContent=x.value_db===null?'—':sg(v);
+    huEl('m-sub').textContent=(mode==='floor'?`median ${x.floor_db.toFixed(1)} dB`:`${x.f_mhz!==null?x.f_mhz.toFixed(dig)+' MHz':'—'}${x.locked?' 🔒':''}`)
+      +` · best ${hu.best===null?'—':sg(hu.best)}`;
+    huEl('m-fill').style.width=Math.max(0,Math.min(100,v/HU_SPAN*100)).toFixed(0)+'%';
+    huEl('meter').style.setProperty('--hm-heat',huHeat(v,17));
   }
-  if(idx<0||floor===null||floor===undefined)return;
-  const over=best-floor, f=fOf(idx);
-  hu.over=over;hu.f=f;
-  huEl('f').textContent=f.toFixed(hu.range==='hunt'?4:3);
-  huEl('db').textContent=best.toFixed(1);
-  huEl('over').textContent=(over>=0?'+':'')+over.toFixed(1);
-  huEl('floor').textContent=floor.toFixed(1);
-  huEl('bar').style.width=Math.max(0,Math.min(100,over/40*100)).toFixed(0)+'%';
-  huEl('stat').textContent=`sweep ${hu.sweeps} · ${hu.range==='hunt'?'5 MHz hunt tile':'100 MHz tile'} ${hu.lo.toFixed(2)}–${hu.hi.toFixed(2)} MHz · `
-    +(huEl('follow').value==='typed'?'watching the centre frequency':'strongest line, hop centres excluded')+` · ${new Date().toLocaleTimeString()}`;
-  huEl('narrow').disabled=!(hu.state==='recording'&&hu.range==='tile');
-  huSound(over);
+  huDrawHist();huDrawSpec();
+}
+function huCanvas(id){
+  const c=huEl(id), r=window.devicePixelRatio||1, w=Math.max(10,c.clientWidth), h=Math.max(10,c.clientHeight);
+  if(c.width!==Math.round(w*r)||c.height!==Math.round(h*r)){c.width=Math.round(w*r);c.height=Math.round(h*r);}
+  const g=c.getContext('2d');g.setTransform(r,0,0,r,0,0);g.clearRect(0,0,w,h);return {g,w,h};
+}
+function huDrawHist(){
+  const {g,w,h}=huCanvas('hist'), ink=huCss('--ink'), dim=huCss('--dim'), line=huCss('--line');
+  const top=Math.max(HU_SPAN,...hu.hist.map(p=>p.v),hu.best||0), bot=Math.min(0,...hu.hist.map(p=>p.v));
+  const y=v=>h-4-(v-bot)/(top-bot||1)*(h-8), now=Date.now(), xOf=t=>w-(now-t)/(HU_HIST_S*1000)*w;
+  g.strokeStyle=line;g.lineWidth=1;g.fillStyle=dim;g.font='10px ui-monospace,Consolas,monospace';
+  for(let d=Math.ceil(bot/10)*10;d<=top;d+=10){g.beginPath();g.moveTo(0,y(d));g.lineTo(w,y(d));g.stroke();g.fillText((d>0?'+':'')+d,3,y(d)-2);}
+  if(hu.best!==null){g.setLineDash([5,4]);g.strokeStyle=ink;g.beginPath();g.moveTo(0,y(hu.best));g.lineTo(w,y(hu.best));g.stroke();g.setLineDash([]);}
+  // each segment coloured by its level, the same cool-to-hot scale as the big meter
+  g.lineWidth=hu.big?4:2;
+  for(let i=1;i<hu.hist.length;i++){const a=hu.hist[i-1],b=hu.hist[i];
+    g.strokeStyle=huHeat(b.v,60);g.beginPath();g.moveTo(xOf(a.t),y(a.v));g.lineTo(xOf(b.t),y(b.v));g.stroke();}
+}
+function huDrawSpec(){
+  const {g,w,h}=huCanvas('spec'), s=hu.spec, L=hu.last;
+  if(!s||!s.db||!s.db.length)return;
+  const ink=huCss('--ink'), dim=huCss('--dim'), acc=huCss('--accent');
+  const vals=s.db.filter(v=>v!==null); if(!vals.length)return;
+  const lo=Math.min(...vals)-2, hi=Math.max(...vals)+3, n=s.db.length, span=s.hi_mhz-s.lo_mhz||1;
+  const y=v=>h-14-(v-lo)/(hi-lo)*(h-20), xf=f=>(f-s.lo_mhz)/span*w;
+  g.fillStyle='rgba(133,153,168,.28)';
+  for(const [a,b] of s.excluded_mhz||[])g.fillRect(xf(a),0,Math.max(2,xf(b)-xf(a)),h-14);
+  if(L&&L.x.floor_db!=null){g.strokeStyle=dim;g.setLineDash([2,3]);g.beginPath();g.moveTo(0,y(L.x.floor_db));g.lineTo(w,y(L.x.floor_db));g.stroke();g.setLineDash([]);}
+  g.strokeStyle=acc;g.lineWidth=1.5;g.beginPath();let on=false;
+  s.db.forEach((v,i)=>{if(v===null){on=false;return;}const X=(i+0.5)/n*w;if(on)g.lineTo(X,y(v));else{g.moveTo(X,y(v));on=true;}});
+  g.stroke();
+  g.fillStyle=dim;g.font='10px ui-monospace,Consolas,monospace';
+  g.fillText(s.lo_mhz.toFixed(3),2,h-2);const t=s.hi_mhz.toFixed(3);g.fillText(t,w-g.measureText(t).width-2,h-2);
+  if(L&&L.mode!=='floor'&&L.x.f_mhz!=null){
+    const X=xf(L.x.f_mhz);g.strokeStyle=L.x.locked?'#ffb74d':ink;g.lineWidth=hu.big?4:2;
+    g.beginPath();g.moveTo(X,0);g.lineTo(X,h-14);g.stroke();
+    const lab=L.x.f_mhz.toFixed(hu.range==='tile'?3:4)+(L.x.locked?' 🔒':'');
+    g.fillStyle=g.strokeStyle;g.fillText(lab,Math.min(w-g.measureText(lab).width-2,X+4),11);
+  }
+  if(L&&L.x.challenger_mhz!=null){const X=xf(L.x.challenger_mhz);g.strokeStyle='#ff8a65';g.lineWidth=1.5;g.setLineDash([4,3]);
+    g.beginPath();g.moveTo(X,0);g.lineTo(X,h-14);g.stroke();g.setLineDash([]);}
+}
+function huBig(on){
+  hu.big=on;huEl('meter').classList.toggle('big',on);huEl('bigbtn').classList.toggle('on',on);
+  huEl('m-listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
+  if(on&&hu.last)huMeter(hu.last.x,hu.last.v,hu.last.mode);else{huEl('meter').style.removeProperty('--hm-heat');huDrawHist();huDrawSpec();}
 }
 // Sound. Tone: pitch doubles every 10 dB over the floor (dB and pitch are both
 // logarithmic, so equal level steps sound like equal musical steps), 110 Hz at the
@@ -1465,7 +1647,7 @@ function huClicks(){
 function huListen(){
   hu.on=!hu.on;
   huEl('listen').classList.toggle('on',hu.on);
-  huEl('listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
+  huEl('listen').textContent=huEl('m-listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
   if(hu.on){huAudioStart();if(hu.over!==null)huSound(hu.over);}else huMute();
 }
 let huReady=false;
@@ -1477,6 +1659,17 @@ function huInit(){
   huEl('bg').onchange=huEl('dev').onchange=huFingerNote;
   huEl('tile').onclick=()=>huStart('tile');
   huEl('5').onclick=()=>huStart('hunt');
+  huEl('live').onclick=()=>huStart('live');
+  huEl('c-ok').onclick=huConfirm;
+  huEl('c-cancel').onclick=()=>{huEl('confirm').hidden=true;hu.pending=null;huEl('note').textContent='not started';};
+  huEl('lock').onclick=huToggleLock;
+  huEl('bigbtn').onclick=()=>huBig(!hu.big);
+  huEl('m-exit').onclick=()=>huBig(false);
+  huEl('m-listen').onclick=huListen;
+  huEl('bestreset').onclick=huEl('m-reset').onclick=huBestReset;
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&hu.big)huBig(false);});
+  window.addEventListener('resize',()=>{huDrawHist();huDrawSpec();});
+  huEl('follow').onchange=()=>{hu.reset=true;if(huEl('follow').value!=='strongest')hu.lock=null;huLockBtn();huBestReset();};
   huEl('stop').onclick=pbStop;
   huEl('narrow').onclick=huNarrow;
   huEl('listen').onclick=huListen;

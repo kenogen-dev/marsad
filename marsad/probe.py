@@ -61,14 +61,17 @@ TARGETS = [
 STATES = ["unplugged", "off", "idle", "active"]
 QUIET_STATES = {"unplugged", "off", "idle"}
 
-# id -> (label on the page, how the chain string names it)
+# id -> (label on the page, how the chain string names it). The label says which
+# physical probe it is (owner's kit, mapped 2026-10-26); the ids, the tag slugs and
+# the chain wording are unchanged so older runs still match and hunt.py's regexes
+# still read the conditions text.
 PROBES = {
     "large-loop": ("large loop", "large H-field loop probe"),
     "medium-loop": ("medium loop", "medium H-field loop probe"),
     "small-loop": ("small loop", "small H-field loop probe"),
-    "xs-loop": ("extra-small loop", "extra-small H-field loop probe"),
-    "stub-a": ("stub A", "E-field stub probe A"),
-    "stub-b": ("stub B", "E-field stub probe B"),
+    "xs-loop": ("extra-small loop (tiny spiral)", "extra-small H-field loop probe"),
+    "stub-a": ("stub A (straight blade)", "E-field stub probe A"),
+    "stub-b": ("stub B (concentric-arc tip)", "E-field stub probe B"),
 }
 
 # The probe chain after the probe itself, per receiver. The DC block is not optional
@@ -128,7 +131,54 @@ RANGES = {
         "integration": 3,
         "floor_window": 2.0,
     },
+    # The fast follower (2026-10-26): the tile updates every 3 s and the 5 MHz hunt
+    # every 1 s (rtl_power's minimum), which is too slow to follow a probe by hand.
+    # rtl_power_fftw on ONE hop never retunes between spectra, so a short -t gives
+    # several spectra a second: 0.1 s of listening + the measured 59 ms per hop =
+    # 0.159 s, about 6 a second. The hop is tuned a quarter of the sample rate
+    # below the target (0.6 MHz), so the line sits as far from the zero-IF DC spike
+    # as from the cropped edge, as the hunt tile does. g29 like the tile: the probe
+    # touches devices, and headroom matters more than the last few dB.
+    "live": {
+        "label": "live: one 2.4 MHz hop on one frequency (rtl_power_fftw, 4.7 kHz bins, g29, ~6 spectra/s)",
+        "preset": "custom",
+        "engine": "rtl_power_fftw",
+        "rate_hz": 2_400_000,
+        "bins": 512,
+        "time_s": 0.1,
+        "gain": 29.0,
+        "integration": 0.1,
+        "floor_window": 0.3,
+    },
 }
+
+# Hunt-mode runs are hand-held unless the owner says otherwise; the shakedown runs
+# of 2026-10-26 were recorded as "taped to the back middle" because the Hunt panel
+# took the catalogue form's held text.
+HUNT_HELD_DEFAULT = "hand-held, moved around"
+# Quick choices in the Hunt panel's confirm box. The wand (a non-conductive stick
+# holding the probe away from the body) keeps the hand and arm out of the near field.
+HUNT_HELD_CHOICES = [
+    HUNT_HELD_DEFAULT,
+    "hand-held on a wand, moved around",
+    "hand-held on a wand, held still at one spot",
+]
+
+
+def live_spec(centre_mhz: float, rate_hz: int = 2_400_000, crop: float = 0.25) -> dict:
+    """The single rtl_power_fftw hop for the live follower, target a quarter hop
+    above the tuned centre (the zero-IF DC spike), well inside the kept middle."""
+    hop = rate_hz / 1e6
+    tune = round(centre_mhz - hop / 4, 4)
+    half_kept = hop * (1 - crop) / 2
+    return {
+        "spec": f"{tune:.4f}".rstrip("0").rstrip(".") + "M",
+        "tune_mhz": tune,
+        "lo": round(tune - half_kept, 4), "hi": round(tune + half_kept, 4),
+        "hop_mhz": hop,
+        "hop_centres_mhz": [tune],
+        "clearance_mhz": round(abs(centre_mhz - tune), 4),
+    }
 
 DURATIONS_MIN = [2, 5, 10]
 
@@ -163,6 +213,23 @@ def insert_pad(tail: str, db: int) -> str | None:
             parts[i:i] = ["SMA adapter", f"{db} dB SMA attenuator"]
             return " > ".join(parts)
     return None
+
+# A tail that still names a probe at its head came from a chain drawn with the
+# Chain tab's probe placeholder ("near-field probe (held where the Probe tab
+# says)") or from a box where the probe was typed by hand. The Probe tab puts its
+# own probe in front, so a leading probe here would record two (2026-10-26).
+_LEADING_PROBE_RE = re.compile(r"\bprobe\b", re.I)
+
+
+def clean_tail(tail: str) -> str:
+    """The chain after the probe, with any leading probe part dropped and no empty
+    segment left behind: never '> >', never a leading or trailing '>'."""
+    parts = [p.strip() for p in str(tail or "").split(">")]
+    parts = [p for p in parts if p]
+    while parts and _LEADING_PROBE_RE.search(parts[0]):
+        parts.pop(0)
+    return " > ".join(parts)
+
 
 LOG_NAME = "ROOM_RF.md"
 ROOM_RF_HEADER = """# Room RF map
@@ -216,6 +283,8 @@ def catalog(station: Station) -> dict:
         "attenuators_db": list(over.get("attenuators_db") or ATTENUATORS_DB),
         "chain_tail": tails,
         "log_file": str(station.root / LOG_NAME),
+        "hunt_held_default": HUNT_HELD_DEFAULT,
+        "hunt_held_choices": list(HUNT_HELD_CHOICES),
     }
 
 
@@ -358,8 +427,14 @@ def compose(station: Station, form: dict) -> dict:
     rng = RANGES.get(rng_id)
     if rng is None:
         raise ValueError(f"unknown range {rng_id!r}")
+    # No silent default: an empty box means detection did not find the receiver,
+    # and 0 (or a remembered number) could be a different dongle or none at all.
+    dev_text = str(form.get("device") if form.get("device") is not None else "").strip()
+    if not dev_text:
+        raise ValueError("device number unknown: the receiver was not found plugged in. "
+                         "Press Find receivers, or type the device number by hand")
     try:
-        device = int(form.get("device") or 0)
+        device = int(dev_text)
     except (TypeError, ValueError):
         raise ValueError("device index must be a whole number")
     notes = str(form.get("notes") or "").strip()
@@ -379,7 +454,9 @@ def compose(station: Station, form: dict) -> dict:
         raise ValueError(f"unknown receiver {receiver!r}; station.json knows "
                          + ", ".join(station.receivers))
     gain = float(rng.get("gain", preset["gain"]))
-    integration = int(rng.get("integration", preset["integration"]))
+    engine = rng.get("engine", "rtl_power")
+    integration = (float(rng["integration"]) if engine != "rtl_power"
+                   else int(rng.get("integration", preset["integration"])))
     warnings: list[str] = []
     extra: list[str] = ["--receiver", receiver]
     # The ranges are written for the XTR's E4000 ladder; on another tuner snap the
@@ -390,7 +467,8 @@ def compose(station: Station, form: dict) -> dict:
         warnings.append(f"gain {gain:g} dB is not a step on the {receiver}'s tuner; "
                         f"using the nearest, {nearest:g} dB")
         gain = nearest
-    tiled = "span_mhz" in rng          # a tile around one frequency: hunt, tile
+    # a run around one frequency: the hunt and tile tiles, and the live hop
+    tiled = "span_mhz" in rng or engine != "rtl_power"
     if gain != float(preset["gain"]) and not tiled:
         extra += ["--gain", f"{gain:g}"]
     hunt = None
@@ -401,7 +479,10 @@ def compose(station: Station, form: dict) -> dict:
             raise ValueError("centre frequency must be a number, in MHz")
         if centre <= 0:
             raise ValueError("type the centre frequency of the hunt tile, in MHz")
-        hunt = hunt_spec(centre, rng["span_mhz"], rng["bin_khz"])
+        if engine == "rtl_power":
+            hunt = hunt_spec(centre, rng["span_mhz"], rng["bin_khz"])
+        else:
+            hunt = live_spec(centre, rng["rate_hz"])
         freq = hunt["spec"]
         rx = station.receivers.get(receiver, {})
         r_lo, r_hi = rx.get("range_mhz", [0, 1e9])
@@ -412,9 +493,17 @@ def compose(station: Station, form: dict) -> dict:
             if hunt["lo"] < g_hi and hunt["hi"] > g_lo:
                 warnings.append(f"the tile overlaps the {receiver} PLL gap "
                                 f"({g_lo:g}-{g_hi:g} MHz): rtl_power cannot tune there")
-        extra += ["--freq", freq, "--gain", f"{gain:g}", "--integration", str(integration),
-                  "--floor-window", f"{rng['floor_window']:g}"]
-        range_label = f"{rng_id} {centre:g} MHz ({freq}, g{gain:g}, i{integration})"
+        if engine == "rtl_power":
+            extra += ["--freq", freq, "--gain", f"{gain:g}", "--integration", str(integration),
+                      "--floor-window", f"{rng['floor_window']:g}"]
+            range_label = f"{rng_id} {centre:g} MHz ({freq}, g{gain:g}, i{integration})"
+        else:
+            extra += ["--engine", engine, "--freq", freq, "--gain", f"{gain:g}",
+                      "--bins", str(rng["bins"]), "--time", f"{rng['time_s']:g}",
+                      "--rate", str(rng["rate_hz"]), "--overlap", "0",
+                      "--floor-window", f"{rng['floor_window']:g}"]
+            range_label = (f"{rng_id} {centre:g} MHz ({freq}, g{gain:g}, t{rng['time_s']:g}, "
+                           f"N{rng['bins']}, {engine})")
     else:
         freq = preset["freq"]
         extra += ["--integration", str(integration)]
@@ -423,12 +512,22 @@ def compose(station: Station, form: dict) -> dict:
     if device:
         extra += ["--device", str(device)]
 
-    lo, hi, bin_khz = parse_freq_spec(freq)
     dur_s = int(round(minutes * 60))
     dur_text = f"{minutes:g}m"
-    geom = scan_geometry(lo, hi, bin_khz, integration, dur_s, CROP,
-                         retune_ms_per_hop=station.retune_ms_per_hop)
-    if integration < geom["retune_s_per_sweep"]:
+    if engine == "rtl_power":
+        lo, hi, bin_khz = parse_freq_spec(freq)
+        geom = scan_geometry(lo, hi, bin_khz, integration, dur_s, CROP,
+                             retune_ms_per_hop=station.retune_ms_per_hop)
+    else:
+        from . import rpf
+        lo, hi, c_mhz = rpf.parse_freq(freq, rng["rate_hz"])
+        geom = rpf.geometry(lo, hi, rng["rate_hz"], rng["bins"], rng["time_s"], 0, CROP, dur_s,
+                            float(station.data.get("retune_ms_per_hop_fftw", rpf.RETUNE_MS_DEFAULT)),
+                            c_mhz, float(station.data.get("read_ms_per_buffer_fftw", rpf.READ_MS_DEFAULT)))
+        geom["spectra_per_s"] = 1.0 / geom["sweep_s"] if geom["sweep_s"] else None
+        if rng["time_s"] > 0.2:
+            warnings.append(f"-t {rng['time_s']:g} gives under 5 spectra a second")
+    if engine == "rtl_power" and integration < geom["retune_s_per_sweep"]:
         warnings.append(f"-i {integration} is under the {geom['retune_s_per_sweep']:.1f} s "
                         f"retune floor for {geom['hops']} hops; rtl_power misbehaves there")
     if geom["sweeps"] < 3:
@@ -442,13 +541,15 @@ def compose(station: Station, form: dict) -> dict:
         held = where
     elif target.lower().startswith("background"):
         held = "in open air"
+    elif tiled:
+        held = HUNT_HELD_DEFAULT
     else:
         raise ValueError("say where the probe is held (for example 'against the PSU fan grille')")
     # A tile around one frequency is a hunt whichever panel started it; the wide
     # overview is a probe survey. The prefix is how the two sort in surveys/.
     tag = (f"{'hunt' if tiled else 'probe'}-{slug(target)}"
            + (f"-{slug(state, 20)}" if state else "") + f"-{slug(probe['id'], 20)}")
-    tail = str(form.get("chain_tail") or "").strip() or cat["chain_tail"][receiver]
+    tail = clean_tail(form.get("chain_tail")) or clean_tail(cat["chain_tail"][receiver])
     try:
         pad_db = int(form.get("attenuator") or 0)
     except (TypeError, ValueError):
@@ -488,14 +589,21 @@ def compose(station: Station, form: dict) -> dict:
     args = [rng["preset"], dur_text, "--tag", tag, "--chain", chain,
             "--conditions", conditions, *extra,
             "--non-interactive", "--no-live", "--keep-defaults"]
-    rtl = ["rtl_power", "-f", freq, "-g", f"{gain:g}", "-i", str(integration),
-           "-c", str(CROP), "-F", str(FIR), "-e", dur_text]
-    if device:
-        rtl += ["-d", str(device)]
+    if engine == "rtl_power":
+        rtl = ["rtl_power", "-f", freq, "-g", f"{gain:g}", "-i", str(integration),
+               "-c", str(CROP), "-F", str(FIR), "-e", dur_text]
+        if device:
+            rtl += ["-d", str(device)]
+        tool_line = " ".join(rtl) + " surveys/<name>.csv"
+    else:
+        from . import rpf
+        tool_line = " ".join(rpf.build_command("rtl_power_fftw", freq, gain, rng["bins"], rng["rate_hz"],
+                                               rng["time_s"], 0, dur_s, device)) + " > surveys/<name>.dat"
     return {
         "args": args,
         "command_line": subprocess.list2cmdline(["marsad", "run", *args]),
-        "rtl_power_line": " ".join(rtl) + " surveys/<name>.csv",
+        "rtl_power_line": tool_line,
+        "engine": engine, "tiled": tiled,
         "tag": tag, "chain": chain, "conditions": conditions,
         "target": target, "state": state, "probe": probe["label"], "probe_id": probe["id"], "held": held,
         "range": rng_id, "range_label": range_label,
@@ -646,6 +754,12 @@ class ProbeRunner:
             if self.running():
                 raise RuntimeError("a probe run is already recording; stop it first")
             plan = compose(self.station, form)       # ValueError on a bad form
+            # A run on a tile or the live hop is recorded under the target and held
+            # text it carries; the Hunt panel shows both and asks before it starts
+            # (the 2026-10-26 shakedowns were filed as "printer, taped to the back").
+            if plan["tiled"] and not form.get("confirmed"):
+                raise ValueError(f"confirm what this hunt run will record first: target "
+                                 f"'{plan['target']}', held '{plan['held']}'")
             self.station.reports.mkdir(parents=True, exist_ok=True)
             self.stop_path.unlink(missing_ok=True)
             cmd = host.self_command("run", "--station", str(self.station.root), *plan["args"],
@@ -706,9 +820,9 @@ class ProbeRunner:
         text = self._log_text()
         plan = job["plan"]
         if job["stem"] is None:
-            m = re.search(r"surveys/(survey_\S+)\.csv", text)
+            m = re.search(r"surveys/(survey_\S+)\.(csv|dat)", text)
             if m:
-                job["stem"] = m.group(1)
+                job["stem"], job["ext"] = m.group(1), m.group(2)
         if job["rec_t0"] is None and "Recording until" in text:
             job["rec_t0"] = time.time()
         alive = proc is not None and proc.poll() is None
@@ -751,7 +865,10 @@ class ProbeRunner:
             "elapsed": fmt_hms(rec_elapsed),
             "remaining": fmt_hms(remaining) if remaining is not None else None,
             "stem": job["stem"],
-            "csv": f"{job['stem']}.csv" if job["stem"] else None,
+            "csv": f"{job['stem']}.{job.get('ext') or 'csv'}" if job["stem"] else None,
+            "range": plan["range"], "engine": plan.get("engine", "rtl_power"),
+            "planned_per_s": (plan["geometry"].get("spectra_per_s")
+                              or (1.0 / plan["integration"] if plan.get("integration") else None)),
             "report_url": f"/reports/{job['stem']}/report.md" if state == "done" else None,
             "report_dir": str(self.station.reports / job["stem"]) if job["stem"] else None,
             "exit_code": None if alive else proc.returncode,

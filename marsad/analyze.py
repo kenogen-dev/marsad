@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import conditions as auto_cond
 from .config import Station
 
 # Filled in by configure(station). The defaults match station.default.json so
@@ -426,6 +427,7 @@ def sidecar_lines(sc: dict | None) -> list[str]:
     ]
     out = ["## Survey settings", "", "| Setting | Value |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows if v not in (None, "", "None")]
+    out += _conditions_rows(sc)
     if sc.get("interrupted"):
         out.append("| Note | **run was interrupted**, this is a partial survey |")
     out += ["", f"Command: `{sc.get('command_line', 'unknown')}`", ""]
@@ -435,6 +437,14 @@ def sidecar_lines(sc: dict | None) -> list[str]:
     if sc.get("conditions"):
         out += ["**Conditions:** " + sc["conditions"], ""]
     return out
+
+
+def _conditions_rows(sc: dict) -> list[str]:
+    """Measured conditions beside the settings; the typed text stays below the table.
+
+    Sidecars from before 2026-10-26 have no auto_conditions and get no rows.
+    """
+    return auto_cond.table_rows(sc.get("auto_conditions"))
 
 
 def _sidecar_lines_fftw(sc: dict) -> list[str]:
@@ -470,6 +480,7 @@ def _sidecar_lines_fftw(sc: dict) -> list[str]:
     ]
     out = ["## Survey settings", "", "| Setting | Value |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows if v not in (None, "", "None")]
+    out += _conditions_rows(sc)
     if sc.get("interrupted"):
         out.append("| Note | **run was interrupted**, this is a partial survey |")
     out += ["", f"Command: `{sc.get('command_line', 'unknown')}`", ""]

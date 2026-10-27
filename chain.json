@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "current": "Noise Gen. Calibration Chain",
+  "current": "probe-xtr",
   "chains": {
     "antenna-xtr": {
       "static": false,
@@ -75,19 +75,14 @@
       ]
     },
     "probe-xtr": {
-      "static": false,
-      "updated": "2026-10-20T20:54:55",
-      "last_used": "2026-10-20T20:59:29",
+      "static": true,
+      "updated": "2026-10-26T20:55:22",
+      "last_used": "2026-10-26T23:16:10",
       "parts": [
         {
           "type": "probe",
           "name": "near-field probe",
           "detail": "held where the Probe tab says"
-        },
-        {
-          "type": "adapter",
-          "name": "SMA adapter",
-          "detail": ""
         },
         {
           "type": "dcblock",
@@ -97,8 +92,13 @@
         {
           "type": "coax",
           "name": "8 ft coax",
-          "detail": "",
+          "detail": "ferrite choke on each end",
           "length": "8 ft"
+        },
+        {
+          "type": "adapter",
+          "name": "SMA adapter",
+          "detail": ""
         },
         {
           "type": "filter",
@@ -109,12 +109,6 @@
           "type": "adapter",
           "name": "SMA adapter",
           "detail": ""
-        },
-        {
-          "type": "attenuator",
-          "name": "SMA attenuator",
-          "detail": "",
-          "db": 20
         },
         {
           "type": "lna",
@@ -152,13 +146,13 @@
         {
           "type": "usb",
           "name": "1 ft USB3 M:M",
-          "detail": "",
+          "detail": "with chokes",
           "length": "1 ft"
         },
         {
           "type": "usb",
           "name": "16 ft USB3",
-          "detail": "",
+          "detail": "with multiple chokes",
           "length": "16 ft"
         },
         {
@@ -300,6 +294,66 @@
       "updated": "2026-10-21T18:42:47",
       "last_used": null,
       "parts": [
+        {
+          "type": "pc",
+          "name": "PC",
+          "detail": ""
+        }
+      ]
+    },
+    "v5": {
+      "static": false,
+      "updated": "2026-10-27T01:56:15",
+      "last_used": null,
+      "parts": [
+        {
+          "type": "probe",
+          "name": "near-field probe",
+          "detail": "held where the Probe tab says"
+        },
+        {
+          "type": "adapter",
+          "name": "SMA adapter",
+          "detail": ""
+        },
+        {
+          "type": "dcblock",
+          "name": "SMA DC block",
+          "detail": ""
+        },
+        {
+          "type": "coax",
+          "name": "8 ft coax",
+          "detail": "",
+          "length": "8 ft"
+        },
+        {
+          "type": "bulkhead_sma",
+          "name": "cage SMA bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "sdr",
+          "name": "v5",
+          "detail": "in copper cage, no jumper, no LNA: the v5 has no bias-tee to power the LaNA",
+          "rx": "v5"
+        },
+        {
+          "type": "usb",
+          "name": "6 in USB extension",
+          "detail": "white, no ferrites",
+          "length": "6 in"
+        },
+        {
+          "type": "bulkhead_usb",
+          "name": "USB bulkhead",
+          "detail": ""
+        },
+        {
+          "type": "usb",
+          "name": "USB cable",
+          "detail": ""
+        },
         {
           "type": "pc",
           "name": "PC",

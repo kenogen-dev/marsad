@@ -11,33 +11,43 @@ from conftest import ROOT
 
 sys.path.insert(0, str(ROOT))
 
-from marsad import cli, host, live   # noqa: E402
+from marsad import cli, host, live, webapp   # noqa: E402
+
+
+class _Proc:
+    pid = 1
+
+
+def _never_in_console(*a, **k):
+    raise AssertionError("the launcher ran the app in its own console")
 
 
 def test_no_arguments_opens_the_running_viewer_instead_of_a_second_one(monkeypatch):
-    opened, started = [], []
-    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": port == 8731)
+    opened, launched = [], []
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if port == 8731 else None)
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 4242)
+    monkeypatch.setattr(webapp, "launch_background", lambda *a, **k: launched.append(a))
     monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
-    monkeypatch.setattr(live, "main", lambda *a, **k: started.append(a) or 0)
     monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
     assert cli.main([]) == 0
     assert opened == ["http://127.0.0.1:8731/"]
-    assert started == []                      # no second viewer on a served port
+    assert launched == []                     # no second viewer on a served port
 
 
-def test_no_arguments_starts_the_app_on_8731_with_the_browser_when_free(monkeypatch):
-    calls = []
+def test_no_arguments_starts_the_app_in_the_background_when_free(monkeypatch):
+    """Since 2026-10-27 the launcher no longer runs the app in its own console:
+    closing that window took the app, and any Probe-tab scan, down with it."""
+    launched, opened = [], []
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if launched else None)
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 4242)
     monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
-    monkeypatch.setattr(cli.webbrowser, "open", lambda url: None)
-
-    def fake_live(argv, station, prog="marsad live", banner=None):
-        calls.append((argv, banner))
-        return 0
-    monkeypatch.setattr(live, "main", fake_live)
+    monkeypatch.setattr(webapp, "launch_background",
+                        lambda station, port: launched.append(port) or _Proc())
+    monkeypatch.setattr(live, "main", _never_in_console)
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
     assert cli.main([]) == 0
-    argv, banner = calls[0]
-    assert "--open" in argv and argv[argv.index("--port") + 1] == "8731"
-    assert "close this window to stop" in banner
+    assert launched == [8731] and opened == ["http://127.0.0.1:8731/"]
 
 
 def test_a_typed_command_is_not_the_launcher(monkeypatch):
@@ -87,7 +97,10 @@ def test_launcher_honours_the_test_hooks(monkeypatch):
     monkeypatch.setenv("MARSAD_PORT", "8745")
     monkeypatch.setenv("MARSAD_NO_BROWSER", "1")
     monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if calls else None)
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 4242)
+    monkeypatch.setattr(webapp, "launch_background", lambda station, port: calls.append(port) or _Proc())
     monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
-    monkeypatch.setattr(live, "main", lambda argv, station, prog="x", banner=None: calls.append(argv) or 0)
+    monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
     assert cli.main([]) == 0
-    assert calls == [["--port", "8745"]] and opened == []
+    assert calls == [8745] and opened == []

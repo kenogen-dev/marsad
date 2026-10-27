@@ -215,3 +215,159 @@ def candidates(station: Station, background: str, device: str, block_mhz: float 
     r.update({"background": infos["background"], "device": infos["device"],
               "fingerprint": fa or fb, "receiver": receiver})
     return r
+
+
+# ---------------------------------------------------------------- following one line
+# The first shakedown (2026-10-26) showed two faults in "follow the strongest line":
+# on a 100 MHz tile it hopped between unrelated carriers (855.6, 806.4, 864.0, 888.0,
+# 891.0, 903.8 MHz: cellular and land-mobile coming in through the probe and coax),
+# because whichever was a dB higher this sweep won; and a broadband emitter (the
+# blade on a Bluetooth headphone case, a Wi-Fi bulb base) lifted the whole tile's
+# median by 12-16 dB, so "line over the tile's floor" barely moved. Follower fixes
+# the first with hysteresis and a lock, and reports the floor itself for the second.
+SWITCH_DB = 6.0      # a challenger must be this much stronger than the followed line ...
+SWITCH_N = 3         # ... for this many updates in a row before the follower moves
+LOST_DB = 3.0        # the followed line has gone when it is under this over the floor ...
+LOST_N = 3           # ... for this many updates; then the strongest line is taken again
+DC_SKIP_KHZ = 25.0   # the E4000's DC spike skirt is about +/-20 kHz at 8 dB over the floor
+FOLLOW_MODES = ("strongest", "typed", "floor")
+
+
+class Follower:
+    """Which line a hunt run is following, update by update.
+
+    Fed the latest complete sweep at full resolution ({kHz: dB}) and the hop centres
+    (Hz). Modes: `strongest` follows a line with hysteresis (or stays on a locked
+    one), `typed` reads the typed centre frequency, `floor` reads the sweep's median
+    level itself, which is what a broadband source raises. Every answer carries both
+    numbers - the line over the floor, and the floor against the quietest it has been
+    this run - so the page can show both whichever drives the tone.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        self.cur_khz = None          # the line being followed
+        self.chal_khz = None         # a stronger line waiting to take over
+        self.chal_n = 0
+        self.lost_n = 0
+        self.quiet_db = None         # lowest sweep median seen this run
+        self.updates = 0
+        self.switches = 0
+
+    @staticmethod
+    def _near(latest: dict, keys: list, khz: float, tol: float):
+        """The strongest bin within tol kHz of khz: (kHz, dB) or (None, None)."""
+        best = (None, None)
+        for k in keys:
+            if abs(k - khz) <= tol:
+                v = latest[k]
+                if best[1] is None or v > best[1]:
+                    best = (k, v)
+        return best
+
+    def update(self, latest: dict, hop_centres_hz=(), step_khz: float | None = None,
+               mode: str = "strongest", centre_mhz: float | None = None,
+               lock_mhz: float | None = None) -> dict | None:
+        keys = sorted(k for k, v in latest.items() if v == v)        # finite bins only
+        if not keys:
+            return None
+        if step_khz is None:
+            step_khz = median([b - a for a, b in zip(keys, keys[1:])]) if len(keys) > 1 else 1.0
+        tol = max(2.0 * step_khz, 15.0)                               # what counts as "the same line"
+        floor = median([latest[k] for k in keys])
+        self.updates += 1
+        if self.quiet_db is None or floor < self.quiet_db:
+            self.quiet_db = floor
+        skip = max(1.5 * step_khz, DC_SKIP_KHZ)
+        dc = [h / 1e3 for h in hop_centres_hz]
+        usable = [k for k in keys if all(abs(k - c) > skip for c in dc)] or keys
+        strongest = max(usable, key=lambda k: latest[k])
+        locked = False
+        switched = False
+        if mode == "typed" and centre_mhz:
+            k, v = self._near(latest, keys, centre_mhz * 1e3, tol)
+            self.cur_khz = k
+        elif lock_mhz:
+            # Locked: stay on this line whatever else appears, following it if it drifts
+            # within the tolerance, so a crystal warming up does not lose the lock.
+            locked = True
+            want = lock_mhz * 1e3
+            k, v = self._near(latest, usable, want, tol)
+            if k is not None and v - floor >= LOST_DB:
+                self.cur_khz = k
+            else:                           # faded: hold the lock, read the bin under it
+                self.cur_khz = want
+                k = min(keys, key=lambda x: abs(x - want))
+                v = latest[k] if abs(k - want) <= tol else None
+            self.chal_khz, self.chal_n, self.lost_n = None, 0, 0
+        else:
+            # Hysteresis: start on the strongest, then only move when another line has
+            # been SWITCH_DB stronger for SWITCH_N updates in a row, or the followed one
+            # has sunk into the floor for LOST_N updates.
+            if self.cur_khz is None:
+                self.cur_khz = strongest
+            k, v = self._near(latest, usable, self.cur_khz, tol)
+            if v is None or v - floor < LOST_DB:
+                self.lost_n += 1
+            else:
+                self.lost_n = 0
+                self.cur_khz = k            # track a small drift, never onto a noise bin
+            far = abs(strongest - (self.cur_khz or 0)) > tol
+            if far and (v is None or latest[strongest] >= v + SWITCH_DB):
+                if self.chal_khz is not None and abs(strongest - self.chal_khz) <= tol:
+                    self.chal_n += 1
+                else:
+                    self.chal_khz, self.chal_n = strongest, 1
+            else:
+                self.chal_khz, self.chal_n = None, 0
+            if self.chal_n >= SWITCH_N or self.lost_n >= LOST_N:
+                self.cur_khz = strongest
+                self.chal_khz, self.chal_n, self.lost_n = None, 0, 0
+                switched = True
+                self.switches += 1
+            k, v = self._near(latest, usable, self.cur_khz, tol)
+        over = None if v is None else v - floor
+        rise = floor - self.quiet_db
+        value = rise if mode == "floor" else over
+        return {
+            "mode": mode, "locked": locked, "switched": switched,
+            "f_mhz": None if self.cur_khz is None else round(self.cur_khz / 1e3, 4),
+            "level_db": None if v is None else round(v, 2),
+            "over_db": None if over is None else round(over, 2),
+            "floor_db": round(floor, 2),
+            "quiet_db": round(self.quiet_db, 2),
+            "floor_rise_db": round(rise, 2),
+            "value_db": None if value is None else round(value, 2),
+            "strongest_mhz": round(strongest / 1e3, 4),
+            "strongest_over_db": round(latest[strongest] - floor, 2),
+            "challenger_mhz": None if self.chal_khz is None else round(self.chal_khz / 1e3, 4),
+            "challenger_n": self.chal_n,
+            "switches": self.switches,
+            "tol_khz": round(tol, 2),
+        }
+
+
+def spectrum_strip(latest: dict, hop_centres_hz=(), step_khz: float | None = None,
+                   cols: int = 360) -> dict | None:
+    """The latest sweep squeezed to `cols` points for the Hunt panel's mini spectrum:
+    max per column (a narrow line must survive the squeeze), plus the stretches the
+    follower never picks (around every hop centre's DC spike), in MHz."""
+    keys = sorted(k for k, v in latest.items() if v == v)
+    if len(keys) < 2:
+        return None
+    lo, hi = keys[0], keys[-1]
+    span = max(hi - lo, 1e-9)
+    row = [None] * cols
+    for k in keys:
+        c = min(cols - 1, int((k - lo) / span * cols))
+        v = latest[k]
+        if row[c] is None or v > row[c]:
+            row[c] = round(v, 1)
+    if step_khz is None:
+        step_khz = median([b - a for a, b in zip(keys, keys[1:])])
+    skip = max(1.5 * step_khz, DC_SKIP_KHZ)
+    excl = [[round((h / 1e3 - skip) / 1e3, 4), round((h / 1e3 + skip) / 1e3, 4)]
+            for h in hop_centres_hz if lo - skip <= h / 1e3 <= hi + skip]
+    return {"lo_mhz": round(lo / 1e3, 4), "hi_mhz": round(hi / 1e3, 4), "db": row, "excluded_mhz": excl}

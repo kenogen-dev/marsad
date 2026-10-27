@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import host
+from . import conditions, host
 from .config import Station, source_root
 from .rtlpower import (CROP, FIR, RTL_POWER_MAX_MHZ, TUNER_GAINS, TUNER_LABEL,
                        actual_bin_width_khz, find_tool, fingerprint, fmt_hms,
@@ -133,6 +133,43 @@ def check_device_free(non_interactive: bool) -> None:
         raise SystemExit("  Stopped. Nothing was recorded.")
 
 
+def eeprom_listing(out: str) -> list[tuple[int, str]]:
+    """The dongles rtl_eeprom lists before it opens one: [(index, name), ...]."""
+    found = []
+    m = re.search(r"Found (\d+) device\(s\):[ \t]*\n((?:[ \t]+\d+:.*\n?)*)", out)
+    if m:
+        for line in m.group(2).splitlines():
+            mm = re.match(r"\s*(\d+):\s*(.*?)\s*$", line)
+            if mm:
+                found.append((int(mm.group(1)), mm.group(2)))
+    return found
+
+
+def open_failure_message(out: str, device: int, busy: list[str] | None) -> str:
+    """Why `rtl_eeprom -d N` could not open the receiver, in the likeliest words.
+
+    The numbers shift when a dongle is unplugged (2026-10-26: the XTR alone is
+    device 0, but a remembered 1 kept coming back), so an index past the end of
+    the list is a wrong number, not a busy dongle. Another program is only
+    blamed when the SDR-in-use check did not already find none running.
+    """
+    listing = eeprom_listing(out)
+    seen = ", ".join(f"{name or 'unnamed'} at {i}" for i, name in listing) or "none"
+    if listing and device not in {i for i, _ in listing}:
+        return (f"\n  No receiver at index {device}; detected: {seen}.\n"
+                "  The index changes when a dongle is unplugged. Run again with the\n"
+                "  right --device (on the Probe tab: Find receivers). Nothing was recorded.")
+    if busy == []:
+        return (f"\n  Receiver found but could not be opened on index {device} "
+                f"(detected: {seen}).\n"
+                "  No other radio program is running, so it is probably the wrong\n"
+                "  index or a USB fault: check the device number, or unplug and\n"
+                "  replug the dongle. Nothing was recorded.")
+    return (f"\n  Receiver found but could not be opened on index {device}.\n"
+            "  Another program (SDR++, SDR#, rtl_tcp...) probably has it.\n"
+            "  Close it and try again. Nothing was recorded.")
+
+
 def device_check(station: Station, device: int) -> None:
     """Prove the receiver is actually there and free, before asking anything.
 
@@ -159,10 +196,7 @@ def device_check(station: Station, device: int) -> None:
             f"\n  No receiver found on device index {device}.\n"
             "  Check the USB cable is plugged in. Nothing was recorded.")
     if "usb_open error" in out or "Failed to open" in out:
-        raise SystemExit(
-            f"\n  Receiver found but could not be opened on index {device}.\n"
-            "  Another program (SDR++, SDR#, rtl_tcp...) probably has it.\n"
-            "  Close it and try again. Nothing was recorded.")
+        raise SystemExit(open_failure_message(out, device, host.running_sdr_programs()))
     if "Found" not in out:
         print("  (receiver check gave no clear answer, carrying on anyway)")
         return
@@ -387,7 +421,8 @@ def write_scan_build(csv_path: Path, sidecar: dict, geom: dict,
         f"| LNA | {ch.get('lna')} |",
         f"| Filter | {ch.get('filter')} |",
         f"| Chain | {ch.get('chain_order') or '(not recorded)'} |",
-        f"| Conditions | {sidecar.get('conditions') or '(none recorded)'} |", "",
+        f"| Conditions (typed) | {sidecar.get('conditions') or '(none recorded)'} |",
+        *conditions.table_rows(sidecar.get("auto_conditions")), "",
         "## Analysis", "", "```",
         subprocess.list2cmdline(analyze_cmd) if analyze_cmd else "(not analysed at record time)",
         "```", "",
@@ -475,36 +510,17 @@ def viewer_follows(port: int = 8731) -> bool:
         return False
 
 
-def start_live_view(station: Station, idle_min: float = 5.0):
-    """Reuse the viewer on 8731 if it follows the newest CSV, else launch one there.
+def start_live_view(station: Station) -> str:
+    """Make sure the web app answers on 8731 before recording; start it if not.
 
-    The viewer switches to this run's CSV the moment rtl_power creates it, so it
-    needs no --csv. Non-fatal: a viewer that will not start must never stop a
-    survey recording.
+    One address, always: http://127.0.0.1:8731/. The app follows whatever is
+    recording, so it needs no --csv. It is started in the background with no
+    window and no idle timeout (marsad/webapp.py), so it outlives this console
+    and is still there between scans. Non-fatal: a page that will not start
+    must never stop a survey recording.
     """
-    # One address, always: http://127.0.0.1:8731/. The viewer follows whatever is
-    # recording, so there is never a reason for a second one on another port, and
-    # hopping ports only ever left the owner guessing which one was current.
-    port = VIEWER_PORT
-    if viewer_follows(port):
-        print(f"  Live view: http://127.0.0.1:{port}/   (already running; it follows the newest scan)")
-        return None
-    if port_in_use(port):
-        print(f"  Live view: port {port} is held by something that is not a Marsad viewer")
-        print("  (an old build, or another program). Close it, then run `marsad live`.")
-        print("  Recording is unaffected.")
-        return None
-    cmd = host.self_command("live", "--station", str(station.root),
-                            "--port", str(port), "--exit-after-idle", str(idle_min))
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                cwd=source_root() or None)
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"  Live view could not start ({exc}); recording is unaffected.")
-        return None
-    print(f"  Live view: http://127.0.0.1:{port}/   "
-          f"(closes {idle_min:g} min after the scan ends)")
-    return proc
+    from . import webapp
+    return webapp.ensure_running(station, VIEWER_PORT)
 
 
 def source_is_load(chain_order: str | None) -> bool | None:
@@ -674,6 +690,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
     print("\n  Command:\n    " + subprocess.list2cmdline(cmd))
 
     if args.dry_run:
+        auto = conditions.new_block(station.data, station.surveys, csv_path.stem)
+        print("\n  Measured conditions (stored in the sidecar as auto_conditions):\n    "
+              + conditions.summary(auto["start"]))
         print("\n  --dry-run: nothing recorded.\n")
         return 0
 
@@ -729,12 +748,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         "chain": {k: chain.get(k) for k in ("antenna_shape", "whip_length_mm", "lna",
                                             "filter", "chain_order")},
         "conditions": chain.get("conditions", ""),
+        "auto_conditions": conditions.new_block(station.data, station.surveys, csv_path.stem),
         "geometry": {k: (round(v, 6) if isinstance(v, float) else v)
                      for k, v in geom.items()
                      if k != "hop_centres_mhz" or geom["hops"] <= 16},
     }
     json_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")
     print(f"\n  Sidecar written: surveys/{json_path.name}")
+    print("  Measured conditions: " + conditions.summary(sidecar["auto_conditions"]["start"]))
 
     ends = started + dt.timedelta(seconds=dur_s)
     first = started + dt.timedelta(seconds=integration)
@@ -761,6 +782,8 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         "interrupted": interrupted,
         "csv_bytes": csv_path.stat().st_size if csv_path.exists() else 0,
     })
+    sidecar["auto_conditions"]["end"] = conditions.snapshot(
+        station.data, station.surveys, stem=csv_path.stem)
     # What rtl_power actually used, which is what matters when comparing surveys.
     actual_khz = actual_bin_width_khz(csv_path)
     if actual_khz is not None:

@@ -40,7 +40,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import host
+from . import conditions, host
 from .config import Station, source_root
 from .rtlpower import TUNER_GAINS, TUNER_LABEL, find_tool, fmt_hms, parse_duration
 
@@ -336,7 +336,8 @@ def write_scan_build(raw_path: Path, sidecar: dict, geom: dict, analyze_cmd,
         f"| LNA | {ch.get('lna')} |",
         f"| Filter | {ch.get('filter')} |",
         f"| Chain | {ch.get('chain_order') or '(not recorded)'} |",
-        f"| Conditions | {sidecar.get('conditions') or '(none recorded)'} |", "",
+        f"| Conditions (typed) | {sidecar.get('conditions') or '(none recorded)'} |",
+        *conditions.table_rows(sidecar.get("auto_conditions")), "",
         "## Analysis", "", "```",
         subprocess.list2cmdline(analyze_cmd) if analyze_cmd else "(not analysed at record time)",
         "```", "",
@@ -361,6 +362,30 @@ def write_scan_build(raw_path: Path, sidecar: dict, geom: dict, analyze_cmd,
 # ---------------------------------------------------------------------------
 # recording
 # ---------------------------------------------------------------------------
+# When the dongle drops off USB mid-run (seen 2026-10-26 23:51, the XTR on the live hunt
+# hop), rtl_power_fftw does not exit: it loops on "rtlsdr_write_reg failed with -4" (no
+# device) and "dropped samples", ignores -e, and wrote 580 MB of .log in three minutes.
+# The recorder watches the log's tail and stops it.
+DEVICE_LOST_RC = 3
+LOG_RUNAWAY_BYTES = 20_000_000
+LOST_MARK = "rtlsdr_write_reg failed"
+
+
+def device_lost(log_path: Path) -> bool:
+    """True once the program's log says the receiver has stopped answering: the
+    tail is full of failed register writes, or the log has run away in size."""
+    try:
+        size = log_path.stat().st_size
+        if size > LOG_RUNAWAY_BYTES:
+            return True
+        with open(log_path, "rb") as fh:
+            fh.seek(max(0, size - 4096))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    return tail.count(LOST_MARK) >= 20
+
+
 def run_recording(cmd: list, dur_s: float, raw_path: Path, log_path: Path,
                   stop_file: Path | None = None) -> int:
     """Run rtl_power_fftw with stdout into the .dat file and stderr into the .log.
@@ -381,9 +406,18 @@ def run_recording(cmd: list, dur_s: float, raw_path: Path, log_path: Path,
         try:
             while True:
                 try:
-                    return proc.wait(timeout=0.5 if own_group else max(0.5, nxt - time.time()))
+                    return proc.wait(timeout=0.5 if own_group else min(2.0, max(0.5, nxt - time.time())))
                 except subprocess.TimeoutExpired:
                     pass
+                if device_lost(log_path):
+                    print("\n  The receiver stopped answering (rtl_power_fftw reports failed register "
+                          "writes:\n  the dongle has dropped off USB). Stopping it; what was recorded is kept."
+                          "\n  Replug the dongle (and power-cycle the USB isolator) before the next run.")
+                    stop_child(proc)
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait()
+                    return DEVICE_LOST_RC
                 if own_group and stop_file.exists():
                     stop_file.unlink(missing_ok=True)
                     print("\n  Stop requested from the web app; asking rtl_power_fftw to finish its pass.")
@@ -531,6 +565,9 @@ def record(args, station: Station, preset: dict) -> int:
         print(f"    {TOOL}   NOT FOUND - a real run would refuse to start")
     print("\n  Command:\n    " + subprocess.list2cmdline(cmd))
     if args.dry_run:
+        auto = conditions.new_block(station.data, station.surveys, raw_path.stem)
+        print("\n  Measured conditions (stored in the sidecar as auto_conditions):\n    "
+              + conditions.summary(auto["start"]))
         print("\n  --dry-run: nothing recorded.\n")
         return 0
 
@@ -585,19 +622,21 @@ def record(args, station: Station, preset: dict) -> int:
         "chain": {k: chain.get(k) for k in ("antenna_shape", "whip_length_mm", "lna",
                                             "filter", "chain_order")},
         "conditions": chain.get("conditions", ""),
+        "auto_conditions": conditions.new_block(station.data, station.surveys, raw_path.stem),
         "geometry": {k: (round(v, 6) if isinstance(v, float) else v)
                      for k, v in geom.items()
                      if k != "hop_centres_mhz" or geom["hops"] <= 16},
     }
     json_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")
     print(f"\n  Sidecar written: surveys/{json_path.name}")
+    print("  Measured conditions: " + conditions.summary(sidecar["auto_conditions"]["start"]))
 
     ends = started + dt.timedelta(seconds=dur_s)
     print()
     print(f"  Recording until about {ends:%H:%M} (the run ends after the pass in progress).")
     print(f"  Ctrl-C finishes the current pass and keeps it; a second Ctrl-C stops at once.")
     if not args.no_live:
-        print("  Live view: not available for this engine (the Scan page reads rtl_power CSVs).")
+        rec.start_live_view(station)
     print()
     t0 = time.time()
     interrupted = False
@@ -630,6 +669,8 @@ def record(args, station: Station, preset: dict) -> int:
         "interrupted": interrupted,
         "csv_bytes": raw_path.stat().st_size if raw_path.exists() else 0,
     })
+    sidecar["auto_conditions"]["end"] = conditions.snapshot(
+        station.data, station.surveys, stem=raw_path.stem)
     json_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")
 
     if not raw_path.exists() or raw_path.stat().st_size == 0:

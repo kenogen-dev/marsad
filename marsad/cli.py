@@ -10,6 +10,7 @@
     marsad adsb-check            1090 MHz positive control
     marsad archive list|add|new|trend|band|seen|mark
     marsad live                  the web app, without opening a browser
+    marsad web start|stop|status|restart   keep the web app up on 8731, with no window
     marsad response --open A --load B --antenna C   return loss / SWR per bin
     marsad calibrate-retune      measure this machine's retune cost per hop
     marsad init                  write a station.json to edit
@@ -41,6 +42,7 @@ COMMANDS = {
     "adsb-check": "1090 MHz ADS-B receive check",
     "archive": "the occupancy.db archive (list, add, new, trend, band, seen, mark)",
     "live": "the local web app",
+    "web": "start, stop, check or restart the web app on 8731 (no window)",
     "response": "antenna return loss and SWR from three bridge runs (open, load, antenna)",
     "calibrate-retune": "measure rtl_power's retune cost per hop on this PC",
     "init": "write a station.json into this folder to edit",
@@ -57,7 +59,8 @@ def usage() -> str:
     for name, text in COMMANDS.items():
         lines.append(f"  {name:<{width}}  {text}")
     lines += ["", "With no command (a double-click on marsad.exe), starts the web app on",
-              f"{HOME_URL} and opens it in your browser; if it is already running, just opens it.",
+              f"{HOME_URL} in the background (no window) and opens it in your browser;",
+              "if it is already running, just opens it.",
               "`marsad <command> --help` lists that command's options."]
     return "\n".join(lines)
 
@@ -100,32 +103,29 @@ def _linger(seconds: float = 8.0) -> None:
 def launch(station: Station) -> int:
     """What a double-click on marsad.exe (or a bare `marsad`) does.
 
-    One viewer per address, always: if something already serves 8731 it is
-    the station's web app, so just open the browser on it. Otherwise start
-    the app on 8731, open the browser, and stay up until the window closes.
+    One viewer per address, always: if the web app already serves 8731, just
+    open the browser on it. Otherwise start it in the background with no
+    window (marsad/webapp.py), so tidying the desktop can never close it, then
+    open the browser. `marsad web stop` ends it.
 
     Two environment variables exist for testing a build without touching the
     owner's address: MARSAD_PORT moves the launcher to another port, and
     MARSAD_NO_BROWSER=1 skips opening the browser.
     """
-    from . import host
+    from . import webapp
     port = int(os.environ.get("MARSAD_PORT") or HOME_PORT)
     url = f"http://127.0.0.1:{port}/"
     use_browser = os.environ.get("MARSAD_NO_BROWSER") != "1"
-    if host.port_in_use(port):
-        print(f"  marsad is already running on {url}")
-        print("  Opening it in your browser; this launcher is not needed."
+    outcome = webapp.ensure_running(station, port)
+    if outcome in ("up", "started"):
+        print(f"  Opening {url} in your browser; this window can close."
               if use_browser else "  (browser not opened: MARSAD_NO_BROWSER is set)")
         if use_browser:
             webbrowser.open(url)
         _linger(6)
         return 0
-    from . import live
-    rc = live.main((["--open"] if use_browser else []) + ["--port", str(port)], station,
-                   banner=f"  marsad is running on {url} - close this window to stop")
-    if rc:
-        _linger()
-    return rc
+    _linger()
+    return 1
 
 
 def main(argv=None) -> int:
@@ -170,6 +170,9 @@ def main(argv=None) -> int:
     if cmd == "live":
         from . import live
         return live.main(args, station, prog)
+    if cmd == "web":
+        from . import webapp
+        return webapp.main(args, station, prog)
     if cmd == "response":
         from . import response
         return response.main(args, station, prog)

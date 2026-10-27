@@ -58,8 +58,11 @@ cannot bind a port that is in use. **Any Claude session working in this folder:*
 start a test viewer on another port (8740-8749) so its work does not disrupt the owner's, but it
 must start it with `--exit-after-idle 5` and **stop it when the test is done**, and it must say
 so in its report. Never leave one running. Never start a second viewer on 8731 while one is
-up; to put a page change in front of the owner, restart the one on 8731 (stop the listener,
-start `tools/live_view.py --port 8731 --exit-after-idle 5`, confirm with a GET). Stray viewers
+up; to put a page change in front of the owner, run **`marsad web restart`** (stops the listener
+on 8731, starts it again in the background, confirms with a GET; refuses while a Probe-tab run
+is recording, unless `--force`). **8731 never gets an idle timeout** - since 2026-10-27 it runs
+in the background with no window, so it is there between scans and closing a PowerShell window
+cannot take it down; `marsad run` and the launcher start it if it is not up. Stray viewers
 on 8740/8741 left by session testing have twice had the owner looking at a stale page.
 
 Only **one program can use an SDR at a time.** Before running `rtl_power` etc., SDR++ must be closed (check and warn).
@@ -2082,6 +2085,31 @@ the 270 MHz hump does not (received). **For 316-349 MHz (UHF milsat uplinks, par
 milair band) use the v5, not the XTR.** The three lines 259.58 / 262.65 / 296.93 are absent
 terminated; the display-sleep test M1-D is pending.
 
+### V1-1b, the v5 alone in the aluminium cage (2026-10-27, 01:57-07:45): an hour to warm, 2 dB of drift
+
+Cold start, 50 ohm load on the outside of the cage SMA bulkhead, `milair` at g40.2, `-i 30`, 697
+sweeps. Fingerprint `225.000-400.000 MHz | ... | g40.2 | i30 | c0.25 | F9 | v5`. Full scoring in
+RUNSHEET V1-1b.
+
+- **Warm-up: settled at ~65 min (sweep 132), total fall -1.93 dB**, against the predicted 15 min
+  and 0.5 dB. Then rock steady: std **0.016 dB**, net -0.07 over the next 4 h. The old v5 figures
+  (sweep 4-6, -0.35 dB) were the copper cage; in the aluminium cage on foam it is six times worse.
+  **Any v5 level comparison needs 65 min of streaming before its analysed part** (`--skip-warmup 65`),
+  and twin runs back to back, because an idle-powered dongle cools.
+- Settled whole-band median **-36.96 dB**. Floor not flat: block medians -35.8 to -38.4 (a dip at
+  235-245, a slow tilt down toward 400). **No 350 MHz step** (0.02 dB), unlike the XTR's 2.7.
+- All five detections are clock harmonics: 230.40, 259.20, 316.80 (28.8 x8, x9, x11) and 273.60,
+  244.79 (14.4 x19, x17, which survey.py leaves untagged because it lacks the 14.4 family). Note
+  259.20 is not M1's 259.58 line.
+
+**V1-1 (2026-10-27 08:00-09:20): the v5's tuner gain has no effect through rtl_power.** With the
+antenna on, `-g 7.7`, `22.9`, `29.7` and `49.6` all give the same levels to 0.1 dB (4 s captures at
+383-387 MHz: median -23.6 at every gain; 385.04 MHz at +1.8 to +2.0, i.e. full scale), although
+rtl_power prints "Tuner gain set to ..." each time. The same `rtl-sdr/rtlsdr.dll` sets the XTR's
+gain normally. Until it is explained, **no v5 run's level depends on its `-g`**, and the 385.04 MHz
+trunked carrier clips the v5 on the milair span. Next check: SDR++'s gain slider on the v5, AGC off.
+Details in RUNSHEET V1-1.
+
 ### Printer room catalogue P1 (2026-10-26, 21:04-22:48): nothing in 52-1660 MHz, in any state
 
 Six wide runs, stub A (blade) taped at the back middle of the case: unplugged, off, idle,
@@ -2123,9 +2151,10 @@ notes and RUNSHEET still works. The `tools/*.py` scripts below are thin wrappers
 package and keep their original command lines. `.venv\Scripts\python.exe -m pytest` runs 33
 regression tests that pin the recorded figures; the frozen Windows build is
 `packaging/marsad.spec` -> `dist/marsad/marsad.exe`. **A double-click on marsad.exe (or a bare
-`marsad`) is the launcher (2026-10-22):** it starts the web app on 8731 and opens the browser,
-with a "close this window to stop" banner; if 8731 is already served it only opens the browser
-on it and lingers a few seconds so the message can be read. Before this the busy-port refusal
+`marsad`) is the launcher (2026-10-22):** it starts the web app on 8731 and opens the browser;
+if 8731 is already served it only opens the browser on it and lingers a few seconds so the
+message can be read. *Changed 2026-10-27:* it no longer runs the app inside its own console
+(the old "close this window to stop" banner); see "The web app stays up" below. Before this the busy-port refusal
 made a double-click flash a console and exit. `Start marsad.cmd` beside the exe keeps the
 window open on an error. `tests/test_launch.py` pins the dispatch. For testing a build without
 touching the owner's address: `MARSAD_PORT=8745` moves the launcher and `MARSAD_NO_BROWSER=1`
@@ -2133,6 +2162,26 @@ keeps the browser shut. Found on the way, same day: `marsad live` had refused to
 since the rtl_power_fftw presets landed, because the Builder tab's config parsed every preset's
 range with the rtl_power parser and `top` (`2147M:2187M`, no bin width) failed it; the builder
 now skips presets for another engine. The viewer `marsad run` starts was dying the same way.
+
+**The web app stays up (2026-10-27), `marsad/webapp.py`.** On 2026-10-26/27 the page kept
+vanishing: it ran inside a console window that got closed when the desktop was tidied (which
+also killed a Probe-tab scan, a child of the app), and sessions and `marsad run` started it
+with a 5 min idle timeout, so there was no page between scans. Now `marsad run` (both
+engines, so also `tools/run_survey.py`) and the launcher check 8731 before recording and print
+one line: "web app: already up on 8731" or "web app: started on 8731, pid N". If nothing
+answers they start `marsad live --port 8731` **in the background with no window and no idle
+timeout**, working folder the station root, output appended to `reports/live_view.log`, and
+confirm with a GET; if it will not start, the scan goes on and the line says so. A port held by
+something that is not the web app is left alone. `--no-live` (which Probe-tab runs pass) skips
+the check. The window is hidden with `CREATE_NEW_CONSOLE` + `SW_HIDE`, **not**
+`DETACHED_PROCESS`: tested on this PC, a process with no console at all cannot send Ctrl-Break,
+so Probe-tab scans could not stop rtl_power cleanly; with a hidden console they can, and no
+window or Windows Terminal tab appears. Any other port started this way (a test viewer, e.g.
+the launcher under `MARSAD_PORT=8745`) gets `--exit-after-idle 5` automatically.
+`marsad web status` (up?, listener pid from netstat, follows newest?, Probe-tab state),
+`marsad web start`, `marsad web stop` (kills the listener on the port; refuses during a
+Probe-tab run unless `--force`), `marsad web restart [--force]`; all take `--port`.
+`tests/test_webapp.py` pins the check-and-start decision, the launch flags and the refusal.
 
 **Probe tab (2026-10-20)** in the web app (`marsad live`, port 8731): near-field probe surveys
 of the room from the browser, one hand on the probe. `marsad/probe.py` holds the catalogue
@@ -2273,6 +2322,37 @@ the server reads its CSV twice a second instead of every 2 s.
   or live run with no held text); "Narrow" reuses what was confirmed. `ProbeRunner.start`
   refuses a tile/hunt/live run without `confirmed` in the form; the catalogue form's own Start
   sends it, being pressed beside those fields.
+
+**The visual meter (2026-10-26, same night)**, for reading the Hunt panel at arm's length with the
+probe in hand. It is drawn in the same call that sets the tone, so sight and sound always agree,
+and it uses the tone's scale (0-40 dB of the driving value). **⛶ Big meter** (Esc to leave) fills
+the window: a huge number (line over the floor, or floor level in floor mode), the followed
+frequency with 🔒 when locked, a thick bar, and a background that runs cool to hot (blue at 0 dB
+to red at 40) so it reads from the corner of the eye. A **peak-hold mark** on both bars and a
+**best so far** value with **Reset best** (also reset by a new run or a new follow mode) show
+where the maximum was during a sweep of the probe. A **45 s history strip** shows the driving
+value as a trace coloured on the same scale, with the best as a dashed line: "warmer / colder"
+as the probe moves. A **mini spectrum** of the latest sweep (360 columns, max per column, from
+`hunt.spectrum_strip`, sent in `/hunt/reading`) marks the followed line (orange when locked),
+the challenger waiting to take over (dashed), the floor (dotted) and the DC-spike zones the
+follower never picks (grey), so a jump to another line is obvious. Plain canvas, no libraries;
+colours come from the page's CSS variables (the page has only its dark theme). Held text quick
+choices on the confirm box (`probe.HUNT_HELD_CHOICES`): "hand-held, moved around", **"hand-held on
+a wand, moved around"**, "hand-held on a wand, held still at one spot" (the non-conductive wand
+keeps the hand and arm out of the near field). Checked end to end on the radio through a test
+viewer on 8745 against a scratch station: 5.9 updates a second on the page, line locked at
+855.638 MHz. That check also found that the run's status never named a `.dat` (a stray control
+character in the file-name pattern), now fixed and pinned.
+
+**The XTR dropped off USB during that check (2026-10-26 23:51:57)**, 88 s into the third live
+run of the evening (two earlier runs of 1 and 2 min were clean). libusb error -4 (no device);
+afterwards Windows listed the XTR as not present and detection found no RTL-SDR. Cause not
+known: a USB/isolator dropout under continuous 2.4 MS/s streaming is the obvious suspect and is
+untested. **rtl_power_fftw does not exit when its dongle vanishes**: it loops on `rtlsdr_write_reg
+failed with -4` / `dropped samples`, ignores `-e`, and wrote **580 MB of .log in three minutes**.
+`rpf.run_recording` now checks the log's tail at least every 2 s (`rpf.device_lost`: 20 failed
+register writes in the last 4 KB, or a log over 20 MB), stops the program, keeps what was
+recorded and exits with code 3 and a message to replug. Pinned in `tests/test_hunt_follow.py`.
 
 `tests/test_hunt_follow.py` pins the live geometry, the confirmation, the follower's hysteresis,
 lock and floor mode (on the shakedown's -31 -> -15 dB numbers), the one-hop pass close and the
