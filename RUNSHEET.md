@@ -763,6 +763,21 @@ spike. "The v5 hears better here" is the claim V1 tests; it is not yet measured.
 max under -3 dB and under 1% non-finite readings**. Prediction: g40.2 passes (no LaNA means ~25 dB
 less drive than M1, which needed the XTR down at g19 *with* the LaNA).
 
+**V1-1b The v5 in its new enclosure, 30 min (added 2026-10-27 at the owner's request, before
+V1-2):** the v5 has never run in the aluminium cage, so measure it alone first: 50 ohm load straight
+on the **outside of the cage SMA bulkhead**, coax and notch off. No DC block needed (no bias-tee).
+```
+.\.venv\Scripts\python.exe -m marsad run milair 30m --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 5 --tag v5-alu-milair-bulkhead-term-gG --chain "50 ohm load on the SMA bulkhead (outside of cage) > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-1b v5 alone in the aluminium cage, load on the outside of the SMA bulkhead, coax and notch disconnected, XTR unplugged"
+```
+Predictions: floor flat within **1.5 dB** across 225-400; every detection a tagged clock harmonic
+(14.4 / 28.8 / 24 MHz families) or hop-centre-free artefact; no 350 MHz step. **V1-2 against V1-1b
+then measures the 3 ft coax plus the window notch: within 0.3 dB**, as the XTR cascade found
+(coax +0.02, notch 0.00). An "open" run (nothing on the bulkhead) is not needed: an unterminated
+port is a tiny unknown antenna, so it measures nothing the load does not measure better.
+
+The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
+antenna run before the terminated ones is a setting check, not a measurement.
+
 **V1-2 Terminated, 30 min**, load on the notch input, chosen gain (G):
 ```
 .\.venv\Scripts\python.exe -m marsad run milair 30m --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 5 --tag v5-milair-term-gG --chain "50 ohm load (antenna removed) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-2 v5 milair terminated twin, load on the window notch input, nothing else touched, XTR unplugged"
