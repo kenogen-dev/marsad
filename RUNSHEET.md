@@ -603,8 +603,23 @@ baseline, not a comparison.
   A geostationary downlink does not switch off; three lines leaving in the same ten minutes point
   at one local source. Unidentified. *The owner was out from 12:30 until after the run*, so the
   13:40 switch-off was not a person in this room: a timer, a thermostat, or a neighbour's device.
-  The hump's **12:29 drop (-2.4 dB) matches the owner leaving at 12:30** - whatever was switched
-  off or unplugged on the way out is a hump suspect.
+  The hump's 12:29 drop (-2.4 dB) is near the owner leaving (~12:30, an estimate), but nothing
+  was switched off on the way out: windows minimised only. **The displays go to sleep about an
+  hour after the PC is left idle - i.e. about 13:30-13:45, exactly when the three lines left.**
+  Monitors are a classic source of narrow lines (pixel-clock and panel-driver harmonics). Leading
+  suspect; M1-D tests it.
+
+### M1-D. Do the three lines belong to the displays? (pre-registered 2026-10-26, ~15:40)
+
+After M1-T, antenna back on, same fingerprint, 15 min (`milair 15m --gain 19 --integration 30`).
+Displays on for the first 5 min, put to sleep (the monitors' power buttons, PC left running)
+for the middle 5, back on for the last 5. Read 259.58, 262.65 and 296.93 MHz sweep by sweep.
+
+- **Displays:** all three lines drop to the floor within one sweep (30 s) of sleep and return
+  within one sweep of wake, both times.
+- **Not displays:** the lines stay put through sleep, or they are absent with the displays on
+  (then whatever ran them stopped at 13:40 and has not restarted).
+- The hump at 260-290 is read the same way: if it steps with the displays, they feed it too.
 - **380-390 MHz is the busiest real activity:** a continuous carrier sat on **385.04 MHz until
   08:30, moved to 385.76 + 387.43 MHz from 08:30 to 13:22, then moved back** - the pattern of a
   trunked land-mobile system rotating its control channel; 386.50 and 386.98 MHz come and go
