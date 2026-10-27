@@ -684,6 +684,33 @@ medians of `median_db`, antenna (12 h map) against terminated:
 - The three lines are absent (no peak at their bins; the nearby maxima are hop centres).
 - 21 detections, all tagged (hop centres, 28.8 / 24 MHz harmonics). Nothing untagged is ours.
 
+## P1. Room catalogue: the printer, six states (pre-registered 2026-10-26, ~18:40)
+
+Probe tab, receiver XTR, target `printer`, probe **stub A** (E-field), range **wide** (52-1660,
+g29, `-i 60`), **10 min each**, in this order with nothing else moved:
+**unplugged > off > idle > printing > idle > unplugged**. The probe is taped at one marked corner
+of the printer and not touched between runs (handling is this station's largest error); the
+"Held" text is identical in all six. Monitors, PC and room light stay as they are throughout, so
+they cancel. Chain: stub A > SMA adapter > SMA DC block > 8 ft coax > Flamingo+ notch > LaNA >
+standing chain (the M1-T load comes off the notch input).
+
+The catalogue differences each state against the newest **unplugged** run, bin by bin on
+`median_db`. **Median over sweeps** means a state only counts if it lasts more than half the run,
+so the printing run needs a print job that keeps going for the whole 10 min.
+
+Predictions:
+- **unplugged B vs unplugged A** (the bracket): no 10 MHz block rises 6 dB or more outside the
+  broadcast and cellular blocks (470-960 MHz), which moved 13 dB between open-air backgrounds
+  100 min apart on 2026-10-21. If the bracket fails outside those, nothing else in P1 counts.
+- **off vs unplugged**: nothing, unless the printer's off is a soft-off with its supply still live,
+  in which case a broadband rise below ~150 MHz. Either answer is worth having.
+- **idle vs unplugged**: narrow lines (logic and USB clocks), no broadband block rise of 6 dB.
+- **printing vs unplugged**: the largest of the four, at least one block below 300 MHz rising 6 dB
+  or more (motor drivers and head drive are switched at high current).
+- **idle B vs idle A** within 3 dB on the strongest idle line (the single-line repeat figure).
+
+Then Hunt mode on the strongest printing line: `tile` around it while a job runs, by ear.
+
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 
 `burst23` (1263M:1267M:5k, g29, `-i 2`), 15 min per block, `--floor-window 0.3`, all on the
