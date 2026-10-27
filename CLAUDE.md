@@ -2141,6 +2141,11 @@ the chain after the probe follows the receiver and can be edited on the page bef
 `--keep-defaults` exists so probe runs do not overwrite the antenna chain that a plain
 `marsad run LS` falls back on.
 
+**Which physical probe is which (2026-10-26, owner's kit, six SMA probes):** large loop = the
+big ring; medium loop = the hexagon; small loop = the small round loop; extra-small loop = the
+tiny spiral; **stub A = the straight blade tip** (pure E-field, the "tipped probe"); **stub B =
+the tip with the concentric arcs**. Names in ROOM_RF.md and the tags follow this map.
+
 **Chain tab (2026-10-20)**: the rig as a drawing. `marsad/chain.py` keeps named chains in
 `chain.json` beside station.json, each a line of parts (source, adapter, DC block, coax, notch,
 LaNA, attenuator, bulkheads, jumper, SDR, USB, isolator, PC, custom) with a name and a detail;
