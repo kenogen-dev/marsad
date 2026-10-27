@@ -569,7 +569,7 @@ bins well below the directivity, i.e. the worst-matched ones. With a 12 dB bridg
 bin is vouched for, response.md should say "dip not resolvable with this bridge" instead of
 naming the best trusted bin as the dip.
 
-## M1. Milair / milsat 12 h map (2026-10-26, 02:56-14:56) - DONE; M1-T next
+## M1. Milair / milsat 12 h map (2026-10-26, 02:56-14:56) - DONE; M1-T DONE; M1-D waits on the displays
 
 `milair` preset 225-400 MHz, 12.5 kHz requested (10.85 kHz actual, FFT 256, 84 hops), g29,
 **`-i 30`** (87% listening, 1,440 sweeps, ~193 MB), dipole whips extended to 125 mm on the
@@ -657,6 +657,32 @@ and DC block on the notch input in place of the antenna, nothing else touched.
   correlation above, that reads as a deaf band; the noise generator on a 36 dB pad across 225-400
   would then show the dip directly.
 - 259.58 / 262.65 / 296.93 absent terminated (they left at 13:40 anyway, so this proves little).
+
+**Result (2026-10-26, 17:29-17:54, `milair-term-g19`, 40 sweeps after 10 discarded).** Block
+medians of `median_db`, antenna (12 h map) against terminated:
+
+| Block | antenna | terminated | antenna adds |
+|---|---|---|---|
+| 225-260 | -26.54 | -39.80 | +13.3 |
+| 260-290 (hump) | -20.38 | -40.00 | **+19.6** |
+| 290-310 | -25.51 | -40.29 | +14.8 |
+| 312-315 | -33.61 | -40.86 | +7.3 |
+| **316-349** | **-43.96** | **-43.88** | **-0.08** |
+| 350-351 | -34.59 | -41.48 | +6.9 |
+| 351-380 | -34.00 | -41.44 | +7.4 |
+| 380-400 | -37.69 | -41.56 | +3.9 |
+
+- 350 MHz step survives: **held**, but only 2.7 dB terminated (-44.19 below, -41.48 above) against
+  9.5 dB with the antenna. Most of the step is that the band below 350 hears nothing.
+- Hump and 310-315 edge vanish: **the hump held** (225-310 flat at -39.8 to -40.3, no 270 MHz
+  rise). **Within 2 dB of 316-349: FAILED** - 225-312 sits 3.4-4.1 dB above it. So a ~3.5 dB step
+  near 315 MHz survives without an antenna: part of the 310-315 edge is the tuner's own response.
+- 316-349 within 0.5 dB of -43.9: **held** (-43.88, 0.08 dB). **The antenna adds nothing at all
+  across 316-349 MHz**, where it adds 7-20 dB on either side. The XTR is effectively deaf there on
+  this chain, and its internal floor there is also ~3.5 dB lower than elsewhere, which is what a
+  band of low front-end gain looks like. The generator run would show the dip's depth directly.
+- The three lines are absent (no peak at their bins; the nearby maxima are hop centres).
+- 21 detections, all tagged (hop centres, 28.8 / 24 MHz harmonics). Nothing untagged is ours.
 
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 

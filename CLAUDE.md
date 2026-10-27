@@ -2074,6 +2074,14 @@ RUNSHEET M1.
   13:22, with traffic on 386.50 / 386.98 - a trunked land-mobile system's control channel.
 - **MUOS (360-380): no plateau.** Not an absence result: short antenna, through the window.
 
+**M1-T, terminated twin (2026-10-26, 17:29):** same fingerprint, load on the notch input. The
+antenna adds **+13 to +20 dB at 225-310, +7 dB at 351-380, and -0.08 dB at 316-349**: the XTR
+hears nothing in 316-349 MHz on this chain, and its internal floor there sits ~3.5 dB below the
+rest. A ~3.5 dB step near 315 and a 2.7 dB step at 350 survive with no antenna (tuner response);
+the 270 MHz hump does not (received). **For 316-349 MHz (UHF milsat uplinks, part of the
+milair band) use the v5, not the XTR.** The three lines 259.58 / 262.65 / 296.93 are absent
+terminated; the display-sleep test M1-D is pending.
+
 ### Tool limit, not a station effect
 
 - **rtl_power stops at 2147.483648 MHz (2^31 Hz)** — it holds frequencies in a signed
