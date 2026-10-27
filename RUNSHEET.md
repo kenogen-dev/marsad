@@ -763,6 +763,15 @@ spike. "The v5 hears better here" is the claim V1 tests; it is not yet measured.
 max under -3 dB and under 1% non-finite readings**. Prediction: g40.2 passes (no LaNA means ~25 dB
 less drive than M1, which needed the XTR down at g19 *with* the LaNA).
 
+**Order changed 2026-10-27 ~00:30, before any V1 run: V1-1b goes FIRST, cold, 45 min at g40.2.**
+The v5 had been plugged in for minutes, so this is the only cold start available, and the warm-up
+drift of the v5 in the aluminium cage has never been measured (the old figures, settled by sweep
+4-6 and total change ~-0.35 dB, are from the copper cage). `tools/drift.py` on its raw CSV gives
+it. g40.2 is the gain V1-1 is predicted to pick; if V1-1 picks g29.7 instead, V1-1b is repeated
+for 30 min at g29.7 (warm) and the cold run stands as the drift measurement only.
+Predictions for the drift: smooth and monotonic, **settled within 15 min**, total change including
+warm-up **under 0.5 dB**, settled std **under 0.05 dB**.
+
 **V1-1b The v5 in its new enclosure, 30 min (added 2026-10-27 at the owner's request, before
 V1-2):** the v5 has never run in the aluminium cage, so measure it alone first: 50 ohm load straight
 on the **outside of the cage SMA bulkhead**, coax and notch off. No DC block needed (no bias-tee).
