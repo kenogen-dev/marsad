@@ -851,6 +851,38 @@ The v5's raw signal is far from clipping (rms 6.3 counts of 127 at g40.2), so rt
 at 385.04" was never ADC clipping either. Route forward: v5 surveys on **rtl_power_fftw** (gain
 proven) until rtl_power's handling is understood.
 
+**V1-1f Gain shakedown on rtl_power_fftw (pre-registered 2026-10-27 ~09:15).** `custom 5m --freq
+225M:400M --engine rtl_power_fftw --bins 256 --time 0.25 --rate 2400000 --overlap 25`: 97 hops,
+9.375 kHz bins, 30 s per pass, 81% listening, ~11 passes. g40.2 then g49.6, antenna chain, nothing
+touched between. The "max under -3 dB" rule does not carry over (fftw's scale is a power density,
+~26-30 dB below rtl_power's), so headroom is judged from raw IQ and linearity instead. Raw IQ at
+385.04 MHz already says: max |sample| **3 of 127 at g7.7, 20 of 127 at g40.2** (16 dB headroom on
+the strongest carrier), so g49.6 should still leave ~6 dB. Predictions, g49.6 minus g40.2:
+- 385.04 and 386.50 MHz rise **9.4 +/- 1.5 dB** (linear, no compression);
+- the floor rises **4-8 dB** (SDR++ showed -77 -> -71), so carrier SNR improves **under 3 dB**.
+
+Choice: **g40.2** unless g49.6 is linear *and* improves carrier SNR by 3 dB or more. Above ~g30 the
+v5's floor rises with gain (SDR++), so the extra gain mostly costs headroom for daytime handsets.
+
+**V1-1f, as run:** g40.2 at 09:16 completed (385.03 MHz SNR 29.2, steady; no non-finite readings).
+g49.6 at 09:21 **failed to open the radio** (usb_open -3): the rtl_power gain-fix session took the
+v5 in the gap between runs. g49.6 is not yet measured, so g40.2 stands by the pre-registered default.
+
+**V1-4f Daytime map on rtl_power_fftw, 7 h (pre-registered 2026-10-27 ~09:40),** while the owner is
+out: `custom 7h --freq 225M:400M --engine rtl_power_fftw --gain 40.2 --bins 256 --time 0.25 --rate
+2400000 --overlap 25 --skip-warmup 65`, antenna chain, ~841 passes of 30 s, ~514 MB. Replaces the
+14 h overnight V1-4 for today; no terminated twin yet (V1-2/V1-3 come after rtl_power is settled).
+Predictions:
+- **Positive control:** 385.03 MHz present and steady (90% or more of passes) all day.
+- **The v5 is not deaf at 316-349:** the 316-349 block median sits at least 2 dB over the run's own
+  quietest 10 MHz block in 351-400 *and* carries at least one non-clock detection. (Without a
+  terminated twin this is weaker than V1-2/V1-3; it can only fail loudly.)
+- **No 350 MHz step:** 345-350 and 350-355 block medians within 1 dB.
+- **296.99 MHz** (this run's twin of M1's 296.93, 60 kHz apart on a different receiver's
+  calibration) leaves within the same 13:00-14:00 window M1 saw. If it does, it is one local
+  source with a daily schedule, not the XTR.
+- The 270 MHz hump present, and smaller in the afternoon than the morning (M1 fell 5.4 dB 03-14 h).
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.
