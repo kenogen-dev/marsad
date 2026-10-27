@@ -784,14 +784,41 @@ then measures the 3 ft coax plus the window notch: within 0.3 dB**, as the XTR c
 (coax +0.02, notch 0.00). An "open" run (nothing on the bulkhead) is not needed: an unterminated
 port is a tiny unknown antenna, so it measures nothing the load does not measure better.
 
-The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
-antenna run before the terminated ones is a setting check, not a measurement.
+**V1-1b RESULT (2026-10-27, 01:57-07:45, stopped by hand after 5 h 48 min, 697 sweeps):**
+`survey_milair_8h_v5-alu-milair-bulkhead-term-g40.2_20261027-0157`, run as 8 h overnight in place of
+the 45 min (the first 45 min attempt wrote no file). Cold start, g40.2, load on the outside of the
+cage bulkhead. The Ctrl-C also ended the analysis, so it was re-analysed by hand with
+`--skip-sweeps 130` (65 min), leaving 567 sweeps.
 
-**V1-2 Terminated, 30 min**, load on the notch input, chosen gain (G):
+| Prediction | Measured | |
+|---|---|---|
+| drift smooth and monotonic | yes, a smooth fall, no steps | held |
+| settled within 15 min | **sweep 132, ~65 min** | **FAILED** |
+| total change incl. warm-up under 0.5 dB | **-1.93 dB** (-35.01 -> -36.94) | **FAILED** |
+| settled std under 0.05 dB | **0.016**, range 0.09, net -0.07 over 4 h | held |
+| floor flat within 1.5 dB, 225-400 | 10 MHz block medians -35.82 to -38.38, **2.56 dB** (1.67 without the low 235-245 block) | **FAILED** |
+| every detection a clock harmonic | all 5: 230.40 and 259.20 (28.8 x8, x9), 316.80 (28.8 x11), 273.60 and 244.79 (**14.4 x19, x17**; untagged by survey.py, which lacks the 14.4 family) | held |
+| no 350 MHz step | 345-350 -37.12, 350-355 -37.14 (**0.02 dB**) | held |
+
+Whole-band median settled at **-36.96 dB**. **The v5 in the aluminium cage needs over an hour to warm
+and falls ~2 dB doing it**, six times what the copper-cage figures (-0.35 dB, sweep 4-6) said. The
+likely reason is the foam-supported dongle with little heat path, unmeasured. Consequence for every
+V1 level comparison: **the v5 must be streaming for 65 min before the analysed part of a run**, and a
+dongle left powered but idle cools (Block H3), so the gap between twin runs must stay short.
+The terminated floor is not flat: a gentle tilt from ~-36 at 245-305 to -37.5 at 395, with a dip
+at 235-245; that is the R860's own response and V1-2 / V1-3 must be read block by block against it.
+
+The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
+antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
+matter for it: it judges clipping, not level.
+
+**V1-2 Terminated, 95 min (65 min warm-up discarded, 30 min analysed)**, load on the notch input,
+chosen gain (G). Changed from 30 min after V1-1b measured the v5's hour-long warm-up:
 ```
-.\.venv\Scripts\python.exe -m marsad run milair 30m --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 5 --tag v5-milair-term-gG --chain "50 ohm load (antenna removed) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-2 v5 milair terminated twin, load on the window notch input, nothing else touched, XTR unplugged"
+.\.venv\Scripts\python.exe -m marsad run milair 95m --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 65 --tag v5-milair-term-gG --chain "50 ohm load (antenna removed) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-2 v5 milair terminated twin, load on the window notch input, nothing else touched, XTR unplugged"
 ```
-**V1-3 Antenna twin, 30 min**, antenna back on, same command with the antenna chain and tag
+**V1-3 Antenna twin, 30 min**, antenna back on **straight after V1-2** (the dongle is warm; swap
+load for antenna within a couple of minutes), `milair 30m --skip-warmup 5`, antenna chain, tag
 `v5-milair-ant-gG`.
 
 Predictions for V1-2 against V1-3 (block medians of `median_db`):
@@ -804,7 +831,7 @@ Predictions for V1-2 against V1-3 (block medians of `median_db`):
 
 **V1-4 The map, 12-16 h**, antenna chain, gain G, start before bed:
 ```
-.\.venv\Scripts\python.exe -m marsad run milair 14h --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 10 --tag v5-milair-14h-gG --chain "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the window glass) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-4 v5 milair overnight map, no LaNA, one notch at the window, printer unplugged, monitors on (will sleep ~1 h after idle), PC on, TV on, fans and purifier on, XTR unplugged"
+.\.venv\Scripts\python.exe -m marsad run milair 14h --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 65 --tag v5-milair-14h-gG --chain "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the window glass) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-4 v5 milair overnight map, no LaNA, one notch at the window, printer unplugged, monitors on (will sleep ~1 h after idle), PC on, TV on, fans and purifier on, XTR unplugged"
 ```
 Run from a Start-menu PowerShell in `C:\SDR`, not inside the desktop app. Displays sleeping
 during the run gives M1-D's question a second, free look: the 259.58 / 262.65 / 296.93 lines
