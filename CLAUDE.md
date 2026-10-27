@@ -2082,6 +2082,17 @@ the 270 MHz hump does not (received). **For 316-349 MHz (UHF milsat uplinks, par
 milair band) use the v5, not the XTR.** The three lines 259.58 / 262.65 / 296.93 are absent
 terminated; the display-sleep test M1-D is pending.
 
+### Printer room catalogue P1 (2026-10-26, 21:04-22:48): nothing in 52-1660 MHz, in any state
+
+Six wide runs, stub A (blade) taped at the back middle of the case: unplugged, off, idle,
+printing, idle, unplugged. Full table in RUNSHEET P1. **Off, idle and printing add nothing**
+against the closing unplugged run. The 8-13 dB TV-band "rises" the catalogue first reported came
+from the **opening** unplugged run: the broadcast environment changed between 21:04 and 21:30.
+The bracket caught it. A probe on an 8 ft coax hears the room's broadcasters, so a probe
+catalogue must always close with a repeat of its background state, and the catalogue should use
+the later one. Printer motor and supply noise below 52 MHz is untested (v5 HF direct sampling
+with a loop probe would cover it).
+
 ### Tool limit, not a station effect
 
 - **rtl_power stops at 2147.483648 MHz (2^31 Hz)** — it holds frequencies in a signed
@@ -2141,10 +2152,48 @@ the chain after the probe follows the receiver and can be edited on the page bef
 `--keep-defaults` exists so probe runs do not overwrite the antenna chain that a plain
 `marsad run LS` falls back on.
 
+**Two fixes from the printer catalogue (2026-10-26).** *Device index:* station.json's
+remembered `device: 1` for the XTR kept coming back into the form after every run, and with
+only the XTR plugged in (device 0) the run failed on `-d 1` blaming "another program". The page
+now detects receivers (rtl_eeprom) when the tab opens, again before Start and before a Hunt
+start, and again whenever a run lets go of the SDR; the device box takes only what detection
+found or what was typed by hand since the page opened (kept until reload). station.json's
+number and the browser's saved form are never used for it. If detection fails the box is left
+empty, the page says why, and Start refuses; `compose` also refuses an empty device rather than
+defaulting to 0. When rtl_eeprom cannot open the index, the message now names the cause: "No
+receiver at index 1; detected: ... at 0" when the index is past the list, and it blames another
+program only when the SDR-in-use check found one (`record.open_failure_message`). *Duplicate
+probe:* `probe.clean_tail` drops any leading probe part from the chain after the probe (the
+Chain tab's "near-field probe (held where the Probe tab says)" placeholder, or one typed in the
+box) and every empty segment, so the recorded chain names one probe and never contains `> >`
+or a leading `>`. `tests/test_probe.py` pins both, with rtl_eeprom mocked.
+
 **Which physical probe is which (2026-10-26, owner's kit, six SMA probes):** large loop = the
 big ring; medium loop = the hexagon; small loop = the small round loop; extra-small loop = the
 tiny spiral; **stub A = the straight blade tip** (pure E-field, the "tipped probe"); **stub B =
-the tip with the concentric arcs**. Names in ROOM_RF.md and the tags follow this map.
+the tip with the concentric arcs**. Names in ROOM_RF.md and the tags follow this map. The
+Probe tab's labels say it too ("stub A (straight blade)", "stub B (concentric-arc tip)",
+"extra-small loop (tiny spiral)"); the ids, tag slugs and chain wording are unchanged, so old
+runs still match and hunt.py still reads their conditions text.
+
+**Measured conditions in every sidecar (2026-10-26).** The typed `--conditions` text had gone
+stale through copy-paste, so `marsad/conditions.py` (stdlib) now writes an `auto_conditions`
+block into every sidecar from both engines (`marsad run`, the Probe tab, `tools/run_survey.py`),
+with a `start` snapshot when the sidecar is first written and an `end` snapshot after recording.
+Each holds: **weather** from Open-Meteo's free no-key API (temperature, humidity, surface
+pressure, cloud, precipitation, wind, is_day, weather code; one request, 5 s timeout), **sun**
+elevation/azimuth and day / civil twilight / twilight / night computed locally (NOAA formula,
+~0.1 deg, no network), **pc** (Windows uptime, `user_idle_s` = seconds since the last keyboard
+or mouse input, the cheap proxy for whether the displays have slept, which Windows will not
+report cheaply; and `previous_recording`: the newest earlier sidecar's end time and run length,
+because the XTR's PLL range drifts as it warms), and `indoor: null` until there is a room
+thermometer. Weather and sun need **`"location": {"lat": .., "lon": ..}` in station.json**
+(decimal degrees, west/south negative; the `_location` note there has an example); without it,
+or offline, each part records the reason and the run carries on: nothing in it can fail a run.
+`--dry-run` prints the start snapshot. report.md's settings table and scan_build.md show it as
+"Conditions, measured at start/end" beside the typed text, which is unchanged (scan_build.md
+labels it "Conditions (typed)"). Sidecars from before 2026-10-26 have no block and show no rows.
+`tests/test_conditions.py` pins it with the network mocked.
 
 **Chain tab (2026-10-20)**: the rig as a drawing. `marsad/chain.py` keeps named chains in
 `chain.json` beside station.json, each a line of parts (source, adapter, DC block, coax, notch,

@@ -711,6 +711,37 @@ Predictions:
 
 Then Hunt mode on the strongest printing line: `tile` around it while a job runs, by ear.
 
+**Result (2026-10-26, 21:04-22:48, all six runs, blade taped at the back middle; cord pulled at
+the printer, left in the wall).** Peak `median_db` within +/-0.3 MHz:
+
+| MHz | unplugged A 21:04 | off 21:30 | idle A 21:43 | printing 22:03 | idle B 22:19 | unplugged B 22:38 |
+|---|---|---|---|---|---|---|
+| 185.08 | **-5.2** | 4.0 | 3.7 | 3.4 | 3.4 | 3.8 |
+| 499.70 | **-16.2** | -2.9 | -5.6 | -4.6 | -4.3 | -3.7 |
+| 561.72 | **-18.3** | -6.5 | -7.9 | -8.2 | -8.9 | -8.8 |
+| 589.00 | **-15.0** | -6.7 | -7.2 | -6.6 | -7.0 | -6.9 |
+| 317.5 | -25.3 | -23.4 | -30.2 | -24.4 | -30.3 | -30.1 |
+| 935.6 | -26.3 | -20.3 | -20.3 | -16.5 | -16.8 | -17.4 |
+| whole-band median | -26.50 | -26.42 | -26.86 | -26.46 | -26.92 | -26.88 |
+
+- **Bracket: held, narrowly.** Unplugged B vs A: no 10 MHz block rises 6 dB (largest +5.74 at
+  200-210). But the TV-band lines show **unplugged A is the odd one out**: B sits with off, idle
+  and printing, 8-13 dB above A. The "off adds 15 dB at 561.7" the catalogue reported against A was
+  the room's broadcast environment changing between 21:04 and 21:30, not the printer. With B as
+  the background (the catalogue's default, the newest unplugged run) those rises vanish.
+- **off vs unplugged: nothing. Held.** No soft-off supply noise.
+- **idle vs unplugged: nothing. The prediction of narrow lines failed:** idle A, idle B and
+  unplugged B agree on every line. Idle B vs idle A: whole-band median -0.04 dB. Held.
+- **printing: at least one block below 300 MHz +6 dB. REFUTED.** The 317.5 MHz lump is high in
+  unplugged A, off and printing and low in idle A, idle B and unplugged B: intermittent and not
+  tied to printing. 935.6 MHz climbs steadily through the evening whatever the printer does.
+- **Verdict: with the E-field blade on the back of the case, the printer emits nothing this chain
+  can see in 52-1660 MHz, in any state.** It agrees with the 2026-10-17 overnight finding. What
+  the probe does pick up is the room's broadcast environment, through the probe and the 8 ft coax.
+  **Not tested:** below 52 MHz, where printer motor drivers and switching supplies put most of
+  their energy (tens of kHz to ~30 MHz). The XTR cannot tune there. The v5's direct-sampling HF
+  mode (0.1-25 MHz) can, and a loop probe suits current-driven motor noise better than a blade.
+
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 
 `burst23` (1263M:1267M:5k, g29, `-i 2`), 15 min per block, `--floor-window 0.3`, all on the
