@@ -569,7 +569,7 @@ bins well below the directivity, i.e. the worst-matched ones. With a 12 dB bridg
 bin is vouched for, response.md should say "dip not resolvable with this bridge" instead of
 naming the best trusted bin as the dip.
 
-## M1. Milair / milsat 12 h map (planned 2026-10-26, 03:00-15:00)
+## M1. Milair / milsat 12 h map (2026-10-26, 02:56-14:56) - DONE; M1-T next
 
 `milair` preset 225-400 MHz, 12.5 kHz requested (10.85 kHz actual, FFT 256, 84 hops), g29,
 **`-i 30`** (87% listening, 1,440 sweeps, ~193 MB), dipole whips extended to 125 mm on the
@@ -587,6 +587,58 @@ content (ground rules). What it can and cannot see, written down first:
 
 Adaptive dwell (skipping quiet bins) is deliberately **not** used: it would bias every occupancy
 figure. The follow-up is a second, narrow run on whatever this map shows is busy.
+
+**As run (differs from the plan above):** **g19**, not g29 (the 02:36 g29 shakedown hit +2.3 dB,
+full scale), and the **long whips fully collapsed, 230 mm each, straight vertical line**, not
+125 mm. 02:56-14:56, 1420 sweeps, 20 discarded. Fingerprint
+`225.000-400.000 MHz | 10.8507 kHz | g19 | i30 | c0.25 | F9 | xtr`. First run in this band, so a
+baseline, not a comparison.
+
+**DONE 14:56, read 15:10. Against the expectations:**
+
+- **MUOS 360-380 plateaus: not seen.** 1 MHz medians fall smoothly 355-391 MHz with no 5 MHz step
+  anywhere. Not proof of absence (short antenna, low southern sky, through the window).
+- **Legacy UHF satcom 243-270: two steady carriers, 259.58 and 262.65 MHz**, plus 296.93 MHz, all
+  near -13 dB, 85-100% on from 03:00 - and **all three switched off together at 13:35-13:45**.
+  A geostationary downlink does not switch off; three lines leaving in the same ten minutes point
+  at one local source. Unidentified.
+- **380-390 MHz is the busiest real activity:** a continuous carrier sat on **385.04 MHz until
+  08:30, moved to 385.76 + 387.43 MHz from 08:30 to 13:22, then moved back** - the pattern of a
+  trunked land-mobile system rotating its control channel; 386.50 and 386.98 MHz come and go
+  around it (traffic). Types and occupancy only, per the ground rules.
+- **Milair voice: not seen as such.** 313.30 MHz (40% on, every hour) is the only other steady
+  user; the rest are one-sweep bursts.
+
+**The floor is two different things, and that is the main finding:**
+
+| Block | 03:00 | 14:00 | change | per-sweep std |
+|---|---|---|---|---|
+| 260-290 | -17.8 | -23.1 | **-5.4** | 1.76 |
+| 316-349 | -43.8 | -44.1 | **-0.2** | **0.15** |
+| 351-380 | -32.8 | -35.3 | -2.5 | 0.73 |
+
+- **A 10 dB step at exactly 350.0 MHz** (349: -44.1, 350: -34.6) that never moves: librtlsdr
+  switches the E4000 from its VHF to its UHF input path there. A receiver edge, not a signal.
+- **A ~10 dB roll-off over 310-315 MHz**, and below it a broad hump peaking near 270 MHz, 15-25 dB
+  above the 316-349 level. The hump fell 5.4 dB through the morning, with abrupt one-sweep drops
+  (06:31 -3.2 dB, 12:29 -2.4) - switching, not warming.
+- 260-290 and 351-380 move together sweep by sweep (**r = 0.91**); 316-349 moves with neither and
+  sits as still as a terminated run (std 0.15 dB). **So the same broadband source is heard on both
+  sides of 315-350 and not inside it** - which argues that the receiver is nearly deaf across
+  315-350, not that the noise skips that band. Unproven; M1-T and a generator run settle it.
+
+### M1-T. Milair terminated, the internal layer (pre-registered 2026-10-26, 15:15)
+
+Same fingerprint, 30 min (`milair 30m --gain 19 --integration 30 --skip-warmup 5`), the 50 ohm load
+and DC block on the notch input in place of the antenna, nothing else touched.
+
+- **The 350 MHz step survives** (a receiver edge): UHF and VHF levels still differ by several dB.
+- **The 310-315 edge and the 270 MHz hump vanish**, 225-312 falling to within 2 dB of 316-349: the
+  hump is received. If the 312-315 edge survives, it is the tuner's own response, not the room.
+- **316-349 within 0.5 dB of antenna-on (-43.9):** the antenna adds nothing there. With the
+  correlation above, that reads as a deaf band; the noise generator on a 36 dB pad across 225-400
+  would then show the dip directly.
+- 259.58 / 262.65 / 296.93 absent terminated (they left at 13:40 anyway, so this proves little).
 
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 

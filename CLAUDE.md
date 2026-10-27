@@ -2053,6 +2053,27 @@ the dongle and was powered but idle; it is the prime suspect and should be **unp
 idled**, for the replication. B2 (seam taped) was not run: it would discriminate aperture
 resonance from a volume effect, since taping should change the former and not the latter.
 
+### Milair 12 h map M1 (2026-10-26, 02:56-14:56): the E4000 has a 350 MHz edge and a near-deaf 315-350
+
+First survey of 225-400 MHz. `milair` at **g19** (g29 hit full scale in the shakedown), `-i 30`,
+1420 sweeps, long whips collapsed to 230 mm each in a straight vertical line, standing chain.
+Fingerprint `225.000-400.000 MHz | 10.8507 kHz | g19 | i30 | c0.25 | F9 | xtr`. Full reading in
+RUNSHEET M1.
+
+- **Receiver features, not signals:** a fixed **10 dB step at exactly 350.0 MHz** (librtlsdr's
+  E4000 VHF/UHF input switch) and a 10 dB roll-off over **310-315 MHz**. Between them, 316-349 MHz
+  sits at -44 dB and does not move all day (per-sweep std 0.15 dB), while the bands on both sides
+  move together (r = 0.91). Reading, unproven until the terminated run M1-T: **the XTR is nearly
+  deaf across 315-350 MHz.** Never read a level across 350 MHz or 312 MHz as a change in the sky.
+- **A broadband hump peaking near 270 MHz**, 15-25 dB over the 316-349 level, falling 5.4 dB
+  from 03:00 to 14:00 with abrupt one-sweep drops (06:31, 12:29): a switching local source. The
+  UHF satcom band 243-270 sits on top of it, so weak downlinks there are masked.
+- **259.58, 262.65 and 296.93 MHz**, steady near -13 dB from 03:00, all left within 13:35-13:45:
+  one local source, not satellites.
+- **380-390 MHz:** a continuous carrier on 385.04 moved to 385.76 + 387.43 at 08:30 and back at
+  13:22, with traffic on 386.50 / 386.98 - a trunked land-mobile system's control channel.
+- **MUOS (360-380): no plateau.** Not an absence result: short antenna, through the window.
+
 ### Tool limit, not a station effect
 
 - **rtl_power stops at 2147.483648 MHz (2^31 Hz)** — it holds frequencies in a signed
