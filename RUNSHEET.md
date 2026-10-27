@@ -808,6 +808,29 @@ dongle left powered but idle cools (Block H3), so the gap between twin runs must
 The terminated floor is not flat: a gentle tilt from ~-36 at 245-305 to -37.5 at 395, with a dip
 at 235-245; that is the R860's own response and V1-2 / V1-3 must be read block by block against it.
 
+**V1-1 RESULT (2026-10-27, 08:00-09:20): the v5's gain setting does nothing. V1 is blocked.**
+Antenna chain as V1-1, TV, fans and purifier on. Three 5 min `milair` runs and three 4 s
+`rtl_power -f 383M:387M:12.5k` captures with nothing touched in between:
+
+| Gain asked | rtl_power says | whole-band median | 385.04 MHz peak |
+|---|---|---|---|
+| 29.7 (5 min) | set to 29.70 | -25.30 | +2.1 |
+| 22.9 (5 min) | set to 22.90 | -25.28 | +2.5 |
+| 7.7 (5 min) | set to 7.70 | -25.47 | +3.1 (379.90) |
+| 7.7 / 29.7 / 49.6 (4 s, 383-387) | set to each | -23.55 / -23.62 / -23.60 | +1.99 / +1.92 / +1.83 |
+
+**42 dB of gain moves nothing by more than 0.1 dB**, and every 25 MHz band stays within ~1.5 dB
+across the 5 min runs. "Gain does nothing" was the prediction for "the setting never reaches the
+tuner", against "overload: levels fall at some low gain". The latter would have shown at g7.7 and
+did not. Something holds the output level constant whatever the gain: the gain not being applied
+to the R860 by this `rtlsdr.dll`, or an automatic gain stage still active. The same dll applies the
+XTR's (E4000's) gain normally (29 -> 14 measured 13.5 dB, Block F). **Unknown whether the v5's gain
+has ever worked:** no earlier v5 pair at two gains measured a level (the 2026-10-16 ADS-B 40.2 /
+49.6 pair was zero at both). Consequence: the 385.04 carrier sits at ADC full scale and cannot be
+brought down, so every V1 level is suspect until this is fixed. **Discriminator, 2 min: SDR++ on the
+v5 at 385.04 MHz, move its gain slider with AGC off.** If the level moves there, the fault is in
+rtl-sdr/'s dll path; if not, in the dongle.
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.
