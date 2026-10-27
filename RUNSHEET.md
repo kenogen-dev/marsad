@@ -742,6 +742,54 @@ the printer, left in the wall).** Peak `median_db` within +/-0.3 MHz:
   their energy (tens of kHz to ~30 MHz). The XTR cannot tune there. The v5's direct-sampling HF
   mode (0.1-25 MHz) can, and a loop probe suits current-driven motor noise better than a blade.
 
+## V1. The v5 on the window antenna, then a 12-16 h milair map (pre-registered 2026-10-26, ~23:50)
+
+The v5 takes the XTR's place in the aluminium cage. One notch only: the **window** Flamingo
+stays at the antenna, the v5's own unit comes off the cage bulkhead. **No LaNA** for V1 (the v5
+has no bias-tee to power it; an unpowered LNA passes nothing). **No DC block** needed anywhere.
+Everything at `-i 30` so the fingerprint matches M1 except the receiver and gain. Only the v5
+plugged in, so it is device 0. Edit the chain text if an adapter is needed for gender.
+
+Why: M1/M1-T showed the XTR adds nothing from the antenna across 316-349 MHz and steps 10 dB at
+350.0 MHz (its VHF/UHF input switch). The R860 has neither feature by design and no hop-centre DC
+spike. "The v5 hears better here" is the claim V1 tests; it is not yet measured.
+
+**V1-1 Gain shakedown, antenna on, 5 min each:** g29.7, then g40.2.
+
+```
+.\.venv\Scripts\python.exe -m marsad run milair 5m --receiver v5 --device 0 --gain 29.7 --integration 30 --tag v5-milair-shake-g29.7 --chain "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the window glass) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-1 v5 milair gain shakedown, no LaNA, one notch at the window, printer unplugged, monitors and PC on, TV on, fans and purifier on, XTR unplugged"
+```
+(then the same with `--gain 40.2` and tag `v5-milair-shake-g40.2`). Choose the **highest gain with
+max under -3 dB and under 1% non-finite readings**. Prediction: g40.2 passes (no LaNA means ~25 dB
+less drive than M1, which needed the XTR down at g19 *with* the LaNA).
+
+**V1-2 Terminated, 30 min**, load on the notch input, chosen gain (G):
+```
+.\.venv\Scripts\python.exe -m marsad run milair 30m --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 5 --tag v5-milair-term-gG --chain "50 ohm load (antenna removed) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-2 v5 milair terminated twin, load on the window notch input, nothing else touched, XTR unplugged"
+```
+**V1-3 Antenna twin, 30 min**, antenna back on, same command with the antenna chain and tag
+`v5-milair-ant-gG`.
+
+Predictions for V1-2 against V1-3 (block medians of `median_db`):
+- **316-349 is not deaf on the v5:** the antenna adds **at least 5 dB** there (XTR: -0.08).
+- **No 350 MHz step on the v5:** terminated 345-350 and 350-355 within **1 dB** (XTR: 2.7 dB terminated, 9.5 with antenna).
+- **In-span positive control:** the 385-388 MHz trunked carriers (385.04 or 385.76/387.43) present at
+  least 15 dB over the local floor with the antenna, absent terminated.
+- Terminated floor flat within **1.5 dB** across 225-400.
+- The 270 MHz hump (received, per M1-T) present with the antenna.
+
+**V1-4 The map, 12-16 h**, antenna chain, gain G, start before bed:
+```
+.\.venv\Scripts\python.exe -m marsad run milair 14h --receiver v5 --device 0 --gain G --integration 30 --skip-warmup 10 --tag v5-milair-14h-gG --chain "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the window glass) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC" --conditions "V1-4 v5 milair overnight map, no LaNA, one notch at the window, printer unplugged, monitors on (will sleep ~1 h after idle), PC on, TV on, fans and purifier on, XTR unplugged"
+```
+Run from a Start-menu PowerShell in `C:\SDR`, not inside the desktop app. Displays sleeping
+during the run gives M1-D's question a second, free look: the 259.58 / 262.65 / 296.93 lines
+should leave within a sweep of display sleep if the monitors make them.
+
+**Later, V1-L (LaNA on the v5):** needs power from somewhere other than a bias-tee. Then repeat
+V1-2/V1-3 with it in, as an A/B. Use a battery bank, not a wall charger: tonight's Hunt shakedown
+showed chargers are broadband emitters.
+
 ## G-GP2. The 1265 GP on the radar, A/B/A against the whips (pre-registered 2026-10-25)
 
 `burst23` (1263M:1267M:5k, g29, `-i 2`), 15 min per block, `--floor-window 0.3`, all on the
