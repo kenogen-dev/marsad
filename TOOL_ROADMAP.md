@@ -4,51 +4,72 @@ The guiding aim: **run the station without Claude in the loop.** Claude is for d
 experiments and arguing about results, not for routine operation. Anything you would otherwise
 have to ask it to compute belongs in a tool.
 
+*Updated 2026-10-27. marsad 0.3.0 is released on GitHub (kenogen-dev/marsad) with a Windows zip;
+everything below is on `main`.*
+
 ---
 
 ## Now
 
-| Tool | What it does |
+**Recording and analysing**
+
+| Command | What it does |
 |---|---|
-| `run_survey.py` | Records from a preset, derives the exact rtl_power geometry, writes a sidecar and a build sheet, analyses, archives, and sets the terminated/antenna flag from the chain. Beeps and raises a Windows toast when the recording ends and again when the report is ready (`--no-notify` to silence) |
-| `survey.py` | Parses the CSV, builds the time x frequency grid, finds signals, tags spurs, plots |
-| `spur_stats.py` | The pre-registered statistic: harmonic family mean above the whole-band median, paired difference with a real error bar |
-| `compare_runs.py` | **The whole A/B analysis in one command**: fingerprint check, whole-band median, floor block by block against the measured detection floor, the family statistic with error bars and a verdict, periodicity. Validated against the recorded A1/A2 control |
-| `adsb_check.py` | 1090 MHz positive control. Pass/fail on whether the chain hears anything at all |
-| `archive.py` | `occupancy.db` — every survey, with fingerprints, signals and pooled bands |
-| `drift.py` | Per-sweep whole-band median: warm-up, settling point, and a pass/fail on thermal drift. Validated against both recorded figures |
-| `live_view.py` | Watches a running scan: spectrum, waterfall, per-sweep median trend, hop cursor, hover readout. Also browses finished surveys. One viewer on port 8731 **follows the newest CSV** (since 2026-10-19), so a tab left open shows the next run; `run_survey.py` reuses it instead of starting another. `--pin` stays on one file. Wheel zooms the spectrum and waterfall together, drag pans, shift+wheel scrolls waterfall history one sweep per pixel, double-click resets; the header says when the scan finished |
-| `scan_builder.html` | Composes a scan. Published as an Artifact; works offline |
+| `marsad run <preset> <duration>` | Records a survey, writes the sidecar (typed chain and conditions plus measured weather, sun and PC state) and a build sheet, analyses, archives. Refuses a stale chain, a busy SDR, a gain the tuner does not have, a span rtl_power cannot plan |
+| two engines | **rtl_power** (the station's patched `rtl_power_gainfix`: keeps the v5's gain, no overflow NaNs) for surveys; **rtl_power_fftw** above 2147 MHz, for very narrow bins and single-hop work. The fingerprint names the engine, and v5 rtl_power runs carry `gainfix` |
+| `marsad analyze` | Grid, floor, signals, spur tags, plots, peaks.csv, bins.csv; reads either engine's file |
+| `compare_runs.py` | The whole A/B in one command: fingerprint check, floor by block against the detection floor, the family statistic with error bars and a verdict |
+| `spur_stats.py`, `drift.py` | The pre-registered harmonic statistic; warm-up and thermal drift from the per-sweep median |
+| `adsb_check.py` | 1090 MHz positive control |
+| `archive.py` | `occupancy.db`: every survey with fingerprint, signals and pooled bands |
+| `marsad response` | Antenna return loss and SWR through the bridge, with honest trust flags |
+| `marsad characterise` **(new)** | Measures an IQ recording (bandwidth, pulses, PRIs and stagger, chirp shape, rotation, modulation family) and writes a recipe for the next capture. Phase 1 of the recorder; it rediscovered the 1265 radar to 1 ms and found its chirp is S-shaped |
+| `marsad web status / start / stop / restart` | The 8731 web app, which now runs in the background with no window and is started by `marsad run` when it is down |
 
-**Live view tabs**
+**Web app tabs** (http://127.0.0.1:8731/, the only address)
 
-- **Scan** — live or archived, picked from the dropdown. Frequency grid on both charts, sweep
-  numbering on the waterfall, hover readout with harmonic identification.
-- **Archive** — every CSV in `surveys/` with receiver, gain, integration, sweeps and range.
-  Click a row to open it.
-- **Roadmap** — this file.
+- **Scan**: live or archived, either engine; refused hops hatched; Stop works on any run.
+- **Builder**: composes a scan for either engine, shows what the program will do, and now the
+  **time split**: listening kept / listening cropped away / retuning, live as settings change.
+- **Archive**: every survey, click to open.
+- **Chain**: the rig as a drawing; "Use for runs" makes it the default chain.
+- **Probe**: near-field catalogue of room devices by state, **Hunt** mode (live single-hop
+  readings ~6 a second, a line follower with lock, tone and big visual meter), loudest-devices table.
+- **Roadmap**: this file.
 
 ---
 
 ## Next
 
-Ordered by how much Claude-dependence each removes.
+In order. Each step gets a pre-registered pass test before it is built (RECORDER_DESIGN.md).
 
-1. **Odd/even half-harmonic test** — confirms whether a spur family's fundamental is what it is
-   assumed to be. This is how 14.4 MHz was found to be the real fundamental, not 28.8.
-2. **Resonance hunter** — given a before/after pair, report which bands moved and what physical
-   length would resonate there. The cage investigation was this, done manually, for a day.
+1. **Recorder phase 2: fixed watch** on 1265.44 MHz with the v5, 1 h. Pass: at least 250 of ~300
+   scans captured, under 2 GB, and the recipe narrows the rate after the first capture.
+2. **Per-radio frequency correction**: measure each radio's offset on carriers both hear
+   (385.03, 299.999 MHz) so the recorder tunes straight to what the survey saw.
+3. **Recorder phase 3: two-radio trigger**: XTR surveys, v5 records. Needs both radios on air at
+   once (second antenna or a splitter). Every event catalogued; private bands fingerprint-only.
+4. **Recorder phase 4: Captures tab**: the catalogue, each event's spectrogram and flags, play
+   or open in SDR++ for open-band captures.
+5. **Retune measurement**: where rtl_power's ~47 ms per hop goes. A second patch is kept only if
+   it saves at least 15 ms per hop (about 83% -> 88-91% listening on long LS runs, same fingerprint).
+6. **14.4 MHz family in the spur tagger**: the analyser still tags only the 28.8 MHz half, so
+   odd multiples (244.79, 273.60 on 2026-10-27) come out untagged. Then the odd/even
+   half-harmonic test as a command.
+7. **Station location in station.json** (owner) so measured conditions include weather and sun.
 
 ---
 
 ## Later
 
-- **Packaging for distribution** — `pyproject.toml`, one CLI, config split from code, POSIX
-  branches, regression tests. Only matters if the tools are ever shared; it buys no independence
-  on its own. ~54 station-specific lines and 19 config declarations stand in the way.
-- **Git** — worth doing before the tools get much larger, independently of publishing.
-- **rtl_power_fftw adapter** in `survey.py`, for hydrogen-line work.
-- **Trend plots** from `occupancy.db` — frequency versus time across the whole archive.
+- **Spotter preset** for the two-radio setup: short revisit for finding, the recorder does the
+  long look. A new fingerprint, so a new comparison set by rule.
+- **Trend plots** from `occupancy.db`: frequency versus time across the whole archive.
+- **Resonance hunter**: which bands moved between two runs, and what length would resonate there.
+- **Upstream report** of the rtl_power gain and overflow bugs to RTL-SDR Blog (the owner posts).
+
+Done since the last version of this file: packaging (marsad, 0.3.0 release), git, the
+rtl_power_fftw engine and adapter, the always-up web app.
 
 ---
 
@@ -56,17 +77,21 @@ Ordered by how much Claude-dependence each removes.
 
 These came out of being wrong, each one more than once.
 
-- **Fingerprints**: range, bin, gain, integration, crop, FIR, receiver. Runs that do not match
-  are not comparable, and the tools should refuse rather than let you.
+- **Fingerprints**: range, bin, gain, integration, crop, FIR, receiver, engine (and the rtl_power
+  build on the v5). Runs that do not match are not comparable, and the tools refuse.
+- **Keep runs comparable.** Change a setting or tool that breaks the fingerprint only when it is
+  worth starting a new comparison set, then collect fresh data under it.
 - **Max-hold and detection counts grow with sweep count.** Never compare them across runs of
   different length. Medians and occupancy percentages are immune.
 - **Handling between runs costs ~0.4 dB; touching nothing costs 0.05 dB.** Error bars depend on
   what moved, not on how long the run was.
-- **An effect cannot be seen through noise larger than itself.** The dangling-stub test measured
-  "no change" at a time when a faulty cable was adding 5 dB to the same band; the stub's real
-  contribution is about 0.8 dB. Before believing a null, check what else was in the band.
-- **A matching number is not evidence.** Four mechanism hypotheses matched the observed
-  frequency or magnitude; three were wrong. Only predictions that could fail have settled
-  anything.
-- **A run should describe its own rig.** `--chain` on every run, because `station.json` carries
-  the last run's wording and has mislabelled runs before.
+- **An effect cannot be seen through noise larger than itself.** Before believing a null, check
+  what else was in the band.
+- **A matching number is not evidence.** Only predictions that could fail have settled anything.
+- **A tool can silently ignore a setting.** rtl_power printed "Tuner gain set" on the v5 for ten
+  days while ignoring it. When a setting matters, check that changing it moves the levels.
+- **A run should describe its own rig.** `--chain` on every run.
+- **One program per radio, and sessions take turns.** A check that the SDR is free cannot see the
+  gap between two planned runs; agree who has the radio before starting.
+- **Private communications are catalogued, never kept.** Cellular, pager and cordless bands get a
+  fingerprint (shape and timing, not decodable) and a PRIVATE flag; never raw IQ.
