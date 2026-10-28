@@ -33,6 +33,8 @@ everything below is on `main`.*
 - **Builder**: composes a scan for either engine, shows what the program will do, and now the
   **time split**: listening kept / listening cropped away / retuning, live as settings change.
 - **Archive**: every survey, click to open.
+- **Captures** (new): the recorder's catalogue grouped by signal, fingerprints, IQ waterfall and
+  envelope, exports for SDR++ and Inspectrum; storage strip and recorder status.
 - **Chain**: the rig as a drawing; "Use for runs" makes it the default chain.
 - **Probe**: near-field catalogue of room devices by state, **Hunt** mode (live single-hop
   readings ~6 a second, a line follower with lock, tone and big visual meter), loudest-devices table.
@@ -54,8 +56,10 @@ In order. Each step gets a pre-registered pass test before it is built (RECORDER
 3. [x] **Recorder phase 3: two-radio trigger**, built 2026-10-28 (`marsad watch survey`), tested
    offline end to end. **Radio test owed** once both radios are on air (second antenna or a
    splitter): XTR on milair, v5 recording, 2 h.
-4. **Recorder phase 4: Captures tab**: the catalogue, each event's spectrogram and flags, play
-   or open in SDR++ for open-band captures.
+4. [x] **Recorder phase 4: Captures tab**, built 2026-10-28: the catalogue grouped by signal,
+   each event's fingerprint, IQ waterfall and envelope, recipe and characterise report; WAV
+   export for SDR++ and .cf32 + SigMF for Inspectrum / URH; private events fingerprint-only,
+   refused by the server; no delete control.
 5. **Retune measurement**: where rtl_power's ~47 ms per hop goes. A second patch is kept only if
    it saves at least 15 ms per hop (about 83% -> 88-91% listening on long LS runs, same fingerprint).
 6. **14.4 MHz family in the spur tagger**: the analyser still tags only the 28.8 MHz half, so

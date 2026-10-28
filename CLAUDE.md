@@ -2526,6 +2526,46 @@ marsad watch list [--last 30]
 - Tests run with no radio: `tests/fake_rtl_sdr.py` replays a file to stdout in place of rtl_sdr,
   rtl_eeprom and the `marsad run` child are canned. The radar test uses the saved WAV when present.
 
+- **Recipes carry over between runs (fixed 2026-10-28 afternoon).** Rows were matched on the
+  measured centre within 20 kHz, and the radar's chirp centre sits 57 kHz above 1265.44, so the
+  11:35 watch started from the defaults although the morning's capture had a recipe. Rows now
+  carry `target_hz` (the frequency the recorder was asked for; added to old catalogues the first
+  time a recorder opens them), older rows match inside their own occupied band, and with a recipe
+  the radio tunes on the measured centre. Pinned in `tests/test_watch.py`.
+
+**Captures tab (2026-10-28), `marsad/catalogue.py`** (RECORDER_DESIGN.md phase 4), in the web
+app between Archive and Probe. Read-only on occupancy.db (opened `mode=ro`, so it never migrates
+or writes it) and on the pool. **There is no delete control anywhere.**
+
+- **Strip**: pool used of `pool_gb`, today's GB of `daily_gb`, and the recorder's own status
+  (`recorder_status.json`, which `marsad watch` writes in the pool at every session start and end:
+  fixed watch / capture / ambush, frequency, tuning, rate, gain, until when) plus the frequencies
+  still in their cooldown, from the catalogue.
+- **List**: every event, **grouped by signal** (the asked-for frequency, else the measured centre;
+  events within 25 kHz or half the occupied bandwidth go together), each group with its family
+  from the characteriser, event and capture counts, peak and badges (OPEN, PRIVATE: do not decode,
+  ANOMALY: review); click to open its events (time, MHz, SNR, bandwidth, duration, mode, iq
+  status). Filters: date, MHz range, OPEN / PRIVATE / ANOMALY / with IQ written.
+- **Event page**: the fingerprint for **every** event, private included; the row's facts; for an
+  open event whose IQ exists (its own capture, or an earlier capture it fell inside) the IQ
+  waterfall (max-hold per row so a pulse survives, dB over each bin's median) and the envelope
+  (peak and mean dBFS), computed by reading the file one slice at a time (a 295 MB capture: 2.4 s,
+  cached), the recipe, the characterise report, and chain / gain / serial / hardware / UTC start
+  from the SigMF meta.
+- **Exports**, open events only: **WAV for SDR++** (16-bit stereo I/Q, which is the ci16 data byte
+  for byte behind a 44-byte header; named `baseband_<Hz>Hz_<HH-MM-SS>_<DD-MM-YYYY>_v5.wav`,
+  SDR++'s own convention: its file source, checked in this PC's `file_source.dll`, opens `*.wav`
+  and takes the centre frequency from the first `[0-9]+Hz` in the name; a non-whole cut rate is
+  rounded in the header and the page says so) and **`.cf32` + SigMF meta** (`cf32_le`,
+  `core:dataset` naming the .cf32) for Inspectrum, URH and GNU Radio. Copies go to an `exports`
+  folder beside the capture; the SigMF capture stays the master and is never touched. **A private
+  event gets no export or IQ controls, and `/captures/export` and `/captures/iq` refuse it on the
+  server (403)**, also for a row that claims to be open in a band the tier table says is private.
+- Endpoints: `GET /captures?date&lo&hi&badge`, `/captures/event?id`, `/captures/fp?id`,
+  `/captures/iq?id`, `POST /captures/export {id, format: wav|cf32}`. `tests/test_catalogue.py`
+  pins the list, the event pages, the slice-at-a-time read, the exports byte for byte and the
+  private refusals, including through HTTP.
+
 **Second engine: rtl_power_fftw (2026-10-21).** `rtl-sdr/rtl_power_fftw.exe` is a native
 Windows build of github.com/AD-Vega/rtl-power-fftw 1.0-beta2, made on this PC with the
 Visual Studio Build Tools that were already installed (static FFTW 3.3.10, the same

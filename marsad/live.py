@@ -984,6 +984,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 elif u.path == "/chain/use":
                     chain.use(station, str(form.get("name") or ""))
                     out = chain.summary(station)
+                elif u.path == "/captures/export":
+                    # Refused on the server for anything private (catalogue.export says why).
+                    from . import catalogue
+                    try:
+                        out = catalogue.export(station, int(form.get("id") or 0), str(form.get("format") or ""))
+                    except catalogue.Refused as exc:
+                        self._send(json.dumps({"error": str(exc)}).encode(), code=403)
+                        return
                 elif u.path == "/scan/stop":
                     name = str(form.get("file") or "")
                     t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)
@@ -1101,6 +1109,31 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     else:
                         out = room.loudest(station, block)
                 except ValueError as exc:
+                    self._send(json.dumps({"error": str(exc)}).encode(), code=400)
+                    return
+                body = json.dumps(out).encode()
+            elif u.path.startswith("/captures"):
+                # The Captures tab. Read-only on occupancy.db and the pool; a refusal
+                # (private band, missing file) is a plain-language `error`. Imported here:
+                # it needs numpy, and the rest of the app does not.
+                from . import catalogue
+                one = lambda k: (q.get(k) or [""])[0] or None
+                try:
+                    if u.path == "/captures":
+                        num = lambda k: float(one(k)) if one(k) else None
+                        out = catalogue.summary(station, one("date"), num("lo"), num("hi"), one("badge"))
+                    elif u.path == "/captures/event":
+                        out = catalogue.event(station, int(one("id") or 0))
+                    elif u.path == "/captures/fp":
+                        out = catalogue.fingerprint_view(station, int(one("id") or 0))
+                    elif u.path == "/captures/iq":
+                        out = catalogue.iq_view(station, int(one("id") or 0))
+                    else:
+                        self.send_error(404); return
+                except catalogue.Refused as exc:
+                    self._send(json.dumps({"error": str(exc)}).encode(), code=403)
+                    return
+                except (ValueError, OSError) as exc:
                     self._send(json.dumps({"error": str(exc)}).encode(), code=400)
                     return
                 body = json.dumps(out).encode()

@@ -6,8 +6,9 @@ tune SDR++ to it. This design adds a recorder that notices interesting signals d
 captures them, and builds a **catalogue of everything the station hears**, so nothing unusual
 goes unrecorded just because nobody was looking for it.
 
-Built so far: phase 1 (`marsad characterise`, 2026-10-27) and phases 2 and 3 (`marsad watch`,
-2026-10-28, tested offline; their radio tests are still owed). Section 9 records where the build
+Built so far: phase 1 (`marsad characterise`, 2026-10-27), phases 2 and 3 (`marsad watch`,
+2026-10-28; phase 2 shaken down on the radio the same morning) and phase 4 (the Captures tab,
+2026-10-28, offline). Section 9 records where the build
 differs from this draft. Each phase has a pre-registered test, the same way RUNSHEET blocks do.
 
 ---
@@ -266,3 +267,25 @@ Where the build differs from the draft above, and why:
   frequency outside the recorder's range (row with `iq_status` "outside the recorder's range").
   The cooldown is read from these rows, so a restart does not re-capture.
 - **The rtl_sdr log** (`rtl_sdr.log`, its stderr: tuning, gain, dropped samples) sits in the pool.
+- **Recipes carry over between runs** only since the afternoon of 2026-10-28: rows were matched
+  on the measured centre within 20 kHz, and the radar's measured centre is 57 kHz off its nominal
+  frequency, so the first 1 h watch started from the defaults. Rows now carry `target_hz`, the
+  frequency the recorder was asked for, and with a recipe the radio tunes on the measured centre.
+
+## 10. As built (phase 4, the Captures tab, 2026-10-28)
+
+`marsad/catalogue.py` behind a Captures tab in the web app; `tests/test_catalogue.py`.
+
+- **No play button.** A browser cannot usefully play raw IQ; "play" is the WAV export opened in
+  SDR++ (File source). The export is SDR++'s own recording format and naming, so it tunes itself.
+- **Grouping** is by the asked-for frequency (`target_hz`), falling back to the measured centre
+  within half the occupied bandwidth; the family label is the characteriser's.
+- **The IQ view is max-hold per waterfall row** (a 114 us pulse would vanish from a mean) and
+  reads the capture one row-slice at a time; it is computed on first view and cached.
+- **Private events** show their fingerprint and facts only. Export and IQ endpoints refuse them on
+  the server, judged from the row, its flags and the tier table as it is now, so a mislabelled
+  row cannot leak.
+- **The recorder status strip** came cheaply: `marsad watch` writes `recorder_status.json` in
+  the pool at each session start and end. A recorder started before this (the running watch on
+  2026-10-28) does not write it; the strip then says "no recorder has reported yet" and still
+  lists cooldowns from the catalogue.

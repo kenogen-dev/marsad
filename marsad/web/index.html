@@ -144,6 +144,31 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .ed input,.ed select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font:13px ui-sans-serif,system-ui,sans-serif;min-width:200px}
 .ed input.sm{min-width:90px}
 .cur{color:#4fcf96;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+/* Captures tab */
+.cs-strip{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center}
+.cs-meter{min-width:240px;flex:1}
+.cs-meter .bar{margin-top:4px}
+.cs-meter .bar div{transition:none}
+.badge{display:inline-block;font:600 10px/1.5 ui-sans-serif,system-ui,sans-serif;letter-spacing:.06em;padding:0 6px;border-radius:3px;border:1px solid var(--line);margin-right:4px;white-space:nowrap}
+.badge.open{color:#4fcf96;border-color:#2c6b52}
+.badge.priv{color:#ffb4a0;border-color:#8a4a3a;background:#2c1813}
+.badge.anom{color:#fbe9c8;border-color:#e8b14f;background:#3a2c14}
+.badge.iq{color:var(--dim)}
+.badge.iq.w{color:var(--accent);border-color:#2d6a75}
+.cs-grp{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:var(--bg)}
+.cs-grp>.h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;padding:9px 12px;cursor:pointer}
+.cs-grp>.h:hover{background:var(--panel)}
+.cs-grp>.h b{font:600 15px ui-monospace,Consolas,monospace;color:var(--accent)}
+.cs-grp>.h .fam{color:var(--ink)}
+.cs-grp>.h .cnt{color:var(--dim);font-size:12.5px}
+.cs-grp .ev{display:none;padding:0 6px 6px;overflow-x:auto;max-height:420px;overflow-y:auto}
+.cs-grp.open .ev{display:block}
+.cs-grp tr.sel{background:rgba(79,211,232,.12)}
+#cs-ev canvas{height:220px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
+#cs-ev canvas.env{height:120px}
+.cs-facts td{text-align:left;white-space:normal;font-size:12px}
+.cs-facts td:first-child{color:var(--dim);width:170px;font-family:ui-sans-serif,system-ui,sans-serif}
+.cs-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px}
 </style></head><body>
 <header>
   <h1><span class="dot" id="dot"></span>SDR station</h1>
@@ -163,6 +188,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
   <div class="tab on" data-pane="scan">Scan</div>
   <div class="tab" data-pane="builder">Builder</div>
   <div class="tab" data-pane="archive">Archive</div>
+  <div class="tab" data-pane="captures">Captures</div>
   <div class="tab" data-pane="probe">Probe</div>
   <div class="tab" data-pane="chain">Chain</div>
   <div class="tab" data-pane="roadmap">Roadmap</div>
@@ -231,6 +257,62 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
     <div class="wrap">
       <div class="lab">Frequencies seen in at least two antenna surveys — the persistent set</div>
       <div style="overflow-x:auto"><table id="dbseen"><tbody></tbody></table></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-captures">
+  <main>
+    <div class="wrap">
+      <div class="lab">Recorder pool and today's budget — nothing here is ever deleted automatically</div>
+      <div class="cs-strip">
+        <div class="cs-meter"><div class="s" id="cs-pool">pool —</div><div class="bar"><div id="cs-poolbar"></div></div></div>
+        <div class="cs-meter"><div class="s" id="cs-day">today —</div><div class="bar"><div id="cs-daybar"></div></div></div>
+      </div>
+      <p class="note" id="cs-status" style="margin:10px 0 0">recorder: —</p>
+    </div>
+    <div class="wrap">
+      <div class="lab">Every event the recorder catalogued, grouped by signal — click a signal to open its events, an event to see it</div>
+      <div class="frm" style="margin-bottom:8px">
+        <label>Date <select id="cs-date"><option value="">all dates</option></select></label>
+        <label>From <input type="number" id="cs-lo" step="0.001" placeholder="MHz"></label>
+        <label>to <input type="number" id="cs-hi" step="0.001" placeholder="MHz"></label>
+        <label>Show <select id="cs-badge">
+          <option value="">everything</option><option value="open">OPEN only</option>
+          <option value="private">PRIVATE only</option><option value="anomaly">ANOMALY: review</option>
+          <option value="written">with IQ written</option></select></label>
+        <button class="btn" id="cs-go">Refresh</button>
+      </div>
+      <p class="note" id="cs-note">loading…</p>
+      <div id="cs-groups"></div>
+    </div>
+    <div class="wrap" id="cs-ev" hidden>
+      <div class="lab" id="cs-ev-t">Event</div>
+      <div id="cs-ev-badges" style="margin-bottom:8px"></div>
+      <div class="cs-two">
+        <div>
+          <div class="hm-l">Fingerprint: power at 20 ms x ~1 kHz, dB over the floor (time runs down)</div>
+          <canvas id="cs-fp"></canvas>
+          <div class="ax"><span id="cs-fp-l">—</span><span id="cs-fp-r">—</span></div>
+        </div>
+        <div><table class="cs-facts"><tbody id="cs-facts"></tbody></table></div>
+      </div>
+      <div id="cs-priv" class="say" hidden><b>PRIVATE: do not decode.</b> This band carries private communications, so the recorder kept
+        only the power fingerprint above. No IQ was ever written for it, and there is nothing to play or export.</div>
+      <div id="cs-iqbox" hidden>
+        <div class="hm-l" id="cs-wf-t">IQ waterfall</div>
+        <canvas id="cs-wf"></canvas>
+        <div class="ax"><span id="cs-wf-l">—</span><span id="cs-wf-c">—</span><span id="cs-wf-r">—</span></div>
+        <div class="hm-l">Envelope over time: peak (bright) and mean power, dBFS</div>
+        <canvas id="cs-env" class="env"></canvas>
+        <div class="ax"><span>0 s</span><span id="cs-env-r">—</span></div>
+        <div class="frm" style="margin-top:10px">
+          <button class="btn" id="cs-x-wav" title="16-bit stereo I/Q WAV named baseband_&lt;Hz&gt;Hz_..., which SDR++'s File source opens and tunes from the name">Export WAV for SDR++</button>
+          <button class="btn" id="cs-x-cf32" title="complex float32 .cf32 plus a SigMF .sigmf-meta, for Inspectrum, URH and GNU Radio">Export .cf32 + SigMF</button>
+          <span class="note" id="cs-x-out" style="margin:0"></span>
+        </div>
+      </div>
+      <div id="cs-more" class="cs-two" style="margin-top:12px"></div>
     </div>
   </main>
 </div>
@@ -957,9 +1039,149 @@ function showPane(name){
   if(name==='scan')setTimeout(draw,0);        // canvases size to zero while hidden
   if(name==='builder'){const f=document.getElementById('builder');if(!f.src)f.src='/builder';}
   if(name==='archive')loadArchive();
+  if(name==='captures')capturesInit();
   if(name==='probe'){probeInit();loadProbeMap();}
   if(name==='chain')chainInit();
   try{localStorage.setItem('sdr-pane',name);}catch(e){}
+}
+
+// ---------------------------------------------------------------- Captures tab
+// The recorder's catalogue (RECORDER_DESIGN phase 4). Read-only: there is no delete
+// control anywhere, and private events get no play or export controls (the server
+// refuses those exports too).
+let cs={ready:false,sel:null,open:new Set()};
+const csEl=id=>document.getElementById('cs-'+id);
+const csMHz=f=>f==null?'—':(f/1e6).toFixed(4);
+function csBadges(r){
+  return (r.badges||[]).map(b=>b==='OPEN'?'<span class="badge open">OPEN</span>'
+    :b.startsWith('PRIVATE')?'<span class="badge priv">PRIVATE: do not decode</span>'
+    :'<span class="badge anom">ANOMALY: review</span>').join('')
+    +(r.iq_status?`<span class="badge iq${r.iq_status==='written'?' w':''}">${esc(r.iq_status)}</span>`:'');}
+function csBar(id,used,cap){const p=cap>0?Math.min(100,100*used/cap):0;csEl(id).style.width=p+'%';}
+function capturesInit(){
+  if(!cs.ready){cs.ready=true;
+    csEl('go').onclick=capturesLoad;
+    for(const id of ['date','badge'])csEl(id).onchange=capturesLoad;
+    csEl('x-wav').onclick=()=>csExport('wav');csEl('x-cf32').onclick=()=>csExport('cf32');}
+  capturesLoad();
+}
+async function capturesLoad(){
+  const q=new URLSearchParams();
+  for(const k of ['date','lo','hi','badge']){const v=csEl(k).value;if(v)q.set(k,v);}
+  let d;
+  try{d=await (await fetch('/captures?'+q)).json();}catch(e){csEl('note').textContent='could not read the catalogue: '+e;return;}
+  if(d.error){csEl('note').textContent=d.error;return;}
+  const s=d.storage;
+  csEl('pool').innerHTML=`pool <b>${s.used_gb.toFixed(2)}</b> of ${s.pool_gb} GB  ·  ${esc(s.pool)}`;
+  csEl('day').innerHTML=`today <b>${s.today_gb.toFixed(2)}</b> of ${s.daily_gb} GB`;
+  csBar('poolbar',s.used_gb,s.pool_gb);csBar('daybar',s.today_gb,s.daily_gb);
+  const st=d.status||{};
+  let line='recorder: ';
+  if(st.state==='listening')line+=`<b class="good">${esc(st.kind)}</b> on the ${esc((st.receiver||'').toUpperCase())}, `
+    +`${Number(st.target_mhz).toFixed(4)} MHz (tuned ${Number(st.tuned_mhz).toFixed(4)}, ${(st.rate/1e6).toFixed(3)} MS/s, g${st.gain_db})`
+    +(st.tier==='private'?' <span class="badge priv">PRIVATE</span>':'')+` until ${new Date(st.until*1000).toLocaleTimeString()}`;
+  else line+=esc(st.state==='idle'?'idle'+(st.note?' ('+st.note+')':''):(st.note||'not reporting'));
+  if(st.cooldowns&&st.cooldowns.length)line+='  ·  cooling down: '+st.cooldowns.map(c=>
+    `${c.f_mhz.toFixed(4)} MHz until ${new Date(c.until*1000).toLocaleTimeString()}`).join(', ');
+  csEl('status').innerHTML=line;
+  const keep=csEl('date').value;
+  csEl('date').innerHTML='<option value="">all dates</option>'+d.dates.map(x=>`<option${x===keep?' selected':''}>${x}</option>`).join('');
+  csEl('note').textContent=d.db?`${d.total} event(s) in ${d.groups.length} signal(s), from ${d.db}`
+    :'No captures yet. `marsad watch fixed` or `marsad watch survey` fill this list.';
+  csEl('groups').innerHTML=d.groups.map(g=>{
+    const key=g.f_mhz.toFixed(3);
+    return `<div class="cs-grp${cs.open.has(key)?' open':''}" data-k="${key}"><div class="h">`
+      +`<b>${g.f_mhz.toFixed(4)} MHz</b><span class="fam">${esc(g.family||'not characterised')}</span>`
+      +(g.band?`<span class="cnt">${esc(g.band)}</span>`:'')
+      +`<span class="cnt">${g.events} event${g.events===1?'':'s'}, ${g.captures} capture${g.captures===1?'':'s'}, peak ${g.peak_db.toFixed(1)} dB, last ${esc((g.last||'').slice(0,19).replace('T',' '))}</span>`
+      +(g.private?'<span class="badge priv">PRIVATE: do not decode</span>':'<span class="badge open">OPEN</span>')
+      +(g.anomaly?'<span class="badge anom">ANOMALY: review</span>':'')
+      +`</div><div class="ev"><table><thead><tr><th>Time</th><th>MHz</th><th>SNR dB</th><th>bw kHz</th><th>dur s</th><th>mode</th><th style="text-align:left">badges</th></tr></thead><tbody>`
+      +g.rows.map(r=>`<tr class="go${r.id===cs.sel?' sel':''}" data-id="${r.id}"><td>${esc((r.started||'').slice(0,19).replace('T',' '))}</td>`
+        +`<td>${csMHz(r.freq_hz)}</td><td>${r.snr_peak_db!=null?r.snr_peak_db.toFixed(1):'—'}</td>`
+        +`<td>${r.bandwidth_hz!=null?(r.bandwidth_hz/1e3).toFixed(1):'—'}</td><td>${r.duration_s!=null?r.duration_s.toFixed(2):'—'}</td>`
+        +`<td>${esc(r.mode||'')}</td><td style="text-align:left">${csBadges(r)}</td></tr>`).join('')
+      +'</tbody></table></div></div>';}).join('');
+  document.querySelectorAll('#cs-groups .cs-grp>.h').forEach(h=>h.onclick=()=>{
+    const g=h.parentElement,k=g.dataset.k;g.classList.toggle('open');
+    if(g.classList.contains('open'))cs.open.add(k);else cs.open.delete(k);});
+  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>tr.onclick=()=>csEvent(+tr.dataset.id));
+}
+function csPaint(cv,d){
+  // uint8 rows x cols (dB over the floor, scale_db) painted with the Scan tab's colour map
+  const raw=atob(d.img),W=d.cols,H=d.rows;
+  cv.width=W;cv.height=H;const g=cv.getContext('2d'),im=g.createImageData(W,H);
+  for(let i=0;i<W*H;i++){const c=cmap(raw.charCodeAt(i)/255);im.data[4*i]=c[0];im.data[4*i+1]=c[1];im.data[4*i+2]=c[2];im.data[4*i+3]=255;}
+  g.putImageData(im,0,0);
+}
+function csEnv(cv,d){
+  const W=cv.clientWidth||900,H=cv.clientHeight||120;cv.width=W;cv.height=H;
+  const g=cv.getContext('2d');g.clearRect(0,0,W,H);
+  const pk=d.env_dbfs_peak,mn=d.env_dbfs_mean,n=pk.length;if(!n)return;
+  const lo=Math.min(...mn),hi=Math.max(...pk);
+  const y=v=>H-4-(v-lo)/(hi-lo||1)*(H-8);
+  const line=(arr,col,w)=>{g.beginPath();g.strokeStyle=col;g.lineWidth=w;
+    arr.forEach((v,i)=>{const x=i/(n-1||1)*W;i?g.lineTo(x,y(v)):g.moveTo(x,y(v));});g.stroke();};
+  line(mn,'rgba(133,153,168,.8)',1);line(pk,'#4fd3e8',1.2);
+  g.fillStyle='rgba(133,153,168,.9)';g.font='10px ui-monospace,monospace';
+  g.fillText(hi.toFixed(1)+' dBFS',4,11);g.fillText(lo.toFixed(1)+' dBFS',4,H-4);
+}
+function csFact(k,v){return v==null||v===''?'':`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;}
+async function csEvent(id){
+  cs.sel=id;
+  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>tr.classList.toggle('sel',+tr.dataset.id===id));
+  const box=csEl('ev');box.hidden=false;
+  let e;try{e=await (await fetch('/captures/event?id='+id)).json();}catch(err){return;}
+  if(e.error){csEl('ev-t').textContent=e.error;return;}
+  const r=e.row;
+  csEl('ev-t').textContent=`Event ${r.id} — ${csMHz(r.freq_hz)} MHz, ${(r.started||'').replace('T',' ').slice(0,23)}`;
+  csEl('ev-badges').innerHTML=csBadges({...r,badges:e.badges});
+  const g=(e.meta||{}).global||{};
+  csEl('facts').innerHTML=[
+    csFact('asked for',r.target_hz?csMHz(r.target_hz)+' MHz':null),csFact('tuned',r.tuned_hz?csMHz(r.tuned_hz)+' MHz':null),
+    csFact('band',esc(r.band||'not in the tier table')),csFact('mode / trigger',esc((r.mode||'')+' · '+(r.trigger||''))),
+    csFact('survey',esc(r.survey||'')),
+    csFact('SNR peak / median',r.snr_peak_db!=null?`${r.snr_peak_db.toFixed(1)} / ${(r.snr_median_db??0).toFixed(1)} dB`:null),
+    csFact('occupied bandwidth',r.bandwidth_hz!=null?(r.bandwidth_hz/1e3).toFixed(1)+' kHz':null),
+    csFact('duration / duty',r.duration_s!=null?`${r.duration_s.toFixed(2)} s, ${(100*(r.duty||0)).toFixed(0)} % active`:null),
+    csFact('since previous',r.repeat_s!=null?r.repeat_s.toFixed(2)+' s':null),
+    csFact('family',esc(r.family||'')),csFact('notes',esc(r.notes||'')),
+    csFact('receiver',esc(`${(r.receiver||'').toUpperCase()} SN ${r.serial||'?'}, gain ${r.gain_db??'?'} dB, ppm ${r.ppm??0}`)),
+    csFact('radio / cut rate',r.rtl_rate_hz?`${(r.rtl_rate_hz/1e6).toFixed(3)} MS/s`+(r.store_rate_hz?` / ${(r.store_rate_hz/1e3).toFixed(1)} kS/s`:''):null),
+    csFact('IQ',esc(r.iq_status||'')+(e.capture?` — ${esc(e.capture.file)}, ${(e.capture.bytes/1e6).toFixed(0)} MB, ${e.capture.seconds.toFixed(1)} s`
+      +(e.capture.own?'':`, this event ${e.capture.offset_s.toFixed(1)} s in`):'')),
+    csFact('hardware',esc(g['core:hw']||'')),csFact('chain',esc(g['marsad:chain']||r.chain||'')),
+    csFact('start (UTC)',esc(((e.meta||{}).captures||[{}])[0]['core:datetime']||'')),
+    csFact('exports',e.exports&&e.exports.length?esc(e.exports.join(', ')):null),
+  ].join('');
+  csEl('priv').hidden=!e.private;
+  csEl('iqbox').hidden=true;csEl('x-out').textContent='';
+  const more=[];
+  if(e.recipe)more.push(`<div><div class="hm-l">Recipe for the next capture</div><pre class="cmd">${esc(JSON.stringify(e.recipe,null,1))}</pre></div>`);
+  if(e.report)more.push(`<div><div class="hm-l">Characterise report</div><pre class="md" style="padding:8px">${esc(e.report)}</pre></div>`);
+  csEl('more').innerHTML=more.join('');
+  try{const f=await (await fetch('/captures/fp?id='+id)).json();
+    if(f.error){csEl('fp-l').textContent=f.error;csEl('fp-r').textContent='';}
+    else{csPaint(csEl('fp'),f);csEl('fp-l').textContent=`${f.f_lo_khz.toFixed(0)} kHz`;
+      csEl('fp-r').textContent=`+${f.f_hi_khz.toFixed(0)} kHz around ${f.signal_mhz.toFixed(4)} MHz · ${f.seconds.toFixed(2)} s`;}}catch(err){}
+  if(e.private||!e.capture)return;        // no IQ: by design (private) or not written (cooldown, pool full)
+  csEl('iqbox').hidden=false;csEl('wf-t').textContent='IQ waterfall: reading the capture…';
+  try{const v=await (await fetch('/captures/iq?id='+id)).json();
+    if(cs.sel!==id)return;
+    if(v.error){csEl('wf-t').textContent=v.error;return;}
+    csPaint(csEl('wf'),v);csEnv(csEl('env'),v);
+    csEl('wf-t').textContent=`IQ waterfall of ${v.file}: max-hold per row (${v.seconds.toFixed(1)} s top to bottom, ${v.rows} rows), dB over each bin's median`;
+    csEl('wf-l').textContent=`${v.f_lo_khz.toFixed(0)} kHz`;csEl('wf-c').textContent=`${v.centre_mhz.toFixed(4)} MHz`;
+    csEl('wf-r').textContent=`+${v.f_hi_khz.toFixed(0)} kHz`;csEl('env-r').textContent=v.seconds.toFixed(1)+' s';
+  }catch(err){csEl('wf-t').textContent='could not read the capture: '+err;}
+}
+async function csExport(fmt){
+  if(cs.sel==null)return;
+  csEl('x-out').textContent='exporting… (a copy; the SigMF capture stays the master)';
+  try{const r=await fetch('/captures/export',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:cs.sel,format:fmt})});const d=await r.json();
+    csEl('x-out').textContent=d.error?d.error:`${d.note}: ${d.file} (${(d.bytes/1e6).toFixed(0)} MB)`+(d.notes&&d.notes.length?' — '+d.notes.join('; '):'');
+  }catch(err){csEl('x-out').textContent='export failed: '+err;}
 }
 
 // ---------------------------------------------------------------- Chain tab

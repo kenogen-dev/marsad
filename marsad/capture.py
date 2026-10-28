@@ -263,6 +263,10 @@ def update_row(con: sqlite3.Connection, row_id: int, **fields) -> None:
     con.commit()
 
 
+def has_target(con) -> bool:
+    return "target_hz" in {r[1] for r in con.execute("PRAGMA table_info(captures)")}
+
+
 def near(con, freq_hz: float, tol_hz: float, where: str = "1") -> list:
     """Rows about this frequency, newest first.
 
@@ -273,6 +277,10 @@ def near(con, freq_hz: float, tol_hz: float, where: str = "1") -> list:
     written before target_hz existed match when the frequency lies inside the event's
     own occupied band.
     """
+    if not has_target(con):              # an old catalogue opened read-only
+        return con.execute(
+            "SELECT * FROM captures WHERE ABS(freq_hz - ?) <= MAX(?, COALESCE(bandwidth_hz, 0) / 2) "
+            f"AND ({where}) ORDER BY started_epoch DESC", (freq_hz, tol_hz)).fetchall()
     return con.execute(
         "SELECT * FROM captures WHERE ("
         " (target_hz IS NOT NULL AND ABS(target_hz - ?) <= ?)"

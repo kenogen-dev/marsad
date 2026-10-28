@@ -280,7 +280,9 @@ def test_private_band_never_writes_iq_not_even_a_temp_file(tmp_path, monkeypatch
     assert not files_in(tmpdir)
     fps = [p for p in new if p.endswith(".fp.npz")]
     assert len(fps) == len(rows)
-    assert all(p.endswith((".fp.npz", "occupancy.db", "occupancy.db-journal")) for p in new)
+    assert all(p.endswith((".fp.npz", "occupancy.db", "occupancy.db-journal", "recorder_status.json")) for p in new)
+    status = [p for p in new if p.endswith("recorder_status.json")]
+    assert all(new[p] < 2000 and json.loads(Path(p).read_text())["state"] for p in status)  # a status line, no samples
     streamed = 8.0 * 240e3
     for p in fps:
         z = np.load(p)

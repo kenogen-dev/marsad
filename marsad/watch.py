@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import statistics as st
 import subprocess
@@ -150,6 +151,19 @@ class Recorder:
         if not self.quiet:
             print(text, flush=True)
 
+    def status(self, state: str, **fields) -> None:
+        """recorder_status.json in the pool: what this recorder is doing, for the Captures
+        tab. Best effort; a failed write never stops a capture."""
+        try:
+            self.pool.mkdir(parents=True, exist_ok=True)
+            d = {"state": state, "receiver": self.rx["role"], "serial": self.rx["serial"],
+                 "pid": os.getpid(), "updated": time.time(), **fields}
+            tmp = self.pool / "recorder_status.json.tmp"
+            tmp.write_text(json.dumps(d), encoding="utf-8")
+            os.replace(tmp, self.pool / "recorder_status.json")
+        except OSError:
+            pass
+
     def day_dir(self, epoch: float) -> Path:
         return self.pool / dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
 
@@ -201,6 +215,11 @@ class Recorder:
             c["gain_db"] = plan.get("gain_db")
             self._characterise_later(c)
 
+        kind = "ambush" if stop_after_capture else {"now": "capture", "watch": "fixed watch"}[mode]
+        self.status("listening", kind=kind, target_mhz=plan.get("target_hz", plan["signal_hz"]) / 1e6,
+                    tuned_mhz=plan["tune_hz"] / 1e6, rate=plan["rtl_rate_hz"], gain_db=plan.get("gain_db"),
+                    tier=tier, band=band.get("band") or None, trigger=trigger, survey=survey,
+                    since=time.time(), until=time.time() + duration_s)
         stream, stop_proc = self.launch(cmd, self.pool / "rtl_sdr.log")
         sess = cap.Session(plan, tier, mode=mode, duration_s=duration_s, capture_s=capture_s,
                            threshold_db=float(self.cfg.get("threshold_db", 12)),
@@ -218,6 +237,7 @@ class Recorder:
             raise
         finally:
             stop_proc()
+            self.status("idle", last_target_mhz=plan.get("target_hz", plan["signal_hz"]) / 1e6)
         self.clock = t0 + out["seconds"]
         out["eof"] = out["ended"] == "eof"
         out["rows"] = state["rows"]
