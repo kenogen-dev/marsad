@@ -6,7 +6,9 @@ tune SDR++ to it. This design adds a recorder that notices interesting signals d
 captures them, and builds a **catalogue of everything the station hears**, so nothing unusual
 goes unrecorded just because nobody was looking for it.
 
-Nothing here is built yet. Each phase has a pre-registered test, the same way RUNSHEET blocks do.
+Built so far: phase 1 (`marsad characterise`, 2026-10-27) and phases 2 and 3 (`marsad watch`,
+2026-10-28, tested offline; their radio tests are still owed). Section 9 records where the build
+differs from this draft. Each phase has a pre-registered test, the same way RUNSHEET blocks do.
 
 ---
 
@@ -200,3 +202,67 @@ daily budget is for.
   LS that is roughly 83% -> 88-91% listening, with no fingerprint change.
 - **Decoding** anything. The recorder captures and characterises; decoders (rtl_433, SatDump, URH
   on own devices) stay separate tools, as now.
+
+## 9. As built (phases 2 and 3, 2026-10-28)
+
+Code: `marsad/capture.py` (the engine: stream, events, cutter, SigMF, fingerprints, catalogue)
+and `marsad/watch.py` (the commands, the trigger rules, the dispatcher). Settings: the `recorder`
+section of station.json (defaults in `marsad/station.default.json`). Tests: `tests/test_watch.py`,
+with `tests/fake_rtl_sdr.py` standing in for the radio.
+
+```
+marsad watch fixed --freq 1265.44M --receiver v5 --duration 1h
+marsad watch survey milair 2h --chain "..." --conditions "..." --recorder-chain "..."
+marsad watch list
+```
+
+Where the build differs from the draft above, and why:
+
+- **An event is the band rising 12 dB over its own floor**, judged per ~0.85 ms FFT frame inside
+  each 20 ms block (so a 114 us pulse is not averaged away), in sub-bands of at least 4 bins (so
+  noise alone cannot reach 12 dB), and closed after 1 s of quiet. The floor is the median of quiet
+  rows, capped at 3 dB over the band's typical bin so a steady carrier cannot become its own floor.
+- **Fixed watch catalogues every event but writes IQ once per cooldown** (30 min per frequency).
+  Writing every radar scan at 2.4 MS/s would be ~6 GB an hour. One capture covers the recipe's
+  duration (90 s = 7.5 rotations for the radar), which is what the characteriser needs anyway;
+  the events in between are rows with a fingerprint and `iq_status` "cooldown".
+- **The radar gives two events per rotation**: the main beam (~40 dB) and a ~13 dB lobe ~6 s
+  later (the "heard twice per rotation outside the main beam" of the characteriser). Count scans
+  on events of 25 dB or more.
+- **The first capture of anything with no recipe keeps the full 2.4 MS/s** (on the v5 centred, on
+  the XTR a quarter band above DC), because its bandwidth is not yet known. A survey trigger
+  already knows the line's width and is planned from it.
+- **The cut rate is the radio rate divided by a whole number**, at least 2.5x the occupied
+  bandwidth (so slightly more, e.g. 60 kS/s for a 20 kHz signal). A whole-number decimation keeps
+  the filter continuous across blocks, which a test pins bit for bit.
+- **The recipe carries two extra fields**: `gain_db_used` (the gain nudge is applied to the gain
+  the capture was made at, not to the default, or the gain would oscillate) and `occupied_hz` (so
+  the watched band follows the signal and not the capped cut rate).
+- **Phase 2's "recipe narrows the rate" cannot hold for the radar.** On the saved recording the
+  recipe says 1.79 MHz occupied, rotation 12.00 s, duration 90 s, and keeps 2.4 MS/s: 2.5x of
+  1.79 MHz is more than the radio can sample stably. The test should read "the recipe keeps the
+  chirp whole and sets the duration from the rotation". Offline: 9 main-beam events in 104 s at
+  12.0 s spacing, one 30 s capture of 298 MB; an hour projects to ~1.2 GB.
+- **385-388 MHz is private** in the default tier table ("private land-mobile", the trunked system
+  found in M1). Its events, including the daily reference capture of 385.03, are fingerprint-only.
+  The fingerprint keeps the carrier's peak frequency (1 kHz bins, interpolated), which is enough to
+  start the per-radio frequency correction without holding any IQ. 299.999 MHz is open.
+  **Owner's call** whether 380-400 should stay private; it is one row in station.json.
+- **Reference carriers are exempt from the artefact tags.** 299.999 MHz sits on the 100 MHz and
+  25 MHz families and would otherwise never trigger. The 600 kHz comb is not an artefact tag for
+  the recorder at all (a coincidence match ~7 % of the time); 14.4 MHz was added (cheap).
+- **The survey radio's own error is taken out before the recorder's is put in**: true frequency
+  = survey frequency / (1 + ppm_xtr), asked of the v5 as true / (1 + ppm_v5). Both 0 until
+  measured.
+- **Survey mode is a wrapper**: `marsad watch survey` finds both radios by serial, starts an
+  ordinary `marsad run ... --device <XTR index> --non-interactive --stop-file ...` as a child (so
+  the survey, its fingerprint and its files are byte-identical to a plain run), and follows its
+  CSV or .dat with the live viewer's tailer, every completed pass. `marsad run` itself is
+  unchanged. Ctrl-C asks the survey to finish through its stop file and lets the current capture
+  close.
+- **The ambush leaves a row of its own** (mode "survey pass") from the survey's measurement, so a
+  pure one-off is catalogued even when it never comes back. A two-pass trigger pre-empts it.
+- **"captured" means "the recorder dealt with it"**: a capture, a fingerprint-only session, or a
+  frequency outside the recorder's range (row with `iq_status` "outside the recorder's range").
+  The cooldown is read from these rows, so a restart does not re-capture.
+- **The rtl_sdr log** (`rtl_sdr.log`, its stderr: tuning, gain, dropped samples) sits in the pool.

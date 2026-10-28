@@ -2474,6 +2474,58 @@ and the rule. **Not in the release zip:** `rtl-sdr/` is not in git and the froze
 rtl-sdr executables at all; a release user unzips the RTL-SDR Blog release and builds the gainfix
 exe with `packaging/rtl_power_gainfix/build.cmd` (README says so), or lives with the warning.
 
+**The triggered recorder (2026-10-28), `marsad watch`** (RECORDER_DESIGN.md phases 2 and 3;
+`marsad/capture.py`, `marsad/watch.py`). Phase 1 is `marsad characterise <iq>` (2026-10-27): it
+measures a recording (bandwidth, pulses, PRIs, chirp, rotation, modulation family) and writes a
+recipe for the next capture. The recorder feeds it every capture.
+
+```
+marsad watch fixed --freq 1265.44M --receiver v5 --duration 1h [--width 50k] [--gain G] [--capture S] [--chain "..."] [--dry-run]
+marsad watch survey <preset> <duration> --chain "..." --conditions "..." [--recorder-chain "..."] [--recorder-gain G] [--dry-run]
+marsad watch list [--last 30]
+```
+
+- **fixed**: parks one radio on one frequency with `rtl_sdr` streaming to memory. Every time the
+  band rises 12 dB over its own floor (judged per ~0.85 ms frame, so a radar pulse counts) an
+  **event** is catalogued with a **fingerprint**: a power spectrogram at 20 ms x ~1 kHz
+  (`.fp.npz`). In an open band the first event also starts an **IQ capture**: from 1 s before
+  the event, the recipe's duration (30 s without one, 120 s at most), shifted so the signal sits
+  at 0 Hz, filtered and decimated, written as SigMF (`.sigmf-data` complex int16 + `.sigmf-meta`
+  with frequency, rate, gain, serial, ppm, chain, UTC start). Then at most one capture per 30 min
+  per frequency. Each capture is characterised (`.characterise.md/.json` beside it) and the
+  recipe is stored with its row; the watch then retunes from it (rate, offset off DC, duration,
+  gain nudge). Offline on the saved radar file: 9 main-beam events in 104 s at 12.0 s, one 30 s
+  capture (298 MB), recipe 1.79 MHz occupied, rotation 12.00 s, 90 s, 2.4 MS/s.
+- **survey**: the XTR surveys with an ordinary `marsad run` started as a child (`--device` = the
+  XTR's index today, found by serial, plus `--non-interactive --stop-file`; everything else you
+  type is passed through, so give `--chain`). The survey and its fingerprint are exactly a plain
+  run's. The watcher follows its CSV or .dat with the live viewer's tailer and fires the v5 on
+  each completed pass: **12 dB over the pass's local floor on 2 consecutive passes**; never a
+  clock family (14.4, 24, 25, 28.8, 100, 480 MHz), a hop centre or a hop-wide impulse; 30 min
+  cooldown per frequency; the reference carriers 385.03 and 299.999 MHz once a day (exempt from
+  the family tags); **ambush**: one pass at 20 dB or more parks the v5 there 10 min and records if
+  it returns, pre-empted by any two-pass trigger. Ctrl-C asks the survey to stop via its stop file.
+- **Private bands** (`recorder.band_tiers` in station.json: cellular 600/700/850/AWS/PCS, pagers,
+  DECT and old cordless, private land-mobile including 380-400 MHz; anything not listed is open):
+  **raw IQ never touches disk, not even a temp file**. There is no IQ writer for them at all; the
+  stream lives in memory and only the 20 ms fingerprint is saved. The row is flagged
+  `PRIVATE: do not decode`, plus `ANOMALY: review` when the fingerprint does not look like the
+  band's service (a CW carrier of 3 kHz or less, a regular pulse train, or far narrower than the
+  service). `tests/test_watch.py` pins this by watching every file opened for writing.
+- **Catalogue**: a `captures` table in occupancy.db beside surveys/signals/bands, one row per
+  event, open or private (time, frequency, SNR, bandwidth, duty, repeat, tier, flags, iq_status,
+  file paths, rate, gain, ppm, chain, family, recipe). `marsad watch list` prints it.
+- **Storage**: `recorder.pool` (default `recordings/captures`, relative to the station or an
+  absolute path such as another drive), `pool_gb` 100, `daily_gb` 20. **Nothing is ever deleted**:
+  when either is reached, events are still catalogued and fingerprinted, IQ stops, the console
+  says so once and each row says "pool full" or "daily cap". Files go in one folder per day.
+- **Radios by serial**: `recorder.serials` (XTR 08701076, v5 27825674); detection is rtl_eeprom,
+  and rtl_sdr is given `-d <serial>`, never an index. `recorder.ppm` holds each radio's frequency
+  error by serial (reported minus true, per million), 0 until measured; the survey's is taken out
+  and the recorder's put in when tuning.
+- Tests run with no radio: `tests/fake_rtl_sdr.py` replays a file to stdout in place of rtl_sdr,
+  rtl_eeprom and the `marsad run` child are canned. The radar test uses the saved WAV when present.
+
 **Second engine: rtl_power_fftw (2026-10-21).** `rtl-sdr/rtl_power_fftw.exe` is a native
 Windows build of github.com/AD-Vega/rtl-power-fftw 1.0-beta2, made on this PC with the
 Visual Studio Build Tools that were already installed (static FFTW 3.3.10, the same

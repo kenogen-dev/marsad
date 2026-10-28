@@ -24,6 +24,7 @@ everything below is on `main`.*
 | `archive.py` | `occupancy.db`: every survey with fingerprint, signals and pooled bands |
 | `marsad response` | Antenna return loss and SWR through the bridge, with honest trust flags |
 | `marsad characterise` **(new)** | Measures an IQ recording (bandwidth, pulses, PRIs and stagger, chirp shape, rotation, modulation family) and writes a recipe for the next capture. Phase 1 of the recorder; it rediscovered the 1265 radar to 1 ms and found its chirp is S-shaped |
+| `marsad watch fixed / survey / list` **(new)** | The triggered recorder, phases 2 and 3 built and tested offline (no radio yet). `fixed` parks one radio on a frequency, catalogues every event with a 20 ms x 1 kHz fingerprint, writes SigMF IQ (cut down around the signal) once per 30 min, characterises it and retunes from the recipe. `survey` runs a normal `marsad run` on the XTR and records what it finds on the v5 (2 passes at 12 dB, ambush at 20 dB, artefacts never). Private bands: fingerprint only, never IQ. `list` shows the `captures` table in occupancy.db |
 | `marsad web status / start / stop / restart` | The 8731 web app, which now runs in the background with no window and is started by `marsad run` when it is down |
 
 **Web app tabs** (http://127.0.0.1:8731/, the only address)
@@ -43,12 +44,16 @@ everything below is on `main`.*
 
 In order. Each step gets a pre-registered pass test before it is built (RECORDER_DESIGN.md).
 
-1. **Recorder phase 2: fixed watch** on 1265.44 MHz with the v5, 1 h. Pass: at least 250 of ~300
-   scans captured, under 2 GB, and the recipe narrows the rate after the first capture.
-2. **Per-radio frequency correction**: measure each radio's offset on carriers both hear
-   (385.03, 299.999 MHz) so the recorder tunes straight to what the survey saw.
-3. **Recorder phase 3: two-radio trigger**: XTR surveys, v5 records. Needs both radios on air at
-   once (second antenna or a splitter). Every event catalogued; private bands fingerprint-only.
+1. [x] **Recorder phase 2: fixed watch**, built 2026-10-28 (`marsad watch fixed`), tested offline
+   on synthetic bursts and the saved radar file. **Radio test still owed:** 1265.44 MHz on the
+   v5, 1 h. Pass: at least 250 of ~300 scans produce an event, under 2 GB, and the recipe after
+   the first capture covers the chirp without excess.
+2. **Per-radio frequency correction**: the setting exists (`recorder.ppm` by serial, applied when
+   the recorder tunes); still to measure each radio's offset on carriers both hear (385.03,
+   299.999 MHz).
+3. [x] **Recorder phase 3: two-radio trigger**, built 2026-10-28 (`marsad watch survey`), tested
+   offline end to end. **Radio test owed** once both radios are on air (second antenna or a
+   splitter): XTR on milair, v5 recording, 2 h.
 4. **Recorder phase 4: Captures tab**: the catalogue, each event's spectrogram and flags, play
    or open in SDR++ for open-band captures.
 5. **Retune measurement**: where rtl_power's ~47 ms per hop goes. A second patch is kept only if
