@@ -947,6 +947,47 @@ with the carrier, so they are injected ahead of the tuner's gain stages. **G = 2
 V1-2/V1-3**: it matches every archived v5 run's gain, and the 385 carrier sits 23 dB under full
 scale there. 341.31 MHz was not on (0% in all three).
 
+**V1-2 / V1-3 result (2026-10-28): terminated 00:27-02:01, antenna 07:26-07:55, g29.7, patched
+rtl_power.** Fingerprint `225.000-400.000 MHz | ... | g29.7 | i30 | c0.25 | F9 | v5 | gainfix` on both.
+**Not back to back:** the owner fell asleep, so V1-3 started 5.4 h after V1-2 with the v5 idle
+and cooled. `drift.py`: V1-2 started warm from V1-1g and moved only -0.16 dB in 95 min (settled
+std 0.023); V1-3 fell **-0.90 dB in 30 min and was still falling** at the end. A cold v5 reads high,
+so every antenna-minus-load figure below carries a bias of **up to about +1 dB**. V1-3 is also a
+morning run against a night load run; only received signals care about that.
+
+| Block | V1-2 load | V1-3 antenna | antenna - load |
+|---|---|---|---|
+| 225-250 | -43.18 | -38.69 | +4.49 |
+| 250-275 | -43.07 | -33.89 | +9.18 |
+| 275-300 | -42.94 | -33.23 | +9.70 |
+| 300-316 | -43.09 | -39.82 | +3.27 |
+| **316-349** | -43.20 | -41.84 | **+1.36** |
+| 351-375 | -43.20 | -41.63 | +1.57 |
+| 375-400 | -43.20 | -42.40 | +0.80 |
+| whole band | -43.14 | -40.29 | +2.85 |
+
+Against the predictions:
+1. **316-349 adds at least 5 dB: FAILED, +1.36** (and up to ~1 dB of that may be drift). It is not
+   deaf (the XTR added -0.08), but the antenna lifts it no more than it lifts 351-400 (+0.8 to +1.6).
+   Above ~310 MHz the received noise through the collapsed whips is well under the v5's own noise,
+   so with no LNA the v5 is **receiver-noise-limited** there; V1-4f's "+2.3 dB" was relative to
+   351-400 within one run and is consistent with this. That is the case for V1-L (LaNA on the v5).
+2. **No 350 MHz step: held.** Load +0.02 dB, antenna +0.05.
+3. **Positive control: held.** 385.037 MHz +24.1 dB over the local floor (median), 80% of sweeps;
+   385.764 +14.4, 54%; 387.43 / 386.50 / 386.98 intermittent. With the load: nothing over +0.8.
+4. **Load floor flat within 1.5 dB: held, 0.26 dB** across seven 25 MHz blocks (0.33 in 10 MHz
+   blocks). V1-1b's 2.56 dB spread and its 235-245 dip were the stock rtl_power's tuner AGC, not
+   the v5.
+5. **270 MHz hump with the antenna: held.** +9.2 to +9.7 dB at 250-300, +8.2 at 260-280.
+
+**The "clock lines" are not the v5's.** With the load on, the only line is **259.20 MHz** (28.8 x 9,
+11 dB). 240.00, 264.01, 288.01, 299.999 and 360.00, listed in V1-4f as the v5's clock family,
+all **vanish** with the load (antenna: -32.1, -27.4 class, -28.7, -34.8; load: at the floor). They
+come in through the antenna: 24/25/100 MHz harmonics from equipment in the room or the PC, not the
+dongle. That also explains V1-1g, where they rose with the gain exactly like a received carrier.
+259.58 (-25.2) and 262.66 are absent with the load too: received, as M1-T found on the XTR.
+296.99 MHz was on at 07:26 (72%), before its 11:03 switch-off time of V1-4f.
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.

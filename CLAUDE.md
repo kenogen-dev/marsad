@@ -2138,6 +2138,14 @@ A/B/A g29.7 / g40.2 / g29.7, 5 min each: 385.03 carrier **+10.88 dB** for a 10.5
 drift). The v5's floor rises nearly dB for dB, so unlike the XTR it is input-noise-limited at
 g29.7: extra gain buys little SNR. Standing v5 gain stays **g29.7**. RUNSHEET V1-1g.
 
+**V1-2 / V1-3 (2026-10-28): the v5's milair twin, load then antenna, g29.7 gainfix** (5.4 h apart,
+V1-3 cold: up to ~+1 dB bias). The antenna adds +9 to +10 dB at 250-300 (the 270 hump), +4.5 at
+225-250, but only **+1.4 at 316-349** and +0.8 to +1.6 above 350: not deaf, but receiver-noise-limited
+without an LNA. Load floor flat to **0.26 dB** (V1-1b's 2.6 dB shape was the stock build's AGC); no
+350 MHz step; 385.04 control +24 dB. **240, 264, 288, 300 and 360 MHz vanish with the load**: they
+are received from room/PC equipment, not v5 clock spurs; the v5's only own line here is 259.20
+(28.8 x 9). RUNSHEET V1-2/V1-3.
+
 **V1-4f, 7 h daytime milair map on the v5 (2026-10-27, 09:33-16:33, rtl_power_fftw g40.2).** The
 v5 **hears 316-349 MHz** (+2.3 dB over its quietest 351-400 block, an intermittent ~200 kHz emitter
 at 341.31 MHz, bursts at 319.51 and 303-316), no 350 MHz step (0.18 dB), 385.03 control steady
