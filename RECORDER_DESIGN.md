@@ -285,7 +285,9 @@ Where the build differs from the draft above, and why:
 - **Private events** show their fingerprint and facts only. Export and IQ endpoints refuse them on
   the server, judged from the row, its flags and the tier table as it is now, so a mislabelled
   row cannot leak.
-- **The recorder status strip** came cheaply: `marsad watch` writes `recorder_status.json` in
-  the pool at each session start and end. A recorder started before this (the running watch on
-  2026-10-28) does not write it; the strip then says "no recorder has reported yet" and still
-  lists cooldowns from the catalogue.
+- **The live recorder status is required, not optional** (owner, 2026-10-28: a running fixed watch
+  looked like nothing running, because the Scan tab follows survey files and a fixed watch writes
+  none). Each `marsad watch` writes `recorder_status_<serial>.json` in the pool and rewrites it every
+  2 s; the page polls it every 3 s and shows a "recorder running: ..." bar on every tab. A file
+  older than 15 s means the watch is gone, whatever its last state said. A watch started before
+  this build writes nothing, so the bar stays hidden for it.

@@ -40,7 +40,6 @@ DB_LO, DB_SPAN = -5.0, 50.0          # image scale: dB over the floor
 FP_MAX_ROWS, FP_MAX_BINS = 300, 400
 IQ_ROWS, IQ_BINS, IQ_NFFT, ENV_PER_ROW = 300, 512, 1024, 8
 EXPORT_CHUNK = 1 << 20               # complex samples per export read
-STATUS_FILE = "recorder_status.json"
 
 
 class Refused(Exception):
@@ -162,27 +161,45 @@ def storage(station: Station, cfg: dict, con) -> dict:
             "today_gb": today / 1e9, "daily_gb": float(cfg.get("daily_gb", 20))}
 
 
+STALE_S = 15.0        # a running watch rewrites its file every 2 s; silence this long means it is gone
+
+
+def live_recorders(station: Station, cfg: dict | None = None, now: float | None = None) -> list:
+    """Every recorder that has reported (one recorder_status_<serial>.json per radio in the
+    pool), with `running` true only while its file is fresh. A watch killed without warning
+    (Ctrl-C in its window, a power cut) leaves state "running" behind, so freshness decides,
+    not the state field. Reads small files only: no radio, no database."""
+    cfg = cfg or cap.settings(station)
+    now = time.time() if now is None else now
+    out = []
+    for p in sorted(cap.pool_dir(station, cfg).glob("recorder_status_*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        age = now - float(d.get("updated") or 0)
+        d["age_s"] = round(age, 1)
+        d["running"] = d.get("state") == "running" and age <= STALE_S
+        if d.get("state") == "running" and not d["running"]:
+            ago = f"{age:.0f} s" if age < 120 else f"{age / 60:.0f} min"
+            d["note"] = f"stopped reporting {ago} ago (closed or killed)"
+        out.append(d)
+    out.sort(key=lambda d: (not d["running"], -float(d.get("updated") or 0)))
+    return out
+
+
 def recorder_status(station: Station, cfg: dict, con) -> dict:
-    """What `marsad watch` last said it was doing (recorder_status.json in the pool), and
-    the frequencies still in their cooldown according to the catalogue."""
-    out = {"state": "unknown", "note": "no recorder has reported yet"}
-    p = cap.pool_dir(station, cfg) / STATUS_FILE
-    try:
-        s = json.loads(p.read_text(encoding="utf-8"))
-        live = s.get("state") == "listening" and time.time() < float(s.get("until") or 0) + 60
-        out = {**s, "state": s.get("state") if live else "idle"}
-        if s.get("state") == "listening" and not live:
-            out["note"] = "the last session's time is up; the recorder is not running"
-    except (OSError, ValueError):
-        pass
+    """The live recorders, plus the cooldowns the catalogue knows about (which cover a
+    recorder that has stopped, or one from before the status file existed)."""
+    out = {"recorders": live_recorders(station, cfg)}
     cool = []
     if con is not None:
         span = float(cfg.get("cooldown_min", 30)) * 60
         f = _f(con)
         for r in con.execute(f"SELECT {f} AS f, MAX(started_epoch) AS t FROM captures "
-                             f"WHERE captured = 1 AND started_epoch >= ? GROUP BY ROUND({f} / 25e3)",
+                             f"WHERE iq_status = 'written' AND started_epoch >= ? GROUP BY ROUND({f} / 25e3)",
                              (time.time() - span,)):
-            cool.append({"f_mhz": round(r["f"] / 1e6, 4), "until": r["t"] + span})
+            cool.append({"mhz": round(r["f"] / 1e6, 4), "until": r["t"] + span})
     out["cooldowns"] = sorted(cool, key=lambda c: c["until"])
     return out
 

@@ -145,6 +145,11 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .ed input.sm{min-width:90px}
 .cur{color:#4fcf96;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 /* Captures tab */
+.recbar{padding:6px 16px;border-bottom:1px solid var(--line);background:#10261f;color:#dff7ea;font-size:12.5px}
+.recbar b{color:#4fcf96;font-weight:600}
+.recbar .gone{color:#e8b14f}
+.cs-rec{font-size:12.5px;margin:8px 0 0;line-height:1.7}
+.cs-rec b{color:var(--accent);font-weight:600}
 .cs-strip{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center}
 .cs-meter{min-width:240px;flex:1}
 .cs-meter .bar{margin-top:4px}
@@ -193,6 +198,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
   <div class="tab" data-pane="chain">Chain</div>
   <div class="tab" data-pane="roadmap">Roadmap</div>
 </div>
+<div class="recbar" id="rec-bar" hidden title="marsad watch reports here every 2 s. A fixed watch writes no survey file, so the Scan tab alone would look idle."></div>
 
 <div class="pane on" id="pane-scan">
 <div class="pick">
@@ -269,7 +275,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <div class="cs-meter"><div class="s" id="cs-pool">pool —</div><div class="bar"><div id="cs-poolbar"></div></div></div>
         <div class="cs-meter"><div class="s" id="cs-day">today —</div><div class="bar"><div id="cs-daybar"></div></div></div>
       </div>
-      <p class="note" id="cs-status" style="margin:10px 0 0">recorder: —</p>
+      <div class="cs-rec" id="cs-status">recorder: —</div>
     </div>
     <div class="wrap">
       <div class="lab">Every event the recorder catalogued, grouped by signal — click a signal to open its events, an event to see it</div>
@@ -1050,6 +1056,42 @@ function showPane(name){
 // control anywhere, and private events get no play or export controls (the server
 // refuses those exports too).
 let cs={ready:false,sel:null,open:new Set()};
+// ---- live recorder status: `marsad watch` rewrites recorder_status_<serial>.json every
+// 2 s; a file older than 15 s means the watch has gone. Shown as a bar under the tabs
+// (so the Scan tab never looks idle while a fixed watch runs) and in full on Captures.
+let recs=[], csCool=[];
+const hhmm=t=>t?new Date(t*1000).toLocaleTimeString():'—';
+function recLine(r){
+  const j=r.job,bits=[];
+  bits.push(`<b>${esc(r.mode)}</b> on the ${esc((r.receiver||'').toUpperCase())} SN ${esc(r.serial)}`);
+  if(j)bits.push(`${esc(j.kind)} ${Number(j.target_mhz).toFixed(4)} MHz (tuned ${Number(j.tuned_mhz).toFixed(4)}, `
+    +`${(j.rate/1e6).toFixed(3)} MS/s, g${j.gain_db})`+(j.tier==='private'?' PRIVATE: fingerprint only':''));
+  else if(r.mode&&r.mode.startsWith('survey'))bits.push('waiting for a trigger');
+  if(r.survey)bits.push(`survey pass ${r.passes||0}`);
+  bits.push(`${r.events} event${r.events===1?'':'s'}`+(r.last_event?`, last ${hhmm(r.last_event.at)} (${Number(r.last_event.mhz).toFixed(4)} MHz, ${Number(r.last_event.snr_db).toFixed(1)} dB)`:''));
+  if(r.capture)bits.push(`capturing ${esc(r.capture.file)} until ${hhmm(r.capture.ends_at)}`);
+  else if(j&&j.next_capture_at)bits.push(`next capture allowed ${hhmm(j.next_capture_at)}`);
+  else if(j&&j.tier!=='private')bits.push('next event may record');
+  if(r.ambush)bits.push(`ambush parked on ${Number(r.ambush.mhz).toFixed(4)} MHz until ${hhmm(r.ambush.until)}`);
+  if(r.ends_at)bits.push(`ends ${hhmm(r.ends_at)}`);
+  return bits.join('  ·  ');
+}
+function recRender(){
+  const run=recs.filter(r=>r.running),bar=document.getElementById('rec-bar');
+  bar.hidden=!run.length;
+  bar.innerHTML=run.map(r=>'recorder running: '+recLine(r)).join('<br>');
+  const el=document.getElementById('cs-status');if(!el)return;
+  const lines=run.map(r=>'recorder running: '+recLine(r)
+    +(r.cooldowns&&r.cooldowns.length?'  ·  cooling down: '+r.cooldowns.map(c=>`${c.mhz.toFixed(4)} until ${hhmm(c.until)}`).join(', '):''));
+  const gone=recs.filter(r=>!r.running).slice(0,2).map(r=>`<span class="warn">${esc((r.receiver||'').toUpperCase())} SN ${esc(r.serial)}: `
+    +(r.state==='stopped'?`last watch (${esc(r.mode)}) ended ${hhmm(r.stopped)}, ${r.events} events, ${r.captures} captures`:esc(r.note||'not running'))+'</span>');
+  if(!run.length)lines.push('recorder: not running'+(recs.length?'':' (no watch has reported yet)'));
+  if(csCool.length)lines.push('catalogue cooldowns: '+csCool.map(c=>`${c.mhz.toFixed(4)} MHz until ${hhmm(c.until)}`).join(', '));
+  el.innerHTML=lines.concat(gone).join('<br>');
+}
+async function recPoll(){
+  try{const d=await (await fetch('/captures/recorders')).json();recs=d.recorders||[];recRender();}catch(e){}
+}
 const csEl=id=>document.getElementById('cs-'+id);
 const csMHz=f=>f==null?'—':(f/1e6).toFixed(4);
 function csBadges(r){
@@ -1075,15 +1117,8 @@ async function capturesLoad(){
   csEl('pool').innerHTML=`pool <b>${s.used_gb.toFixed(2)}</b> of ${s.pool_gb} GB  ·  ${esc(s.pool)}`;
   csEl('day').innerHTML=`today <b>${s.today_gb.toFixed(2)}</b> of ${s.daily_gb} GB`;
   csBar('poolbar',s.used_gb,s.pool_gb);csBar('daybar',s.today_gb,s.daily_gb);
-  const st=d.status||{};
-  let line='recorder: ';
-  if(st.state==='listening')line+=`<b class="good">${esc(st.kind)}</b> on the ${esc((st.receiver||'').toUpperCase())}, `
-    +`${Number(st.target_mhz).toFixed(4)} MHz (tuned ${Number(st.tuned_mhz).toFixed(4)}, ${(st.rate/1e6).toFixed(3)} MS/s, g${st.gain_db})`
-    +(st.tier==='private'?' <span class="badge priv">PRIVATE</span>':'')+` until ${new Date(st.until*1000).toLocaleTimeString()}`;
-  else line+=esc(st.state==='idle'?'idle'+(st.note?' ('+st.note+')':''):(st.note||'not reporting'));
-  if(st.cooldowns&&st.cooldowns.length)line+='  ·  cooling down: '+st.cooldowns.map(c=>
-    `${c.f_mhz.toFixed(4)} MHz until ${new Date(c.until*1000).toLocaleTimeString()}`).join(', ');
-  csEl('status').innerHTML=line;
+  csCool=(d.status&&d.status.cooldowns)||[];
+  recRender();
   const keep=csEl('date').value;
   csEl('date').innerHTML='<option value="">all dates</option>'+d.dates.map(x=>`<option${x===keep?' selected':''}>${x}</option>`).join('');
   csEl('note').textContent=d.db?`${d.total} event(s) in ${d.groups.length} signal(s), from ${d.db}`
@@ -2107,6 +2142,8 @@ fetch('/roadmap').then(r=>r.text()).then(t=>document.getElementById('road').text
   .catch(()=>document.getElementById('road').textContent='TOOL_ROADMAP.md not found');
 loadSurveys();
 setInterval(loadSurveys,30000);
+recPoll();
+setInterval(recPoll,3000);
 tick();
 let startPane='scan';
 try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}

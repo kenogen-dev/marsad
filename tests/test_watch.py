@@ -280,8 +280,9 @@ def test_private_band_never_writes_iq_not_even_a_temp_file(tmp_path, monkeypatch
     assert not files_in(tmpdir)
     fps = [p for p in new if p.endswith(".fp.npz")]
     assert len(fps) == len(rows)
-    assert all(p.endswith((".fp.npz", "occupancy.db", "occupancy.db-journal", "recorder_status.json")) for p in new)
-    status = [p for p in new if p.endswith("recorder_status.json")]
+    assert all(p.endswith((".fp.npz", "occupancy.db", "occupancy.db-journal", "recorder_status_27825674.json"))
+               for p in new)
+    status = [p for p in new if p.endswith("recorder_status_27825674.json")]
     assert all(new[p] < 2000 and json.loads(Path(p).read_text())["state"] for p in status)  # a status line, no samples
     streamed = 8.0 * 240e3
     for p in fps:
@@ -604,3 +605,78 @@ def test_old_catalogue_gains_target_column(tmp_path):
     con = cap.connect(st)
     assert "target_hz" in {r[1] for r in con.execute("PRAGMA table_info(captures)")}
     assert con.execute("SELECT freq_hz FROM captures").fetchone()[0] == 1265.497e6
+
+
+
+# ---------------------------------------------------------------- the live status the web app shows
+
+def snapshots(monkeypatch) -> list:
+    """Every status the recorder writes, as written."""
+    got = []
+    real = W.Recorder.write_status
+
+    def spy(self):
+        if self.st is not None:
+            got.append(self.snapshot())
+        real(self)
+    monkeypatch.setattr(W.Recorder, "write_status", spy)
+    return got
+
+
+def test_fixed_watch_reports_its_status(tmp_path, monkeypatch):
+    """2026-10-28: the owner looked at the web app during a fixed watch and concluded nothing
+    was running, because a fixed watch writes no survey file. Now it reports itself."""
+    st = station(tmp_path, {"capture_s": 4})
+    cfg = cap.settings(st)
+    got = snapshots(monkeypatch)
+    L = Launches(scene(12.0, 0.4, 2.5, kind="fsk"), 433.92e6)
+    rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "c", 29.7, L, quiet=True, inline_characterise=True)
+    W.fixed_watch(rec, 433.92e6, 11.0, width_hz=20e3)
+    first, last = got[0], got[-1]
+    assert first["state"] == "running" and first["mode"] == "fixed watch" and first["serial"] == "27825674"
+    jobs = [g["job"] for g in got if g["job"]]
+    assert jobs and jobs[0]["kind"] == "fixed watch" and jobs[0]["target_mhz"] == pytest.approx(433.92)
+    assert jobs[0]["tuned_mhz"] < 433.92 and jobs[0]["rate"] == 240e3
+    caps = [g["capture"] for g in got if g["capture"]]
+    assert caps and caps[0]["file"].endswith(".sigmf-data") and caps[0]["ends_at"] > caps[0]["started"]
+    counts = [g["events"] for g in got]
+    assert counts == sorted(counts) and counts[-1] >= 4 and last["last_event"]["snr_db"] > 20
+    after = [g for g in got if g["job"] and g["captures"] >= 1]
+    assert after and after[-1]["job"]["next_capture_at"] == pytest.approx(caps[0]["started"] + 1800, abs=1)
+    assert last["state"] == "stopped" and last["job"] is None and last["captures"] == 1
+    on_disk = json.loads((cap.pool_dir(st, cfg) / "recorder_status_27825674.json").read_text())
+    assert on_disk["state"] == "stopped" and on_disk["events"] == last["events"]
+
+
+def test_status_heartbeat_keeps_the_file_fresh(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "STATUS_EVERY_S", 0.05)
+    st = station(tmp_path)
+    rec = W.Recorder(st, cap.settings(st), V5, ["rtl_sdr"], "c", 29.7, Launches(scene(1, 1, 1), 1e8), quiet=True)
+    rec.start_status("fixed watch", ends_at=time.time() + 60)
+    path = rec.status_path()
+    t1 = json.loads(path.read_text())["updated"]
+    time.sleep(0.4)
+    t2 = json.loads(path.read_text())["updated"]
+    rec.stop_status()
+    assert t2 > t1                                   # rewritten with nothing else happening
+    time.sleep(0.2)
+    assert json.loads(path.read_text())["state"] == "stopped"
+
+
+def test_survey_reports_passes_jobs_and_ambush(tmp_path, monkeypatch):
+    st = station(tmp_path, {"capture_s": 2, "ambush_min": 10})
+    got = snapshots(monkeypatch)
+    found = [{"device": 0, "product": "XTR", "serial": "08701076", "tuner": "E4000"},
+             {"device": 1, "product": "v5", "serial": "27825674", "tuner": "R820T"}]
+    passes = [[(341.31e6, 16), (360.125e6, 26)], [(341.31e6, 17)], [(341.31e6, 16)], [(341.31e6, 16)]]
+    run = FakeRun(st, passes)
+    rc = W.main(["survey", "milair", "1m", "--chain", "x > PC"], st, detect=det(found),
+                launch=MultiLaunch([341.31e6, 360.125e6]), exe=["rtl_sdr"], spawn=run, poll_s=0.1)
+    assert rc == 0
+    assert got[0]["mode"] == "survey + recorder" and got[0]["surveyor_serial"] == "08701076"
+    assert max(g.get("passes", 0) for g in got) == 4
+    assert any(g["ambush"] and g["ambush"]["mhz"] == pytest.approx(360.125) for g in got)
+    assert any(g["job"] and g["job"]["kind"] == "capture" for g in got)
+    cool = [c["mhz"] for g in got for c in g["cooldowns"]]
+    assert any(abs(m - 341.31) < 0.01 for m in cool)
+    assert got[-1]["state"] == "stopped"

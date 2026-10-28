@@ -49,6 +49,7 @@ from .config import Station
 from .rtlpower import find_tool, parse_duration
 
 FAMILY_14_4 = (14.4, "14.4 MHz SDR clock harmonic")
+STATUS_EVERY_S = 2.0       # how often a running watch rewrites its status file
 
 
 # ---------------------------------------------------------------- small parsers
@@ -146,23 +147,82 @@ class Recorder:
         # A replayed file arrives faster than a radio does; the tests characterise in step
         # so the retune lands where it would in real time.
         self.inline = inline_characterise
+        self.st = None                    # the live status, once start_status has run
+        self._hb = threading.Event()
 
     def say(self, text: str) -> None:
         if not self.quiet:
             print(text, flush=True)
 
-    def status(self, state: str, **fields) -> None:
-        """recorder_status.json in the pool: what this recorder is doing, for the Captures
-        tab. Best effort; a failed write never stops a capture."""
+    # -- the live status the web app shows (Captures strip, and a line on every tab)
+    def status_path(self) -> Path:
+        return self.pool / f"recorder_status_{self.rx['serial']}.json"
+
+    def start_status(self, mode: str, ends_at: float | None = None, **fields) -> None:
+        """Begin reporting. A thread rewrites the status file every STATUS_EVERY_S seconds
+        (and every change writes it at once), so the page can tell a running watch from a
+        dead one by the `updated` stamp. It never touches the radio or the stream."""
+        with self.lock:
+            self.st = {"state": "running", "mode": mode, "receiver": self.rx["role"],
+                       "serial": self.rx["serial"], "pid": os.getpid(), "started": time.time(),
+                       "ends_at": ends_at, "job": None, "events": 0, "last_event": None,
+                       "capture": None, "captures": 0, "cooldowns": {}, **fields}
+        self._hb = threading.Event()
+        threading.Thread(target=self._beat, daemon=True).start()
+        self.write_status()
+
+    def _beat(self) -> None:
+        while not self._hb.wait(STATUS_EVERY_S):
+            self.write_status()
+
+    def note_status(self, **fields) -> None:
+        if self.st is None:
+            return
+        with self.lock:
+            self.st.update(fields)
+        self.write_status()
+
+    def stop_status(self) -> None:
+        if self.st is None:
+            return
+        self._hb.set()
+        with self.lock:
+            self.st.update(state="stopped", job=None, capture=None, stopped=time.time())
+        self.write_status()
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            d = json.loads(json.dumps(self.st))
+        now = time.time()
+        cool = [{"mhz": round(float(k) / 1e6, 4), "until": t} for k, t in d.pop("cooldowns").items() if t > now]
+        d["cooldowns"] = sorted(cool, key=lambda c: c["until"])
+        job = d.get("job")
+        if job:
+            t = job["target_mhz"] * 1e6
+            nxt = [c["until"] for c in cool if abs(c["mhz"] * 1e6 - t) <= 25e3]
+            job["next_capture_at"] = max(nxt) if nxt else None       # None: the next event may record
+        d["ambush"] = ({"mhz": job["target_mhz"], "until": job["until"]}
+                       if job and job.get("kind") == "ambush" else None)
+        d["updated"] = now
+        return d
+
+    def write_status(self) -> None:
+        """Best effort, atomic: a failed write never stops a capture."""
+        if self.st is None:
+            return
         try:
             self.pool.mkdir(parents=True, exist_ok=True)
-            d = {"state": state, "receiver": self.rx["role"], "serial": self.rx["serial"],
-                 "pid": os.getpid(), "updated": time.time(), **fields}
-            tmp = self.pool / "recorder_status.json.tmp"
-            tmp.write_text(json.dumps(d), encoding="utf-8")
-            os.replace(tmp, self.pool / "recorder_status.json")
-        except OSError:
+            path = self.status_path()
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+            os.replace(tmp, path)
+        except (OSError, ValueError):
             pass
+
+    def cool(self, freq_hz: float, until: float) -> None:
+        if self.st is not None:
+            with self.lock:
+                self.st["cooldowns"][str(round(freq_hz))] = until
 
     def day_dir(self, epoch: float) -> Path:
         return self.pool / dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
@@ -200,6 +260,8 @@ class Recorder:
         def open_writer(sess_, epoch):
             target = plan.get("target_hz", plan["signal_hz"])
             self.last_iq[round(target / 10e3)] = epoch
+            if mode == "watch":
+                self.cool(target, epoch + self.cooldown_s)
             stem = cap.stem_for(target, epoch, self.rx["role"])
             meta = {"description": f"{trigger}; {band.get('band') or 'open band'}",
                     "hw": f"{self.station.receivers.get(self.rx['role'], {}).get('label', self.rx['role'])}, "
@@ -208,18 +270,22 @@ class Recorder:
                     "chain": self.chain, "signal_hz": plan["signal_hz"], "trigger": trigger,
                     "survey": survey}
             self.say(f"    recording IQ: {stem} ({plan['store_rate_hz'] / 1e3:g} kS/s, {capture_s:g} s)")
+            self.note_status(capture={"file": stem + ".sigmf-data", "started": epoch, "ends_at": epoch + capture_s,
+                                      "target_mhz": target / 1e6})
             return cap.IQWriter(self.day_dir(epoch), stem, plan, meta, epoch)
 
         def on_closed(c, sess_):
+            if self.st is not None:
+                self.note_status(capture=None, captures=self.st["captures"] + 1)
             self.budget.add(c["bytes"])
             c["gain_db"] = plan.get("gain_db")
             self._characterise_later(c)
 
         kind = "ambush" if stop_after_capture else {"now": "capture", "watch": "fixed watch"}[mode]
-        self.status("listening", kind=kind, target_mhz=plan.get("target_hz", plan["signal_hz"]) / 1e6,
-                    tuned_mhz=plan["tune_hz"] / 1e6, rate=plan["rtl_rate_hz"], gain_db=plan.get("gain_db"),
-                    tier=tier, band=band.get("band") or None, trigger=trigger, survey=survey,
-                    since=time.time(), until=time.time() + duration_s)
+        self.note_status(job={"kind": kind, "target_mhz": plan.get("target_hz", plan["signal_hz"]) / 1e6,
+                              "tuned_mhz": plan["tune_hz"] / 1e6, "rate": plan["rtl_rate_hz"],
+                              "gain_db": plan.get("gain_db"), "tier": tier, "band": band.get("band") or None,
+                              "trigger": trigger, "since": time.time(), "until": time.time() + duration_s})
         stream, stop_proc = self.launch(cmd, self.pool / "rtl_sdr.log")
         sess = cap.Session(plan, tier, mode=mode, duration_s=duration_s, capture_s=capture_s,
                            threshold_db=float(self.cfg.get("threshold_db", 12)),
@@ -237,7 +303,7 @@ class Recorder:
             raise
         finally:
             stop_proc()
-            self.status("idle", last_target_mhz=plan.get("target_hz", plan["signal_hz"]) / 1e6)
+            self.note_status(job=None, capture=None)
         self.clock = t0 + out["seconds"]
         out["eof"] = out["ended"] == "eof"
         out["rows"] = state["rows"]
@@ -284,6 +350,10 @@ class Recorder:
                "notes": "; ".join(x for x in [ev.get("anomaly"), extra.get("notes")] if x) or None}
         state["prev_start"] = start
         rid = cap.add_row(self.con, row)
+        if self.st is not None:
+            self.note_status(events=self.st["events"] + 1,
+                             last_event={"at": start, "mhz": row["freq_hz"] / 1e6, "snr_db": row["snr_peak_db"],
+                                         "iq": iq, "private": private})
         state["rows"].append(rid)
         self.say(f"    event {row['started'][11:19]}  {row['freq_hz'] / 1e6:.4f} MHz  "
                  f"peak {row['snr_peak_db']:.1f} dB  {row['duration_s']:.2f} s  {iq}"
@@ -366,12 +436,25 @@ def fixed_watch(rec: Recorder, freq_hz: float, duration_s: float, width_hz: floa
     band = cap.band_tier(freq_hz, rec.cfg)
     end = rec.clock + duration_s
     stop = stop or threading.Event()
-    total = {"events": 0, "captures": 0, "sessions": 0}
-    plan = None
+    total = {"events": 0, "captures": 0, "sessions": 0, "plan": None}
+    own = rec.st is None
+    if own:
+        rec.start_status("fixed watch", ends_at=time.time() + duration_s, watch_mhz=freq_hz / 1e6)
+    try:
+        _fixed_loop(rec, freq_hz, band, end, width_hz, capture_s, stop, total)
+    finally:
+        rec.wait_characterised()
+        if own:
+            rec.stop_status()
+    return total
+
+
+def _fixed_loop(rec, freq_hz, band, end, width_hz, capture_s, stop, total) -> None:
     while rec.clock < end - 0.5 and not stop.is_set():
         recipe = cap.recipe_for(rec.con, freq_hz)
         plan = cap.plan_capture(freq_hz, None if recipe else width_hz, rec.rx["tuner"], recipe, rec.gain_db)
         clen = capture_len(rec.cfg, recipe, capture_s)
+        total["plan"] = plan
         rec.recipe_ready.clear()
         rec.say(f"  listening on {freq_hz / 1e6:.4f} MHz: tuned {plan['tune_hz'] / 1e6:.4f}, "
                 f"{plan['rtl_rate_hz'] / 1e6:g} MS/s, cut {plan['store_rate_hz'] / 1e3:g} kS/s, "
@@ -386,9 +469,6 @@ def fixed_watch(rec: Recorder, freq_hz: float, duration_s: float, width_hz: floa
             break
         if rec.recipe_ready.is_set():
             rec.say("  new recipe from the characteriser: retuning")
-    rec.wait_characterised()
-    total["plan"] = plan
-    return total
 
 
 # ---------------------------------------------------------------- phase 3: what a pass shows
@@ -605,6 +685,8 @@ def survey_job(rec: Recorder, station: Station, survey_name: str, xtr_ppm: float
         plan = cap.plan_capture(f_true, None if recipe else max(job["width_khz"] * 1e3, 5e3),
                                 rec.rx["tuner"], recipe, rec.gain_db)
         clen = capture_len(cfg, recipe)
+        rec.cool(f_true, (cap.local_midnight(time.time()) + 86400) if job.get("reference")
+                 else time.time() + rec.cooldown_s)
         rec.say(f"  -> {job['kind']} {f_true / 1e6:.4f} MHz ({job['why']}"
                 + (f"; {band['band']}, PRIVATE: fingerprint only" if band["tier"] == "private" else "") + ")")
         if job["kind"] == "capture":
@@ -659,7 +741,7 @@ def watch_tailer(path: Path):
 
 
 def follow_survey(tailer, triggers: Triggers, dispatcher, families, floor_window_mhz: float,
-                  alive, say=print, poll_s: float = 1.0) -> int:
+                  alive, say=print, poll_s: float = 1.0, on_pass=None) -> int:
     """Feed each completed pass of a growing survey to the trigger rules. Returns passes seen."""
     seen = 0
     while True:
@@ -669,6 +751,8 @@ def follow_survey(tailer, triggers: Triggers, dispatcher, families, floor_window
             todo, tailer.done = tailer.done, []
         for latest, step, hc in todo:
             seen += 1
+            if on_pass:
+                on_pass(seen)
             dets = pass_detections(latest, step, hc, triggers.threshold, floor_window_mhz, families)
             for act in triggers.feed(dets, time.time()):
                 say(f"  pass {seen}: {act['kind']} {act['f_mhz']:.4f} MHz ({act['why']})")
@@ -825,15 +909,20 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
     trig = Triggers(cfg, lambda f, tol: cap.last_captured(rec.con, f, tol))
     xtr_ppm = cap.ppm_of(cfg, surveyor["serial"])
     disp = Dispatcher(survey_job(rec, station, survey_name, xtr_ppm))
+    rec.start_status("survey + recorder", ends_at=t_start + dur, survey=survey_name,
+                     surveyor=args.surveyor, surveyor_serial=surveyor["serial"], passes=0)
     try:
         follow_survey(watch_tailer(path), trig, disp, trigger_families(station), fw,
-                      alive=lambda: proc.poll() is None, say=rec.say, poll_s=poll_s)
+                      alive=lambda: proc.poll() is None, say=rec.say, poll_s=poll_s,
+                      on_pass=lambda n: rec.note_status(passes=n))
     except KeyboardInterrupt:
         stopfile.parent.mkdir(parents=True, exist_ok=True)
         stopfile.write_text("stop")
         print("\n  stopping: the survey finishes and analyses what it has; the recorder ends its capture.")
         proc.wait()
-    disp.close()
-    rec.wait_characterised()
+    finally:
+        disp.close()
+        rec.wait_characterised()
+        rec.stop_status()
     print(f"\n  survey and recorder done. `marsad watch list` shows the catalogue.")
     return proc.returncode or 0

@@ -2537,10 +2537,22 @@ marsad watch list [--last 30]
 app between Archive and Probe. Read-only on occupancy.db (opened `mode=ro`, so it never migrates
 or writes it) and on the pool. **There is no delete control anywhere.**
 
-- **Strip**: pool used of `pool_gb`, today's GB of `daily_gb`, and the recorder's own status
-  (`recorder_status.json`, which `marsad watch` writes in the pool at every session start and end:
-  fixed watch / capture / ambush, frequency, tuning, rate, gain, until when) plus the frequencies
-  still in their cooldown, from the catalogue.
+- **Strip**: pool used of `pool_gb`, today's GB of `daily_gb`, and every recorder's live status.
+- **Live recorder status (required, 2026-10-28 afternoon).** The owner looked at the web app
+  during a running `watch fixed` and concluded nothing was scanning: a fixed watch writes no
+  survey file, so the Scan tab looked idle. Now every `marsad watch` (fixed or survey, however it
+  was started) writes `recorder_status_<serial>.json` in the pool at every change and rewrites it
+  every **2 s** from a small thread that never touches the radio or the stream: mode, receiver and
+  serial, the current job (fixed watch / capture / ambush, asked-for and tuned frequency, rate,
+  gain, tier), events so far and the last one (time, MHz, SNR), the capture in progress and when
+  it ends, the next capture allowed (cooldown) or "next event may record", the ambush parking,
+  survey passes, and when the watch ends. The page polls `/captures/recorders` every 3 s and shows
+  a **"recorder running: ..." bar under the tabs on every tab, the Scan tab included**, and the
+  full line in the Captures strip. **Freshness decides, not the state field**: a file not
+  rewritten for 15 s means the watch was closed or killed (Ctrl-C, a power cut), and the page
+  says "stopped reporting N s ago" instead of "running". A watch that ends normally writes
+  `state: stopped` with its totals. Checked on a test viewer with a throttled fake watch, killed
+  mid-run: the bar went away and the strip said why within 15 s.
 - **List**: every event, **grouped by signal** (the asked-for frequency, else the measured centre;
   events within 25 kHz or half the occupied bandwidth go together), each group with its family
   from the characteriser, event and capture counts, peak and badges (OPEN, PRIVATE: do not decode,
@@ -2562,7 +2574,7 @@ or writes it) and on the pool. **There is no delete control anywhere.**
   event gets no export or IQ controls, and `/captures/export` and `/captures/iq` refuse it on the
   server (403)**, also for a row that claims to be open in a band the tier table says is private.
 - Endpoints: `GET /captures?date&lo&hi&badge`, `/captures/event?id`, `/captures/fp?id`,
-  `/captures/iq?id`, `POST /captures/export {id, format: wav|cf32}`. `tests/test_catalogue.py`
+  `/captures/iq?id`, `/captures/recorders`, `POST /captures/export {id, format: wav|cf32}`. `tests/test_catalogue.py`
   pins the list, the event pages, the slice-at-a-time read, the exports byte for byte and the
   private refusals, including through HTTP.
 

@@ -69,7 +69,8 @@ def test_summary_groups_badges_and_storage(filled):
     assert all("PRIVATE: do not decode" in r["badges"] for r in by[880]["rows"])
     assert all(r["badges"][0] == "OPEN" for r in by[433]["rows"])
     assert s["storage"]["used_gb"] > 0 and s["storage"]["pool_gb"] == 100 and s["storage"]["daily_gb"] == 20
-    assert s["status"]["state"] == "idle"                 # the recorder said so when it finished
+    recs = s["status"]["recorders"]
+    assert recs and recs[0]["state"] == "stopped" and not recs[0]["running"]   # it said so when it finished
     assert C.summary(st, badge="private")["total"] == len(ids["private"])
     assert C.summary(st, badge="written")["total"] == 1
     assert C.summary(st, lo_mhz=800, hi_mhz=900)["groups"][0]["private"]
@@ -204,7 +205,10 @@ def test_http_endpoints_refuse_private_export(filled):
         urllib.request.urlopen(base + f"/captures/iq?id={ids['private'][0]}")
     assert ei.value.code == 403
     assert json.loads(post(ids["written"][0], "wav").read())["bytes"] > 44
+    recs = json.loads(urllib.request.urlopen(base + "/captures/recorders").read())["recorders"]
+    assert recs and all("running" in r for r in recs)
     page = urllib.request.urlopen(base + "/").read().decode("utf-8")
+    assert 'id="rec-bar"' in page and "setInterval(recPoll" in page   # the line on every tab
     assert 'data-pane="captures"' in page
     pane = page[page.index('id="pane-captures"'):page.index('id="pane-probe"')]
     # no delete control anywhere on the tab, and no route that could delete
@@ -222,3 +226,22 @@ def test_old_catalogue_without_target_column_reads(tmp_path):
     s = C.summary(st)                     # read-only: must not need (or add) the new column
     assert s["total"] == 1 and s["groups"][0]["f_mhz"] == pytest.approx(1265.497)
     assert "target_hz" not in {r[1] for r in sqlite3.connect(st.db).execute("PRAGMA table_info(captures)")}
+
+
+
+def test_live_recorders_judges_by_freshness(tmp_path):
+    st = station(tmp_path)
+    pool = cap.pool_dir(st, cap.settings(st))
+    pool.mkdir(parents=True)
+    now = 1_800_000_000.0
+    files = {"27825674": {"state": "running", "mode": "fixed watch", "updated": now - 3, "events": 5},
+             "08701076": {"state": "running", "mode": "survey + recorder", "updated": now - 600, "events": 2},
+             "11111111": {"state": "stopped", "mode": "fixed watch", "updated": now - 5, "events": 9}}
+    for ser, d in files.items():
+        (pool / f"recorder_status_{ser}.json").write_text(json.dumps({**d, "serial": ser}))
+    (pool / "recorder_status_broken.json").write_text("{not json")
+    got = {r["serial"]: r for r in C.live_recorders(st, now=now)}
+    assert got["27825674"]["running"]
+    assert not got["08701076"]["running"] and "10 min" in got["08701076"]["note"]   # killed: went silent
+    assert not got["11111111"]["running"]
+    assert C.live_recorders(st, now=now)[0]["serial"] == "27825674"                # running first

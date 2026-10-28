@@ -1128,6 +1128,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                         out = catalogue.fingerprint_view(station, int(one("id") or 0))
                     elif u.path == "/captures/iq":
                         out = catalogue.iq_view(station, int(one("id") or 0))
+                    elif u.path == "/captures/recorders":
+                        # polled by every tab: small status files only, never the radio or the db
+                        out = {"recorders": catalogue.live_recorders(station)}
                     else:
                         self.send_error(404); return
                 except catalogue.Refused as exc:
