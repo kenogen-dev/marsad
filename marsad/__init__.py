@@ -5,4 +5,4 @@ about rtl_power live in `rtlpower.py`; everything particular to one station
 (receivers, spur families, presets, measured retune time) lives in the
 station.json that `config.py` loads.
 """
-__version__ = "0.3.0"
+__version__ = "0.4.0"

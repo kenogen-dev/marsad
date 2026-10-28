@@ -4,7 +4,7 @@ The guiding aim: **run the station without Claude in the loop.** Claude is for d
 experiments and arguing about results, not for routine operation. Anything you would otherwise
 have to ask it to compute belongs in a tool.
 
-*Updated 2026-10-27. marsad 0.3.0 is released on GitHub (kenogen-dev/marsad) with a Windows zip;
+*Updated 2026-10-27. marsad 0.4.0 is released on GitHub (kenogen-dev/marsad) with a Windows zip;
 everything below is on `main`.*
 
 ---
@@ -68,7 +68,7 @@ In order. Each step gets a pre-registered pass test before it is built (RECORDER
 - **Resonance hunter**: which bands moved between two runs, and what length would resonate there.
 - **Upstream report** of the rtl_power gain and overflow bugs to RTL-SDR Blog (the owner posts).
 
-Done since the last version of this file: packaging (marsad, 0.3.0 release), git, the
+Done since the last version of this file: packaging (marsad, 0.3.0 and 0.4.0 releases), git, the
 rtl_power_fftw engine and adapter, the always-up web app.
 
 ---
