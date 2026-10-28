@@ -2110,6 +2110,23 @@ gain normally. Until it is explained, **no v5 run's level depends on its `-g`**,
 trunked carrier clips the v5 on the milair span. Next check: SDR++'s gain slider on the v5, AGC off.
 Details in RUNSHEET V1-1.
 
+*Resolved the same morning: the fault is rtl_power, not the dongle or the dll.* SDR++, `rtl_sdr` and
+`rtl_power_fftw` all move the 385.04 carrier ~+29 dB for g7.7 -> g40.2; rtl_power +4.7 even on one
+hop. Cause (tool session): rtl_power sets the gain, then its sample-rate call tunes to 0 Hz, which
+switches the R820T into automatic HF direct sampling; the first real tune re-initialises the tuner
+and leaves it on automatic gain. A second bug hits both radios: rtl_power's per-bin sums are 32-bit
+on Windows and overflow on strong carriers, giving `-nan(ind)` or a silently low value - so the
+**"NaN = saturation" readings above (FM checks 2026-10-16/18) are at least partly rtl_power
+overflowing**, and peak levels near them may read low. Fixed build `rtl-sdr/rtl_power_gainfix.exe`
+(+28.0 dB, matching rtl_sdr), source in `packaging/rtl_power_gainfix/`; not yet tested on the XTR,
+not yet used by marsad. Every archived v5 rtl_power run was at g29.7, so none had tested gain.
+
+**V1-4f, 7 h daytime milair map on the v5 (2026-10-27, 09:33-16:33, rtl_power_fftw g40.2).** The
+v5 **hears 316-349 MHz** (+2.3 dB over its quietest 351-400 block, an intermittent ~200 kHz emitter
+at 341.31 MHz, bursts at 319.51 and 303-316), no 350 MHz step (0.18 dB), 385.03 control steady
+100%. 296.99 switched off once at 11:03:22; 259.58 stayed on all day; 262.66 was intermittent -
+so M1's "one local source" reading does not repeat. Terminated twin still owed. RUNSHEET V1-4f.
+
 ### Printer room catalogue P1 (2026-10-26, 21:04-22:48): nothing in 52-1660 MHz, in any state
 
 Six wide runs, stub A (blade) taped at the back middle of the case: unplugged, off, idle,

@@ -883,6 +883,31 @@ Predictions:
   source with a daily schedule, not the XTR.
 - The 270 MHz hump present, and smaller in the afternoon than the morning (M1 fell 5.4 dB 03-14 h).
 
+**V1-4f RESULT (2026-10-27, 09:33-16:33, full 7 h, no dropped samples):**
+`survey_custom_7h_v5-milair-fftw-7h-g40.2_20261027-0933`, 753 passes of 33.5 s (the 30 s plan
+was a little short), 622 analysed after the 65 min discard. Re-read pass by pass from the `.dat`.
+
+| Prediction | Measured | |
+|---|---|---|
+| 385.03 MHz steady all day | **100%** of passes over floor+10, SNR median 30.2 dB, every hour | held |
+| 316-349 at least 2 dB over the quietest 351-400 block, with a non-clock detection | **+2.32 dB** (-50.04 vs 381-391 at -52.37); **341.31 MHz** intermittent (9.3%, ~200 kHz wide, +11 dB) and **319.51** bursts | held (narrowly; part of the 2.3 dB may be the receiver's own tilt, V1-1b showed ~0.4 dB on rtl_power's scale) |
+| no 350 MHz step | 345-350 -51.48, 350-355 -51.30 (**0.18 dB**) | held |
+| 296.99 leaves in 13:00-14:00 like M1's 296.93 | on from the start, **one clean switch-off at 11:03:22**, off for the rest | **FAILED** |
+| 270 hump present, smaller in the afternoon | present, +10.4 dB over 316-349 at 10 h, **+11.0 at 16 h** (grew 0.6) | **half failed** |
+
+**The v5 hears 316-349 MHz**, where the XTR heard nothing (M1-T, -0.08 dB): a ~200 kHz-wide
+intermittent emitter at 341.31 MHz and short bursts at 319.51, plus a cluster of rare bursts at
+303-316 MHz (up to +50 dB, 0.2-1.3% of passes). Identity and timing only; nothing decoded.
+The terminated twin (V1-2/V1-3) is still needed before calling 2.3 dB of floor "received".
+
+**M1's "one local source" for 259.58 / 262.65 / 296.93 does not hold today.** 296.99 left at 11:03,
+259.58 stayed on all day at +8.4 dB, and 262.66 was intermittent (40%). Three different schedules
+on the v5 against one shared switch-off on the XTR yesterday. Not resolved; a fourth day, or a
+probe hunt at 296.99 before 11:00, would separate them.
+
+Steady clock-family lines on the v5: 240.00, 264.01, 360.00 (24 MHz x10, x11, x15) and 299.999
+(+21 dB; 25 x12 / 100 x3). Whole-band median flat through the day (-48.7 to -49.1).
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.
