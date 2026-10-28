@@ -2132,6 +2132,12 @@ stock build to 0.05 dB on the floor. **marsad runs it for every rtl_power scan s
 see "Which rtl_power marsad runs" under Existing code. Every archived v5 rtl_power run was at
 g29.7, so none had tested gain.
 
+**V1-1g (2026-10-27/28): the patched rtl_power keeps the v5's gain across the full milair span.**
+A/B/A g29.7 / g40.2 / g29.7, 5 min each: 385.03 carrier **+10.88 dB** for a 10.5 dB step, every
+25 MHz block +6.8 to +10.3, **zero non-finite readings**, A2-A1 -0.70 on the carrier (cold-start
+drift). The v5's floor rises nearly dB for dB, so unlike the XTR it is input-noise-limited at
+g29.7: extra gain buys little SNR. Standing v5 gain stays **g29.7**. RUNSHEET V1-1g.
+
 **V1-4f, 7 h daytime milair map on the v5 (2026-10-27, 09:33-16:33, rtl_power_fftw g40.2).** The
 v5 **hears 316-349 MHz** (+2.3 dB over its quietest 351-400 block, an intermittent ~200 kHz emitter
 at 341.31 MHz, bursts at 319.51 and 303-316), no 350 MHz step (0.18 dB), 385.03 control steady

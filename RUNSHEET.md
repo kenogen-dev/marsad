@@ -908,6 +908,45 @@ probe hunt at 296.99 before 11:00, would separate them.
 Steady clock-family lines on the v5: 240.00, 264.01, 360.00 (24 MHz x10, x11, x15) and 299.999
 (+21 dB; 25 x12 / 100 x3). Whole-band median flat through the day (-48.7 to -49.1).
 
+**V1-1g, the patched rtl_power on the v5 across the whole milair span (2026-10-27/28, 22:52 /
+23:24 / 00:00): PASS. The gain is real.** A/B/A, 5 min each, 30 sweeps, nothing touched, v5 cold
+at the start, antenna chain (DC block still in), `rtl_power_gainfix.exe` named in all three reports.
+
+| 25 MHz block | A1 g29.7 | B g40.2 | A2 g29.7 | B - mean(A) | A2 - A1 |
+|---|---|---|---|---|---|
+| 225-250 | -39.67 | -30.06 | -39.96 | +9.75 | -0.29 |
+| 250-275 | -33.41 | -23.78 | -34.68 | +10.27 | -1.27 |
+| 275-300 | -30.98 | -22.12 | -31.14 | +8.94 | -0.16 |
+| 300-325 | -38.24 | -30.20 | -39.82 | +8.83 | -1.58 |
+| 325-350 | -41.42 | -34.55 | -42.08 | +7.20 | -0.66 |
+| 350-375 | -41.00 | -33.42 | -41.53 | +7.84 | -0.53 |
+| 375-400 | -41.78 | -35.24 | -42.26 | +6.78 | -0.48 |
+| whole band | -39.52 | -30.90 | -40.44 | +9.08 | -0.92 |
+
+| Line (median over sweeps) | A1 | B | A2 | B - mean(A) |
+|---|---|---|---|---|
+| 385.03 trunked carrier | -16.74 | -6.21 | -17.44 | **+10.88** |
+| 299.999 (clock) | -25.22 | -15.01 | -25.44 | +10.32 |
+| 240.00 (clock) | -31.42 | -20.72 | -31.94 | +10.96 |
+| 360.00 (clock) | -32.56 | -20.52 | -32.20 | +11.86 |
+| 259.58 | -26.24 | -17.02 | -26.24 | +9.22 |
+
+Against the predictions:
+- 385.03 rises +10 +/- 1.5 dB: **held, +10.88** (nominal step 10.5).
+- Every 25 MHz block rises 5-10 dB: **held in six of seven**; 250-275 rose +10.27, 0.27 over.
+- No NaN: **held**, 0 non-finite of 486,360 readings in each run (the 385 carrier read NaN in
+  every sweep on the stock build).
+- A1 and A2 within 1.5 dB: **held on the carrier (-0.70) and whole band (-0.92)**; one block,
+  300-325, at -1.58. The cold v5 falling, as V1-1b says it does; the bracket absorbs it.
+
+What it means: the R820T now delivers its nominal step (+10.9 on a 10.5 dB step), where the stock
+rtl_power moved nothing. **The floor rose almost as much (+6.8 to +10.3)**, so the v5's floor at
+g29.7 is already set by amplified input noise, not by a fixed digital floor like the XTR's: more
+gain buys only ~4 dB of carrier SNR at 375-400 and next to nothing at 250-275. The clock lines rise
+with the carrier, so they are injected ahead of the tuner's gain stages. **G = 29.7 is fine for
+V1-2/V1-3**: it matches every archived v5 run's gain, and the 385 carrier sits 23 dB under full
+scale there. 341.31 MHz was not on (0% in all three).
+
 The gain shakedown V1-1 stays first because every later run must use the gain it picks; a 5 min
 antenna run before the terminated ones is a setting check, not a measurement. Warm-up does not
 matter for it: it judges clipping, not level.
