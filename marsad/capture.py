@@ -127,6 +127,13 @@ def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
     zero-IF tuner a quarter of the band above DC.
     """
     zero_if = (tuner or "").lower() == "e4000"
+    target = signal_hz
+    if recipe and recipe.get("signal_hz"):
+        # Tune on the centre the characteriser measured when it lies inside the signal
+        # (the radar's chirp centre is 57 kHz above its nominal 1265.44 MHz).
+        occ0 = recipe.get("occupied_hz") or 0.0
+        if abs(recipe["signal_hz"] - signal_hz) <= max(20e3, occ0 / 2):
+            signal_hz = float(recipe["signal_hz"])
     if recipe and recipe.get("rtl_rate_hz"):
         rtl = float(recipe["rtl_rate_hz"])
         offset = float(recipe.get("signal_above_tune_hz") or 0.0)
@@ -153,7 +160,7 @@ def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
     room = 0.4 * rtl - abs(offset)
     width = max(min(width, 2 * room), 4e3)
     decim = max(1, int(rtl // max(store, 1.0)))
-    plan = {"signal_hz": signal_hz, "tune_hz": signal_hz - offset, "rtl_rate_hz": rtl,
+    plan = {"target_hz": target, "signal_hz": signal_hz, "tune_hz": signal_hz - offset, "rtl_rate_hz": rtl,
             "decim": decim, "store_rate_hz": rtl / decim, "width_hz": width,
             "source": src, "duration_s": (recipe or {}).get("duration_s")}
     if gain_db is not None:
@@ -183,6 +190,7 @@ CREATE TABLE IF NOT EXISTS captures (
   started_epoch   REAL,
   duration_s      REAL,
   freq_hz         REAL,
+  target_hz       REAL,
   tuned_hz        REAL,
   receiver        TEXT,
   serial          TEXT,
@@ -217,7 +225,7 @@ CREATE TABLE IF NOT EXISTS captures (
 CREATE INDEX IF NOT EXISTS ix_cap_freq ON captures(freq_hz);
 CREATE INDEX IF NOT EXISTS ix_cap_time ON captures(started_epoch);
 """
-COLUMNS = ("started", "started_epoch", "duration_s", "freq_hz", "tuned_hz", "receiver", "serial",
+COLUMNS = ("started", "started_epoch", "duration_s", "freq_hz", "target_hz", "tuned_hz", "receiver", "serial",
            "mode", "trigger", "survey", "tier", "band", "flags", "snr_peak_db", "snr_median_db",
            "bandwidth_hz", "peak_hz", "duty", "repeat_s", "captured", "iq_status", "iq_path",
            "iq_bytes", "fingerprint", "fp_bytes", "rtl_rate_hz", "store_rate_hz", "gain_db",
@@ -231,6 +239,10 @@ def connect(station: Station) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.executescript(archive.SCHEMA)
     con.executescript(SCHEMA)
+    have = {r[1] for r in con.execute("PRAGMA table_info(captures)")}
+    if "target_hz" not in have:            # catalogues from before 2026-10-28 afternoon
+        con.execute("ALTER TABLE captures ADD COLUMN target_hz REAL")
+        con.commit()
     return con
 
 
@@ -252,8 +264,21 @@ def update_row(con: sqlite3.Connection, row_id: int, **fields) -> None:
 
 
 def near(con, freq_hz: float, tol_hz: float, where: str = "1") -> list:
-    return con.execute(f"SELECT * FROM captures WHERE ABS(freq_hz - ?) <= ? AND ({where}) "
-                       "ORDER BY started_epoch DESC", (freq_hz, tol_hz)).fetchall()
+    """Rows about this frequency, newest first.
+
+    A row is matched on the frequency the recorder was ASKED for (target_hz), not on
+    the measured centre (freq_hz): a chirp or an off-centre signal can sit tens of kHz
+    from the watched frequency (the 1265.44 MHz radar measures 1265.497), and matching
+    the centre with a 20 kHz tolerance lost the recipe between runs (2026-10-28). Rows
+    written before target_hz existed match when the frequency lies inside the event's
+    own occupied band.
+    """
+    return con.execute(
+        "SELECT * FROM captures WHERE ("
+        " (target_hz IS NOT NULL AND ABS(target_hz - ?) <= ?)"
+        " OR (target_hz IS NULL AND ABS(freq_hz - ?) <= MAX(?, COALESCE(bandwidth_hz, 0) / 2))"
+        f") AND ({where}) ORDER BY started_epoch DESC",
+        (freq_hz, tol_hz, freq_hz, tol_hz)).fetchall()
 
 
 def recipe_for(con, freq_hz: float, tol_hz: float = 20e3) -> dict | None:

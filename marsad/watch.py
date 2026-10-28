@@ -168,10 +168,11 @@ class Recorder:
 
         def allow_iq(t_s):
             now = sess.t0 + t_s
-            key = round(plan["signal_hz"] / 10e3)
+            target = plan.get("target_hz", plan["signal_hz"])
+            key = round(target / 10e3)
             last = self.last_iq.get(key)
             if last is None:
-                rows = cap.near(self.con, plan["signal_hz"], max(10e3, plan["width_hz"] / 2),
+                rows = cap.near(self.con, target, max(10e3, plan["width_hz"] / 2),
                                 "iq_status = 'written'")
                 last = rows[0]["started_epoch"] if rows else None
             if mode == "watch" and last is not None and now - last < self.cooldown_s:
@@ -183,8 +184,9 @@ class Recorder:
             return r
 
         def open_writer(sess_, epoch):
-            self.last_iq[round(plan["signal_hz"] / 10e3)] = epoch
-            stem = cap.stem_for(plan["signal_hz"], epoch, self.rx["role"])
+            target = plan.get("target_hz", plan["signal_hz"])
+            self.last_iq[round(target / 10e3)] = epoch
+            stem = cap.stem_for(target, epoch, self.rx["role"])
             meta = {"description": f"{trigger}; {band.get('band') or 'open band'}",
                     "hw": f"{self.station.receivers.get(self.rx['role'], {}).get('label', self.rx['role'])}, "
                           f"SN {self.rx['serial']}",
@@ -231,7 +233,7 @@ class Recorder:
             if why:
                 flags.append(cap.ANOMALY)
                 ev["anomaly"] = why
-        stem = cap.stem_for(plan["signal_hz"], start, self.rx["role"])
+        stem = cap.stem_for(plan.get("target_hz", plan["signal_hz"]), start, self.rx["role"])
         fp = cap.save_fingerprint(self.day_dir(start) / "fingerprints", stem, ev, start, plan["signal_hz"])
         fp_bytes = fp.stat().st_size
         self.budget.add(fp_bytes)
@@ -247,6 +249,7 @@ class Recorder:
         row = {"started": dt.datetime.fromtimestamp(start).isoformat(timespec="milliseconds"),
                "started_epoch": start, "duration_s": ev["duration_s"],
                "freq_hz": plan["signal_hz"] + ev.get("centre_rel_hz", 0.0),
+               "target_hz": plan.get("target_hz", plan["signal_hz"]),
                "tuned_hz": plan["tune_hz"], "receiver": self.rx["role"], "serial": self.rx["serial"],
                "mode": mode, "trigger": trigger, "survey": survey, "tier": band["tier"],
                "band": band.get("band") or None, "flags": "; ".join(flags) or None,
@@ -571,7 +574,7 @@ def survey_job(rec: Recorder, station: Station, survey_name: str, xtr_ppm: float
         trigger = f"survey {job['why']}"
         if not in_range(station, rec.rx["role"], f_true):
             cap.add_row(rec.con, {"started": dt.datetime.now().isoformat(timespec="seconds"),
-                                  "started_epoch": time.time(), "freq_hz": f_true,
+                                  "started_epoch": time.time(), "freq_hz": f_true, "target_hz": f_true,
                                   "receiver": rec.rx["role"], "mode": job["kind"], "trigger": trigger,
                                   "survey": survey_name, "tier": band["tier"], "band": band["band"] or None,
                                   "flags": cap.PRIVATE if band["tier"] == "private" else None,
@@ -590,7 +593,7 @@ def survey_job(rec: Recorder, station: Station, survey_name: str, xtr_ppm: float
         else:
             # the survey pass itself is the record of a one-off that never returns
             cap.add_row(rec.con, {"started": dt.datetime.now().isoformat(timespec="seconds"),
-                                  "started_epoch": time.time(), "freq_hz": f_true, "receiver": "survey",
+                                  "started_epoch": time.time(), "freq_hz": f_true, "target_hz": f_true, "receiver": "survey",
                                   "mode": "survey pass", "trigger": trigger, "survey": survey_name,
                                   "tier": band["tier"], "band": band["band"] or None,
                                   "flags": cap.PRIVATE if band["tier"] == "private" else None,

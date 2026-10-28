@@ -556,3 +556,49 @@ def test_fixed_watch_on_the_radar_recording(tmp_path):
     assert "chirp" in w[0]["family"]
     first = json.loads(argv.read_text().splitlines()[0])
     assert first[first.index("-d") + 1] == "27825674"
+
+
+# ---------------------------------------------------------------- recipes carry over between runs
+
+RADAR_RECIPE = {"store_rate_hz": 2.4e6, "rtl_rate_hz": 2.4e6, "signal_hz": 1265.497e6,
+                "tune_hz": 1265.214e6, "signal_above_tune_hz": 283e3, "duration_s": 90.0,
+                "gain": {"change_db": 0}, "gain_db_used": 29.7, "occupied_hz": 1.6e6}
+
+
+@pytest.mark.parametrize("target", [None, 1265.44e6])
+def test_a_fresh_watch_uses_the_stored_recipe(tmp_path, target):
+    """2026-10-28: the morning's capture stored its recipe on a row whose measured centre was
+    1265.497 MHz; the 11:35 watch on 1265.44 looked within 20 kHz, missed it and started from
+    the defaults. A row from before target_hz existed (None) must match through its own
+    occupied band; a new row through the frequency the recorder was asked for."""
+    st = station(tmp_path)
+    cfg = cap.settings(st)
+    con = cap.connect(st)
+    row = {"started": "2026-10-28T09:18:28", "started_epoch": time.time() - 3 * 3600,
+           "freq_hz": 1265.497e6, "bandwidth_hz": 1.6e6, "mode": "watch", "captured": 1,
+           "iq_status": "written", "recipe": RADAR_RECIPE, "family": "pulsed"}
+    if target:
+        row["target_hz"] = target
+    cap.add_row(con, row)
+    assert cap.recipe_for(con, 1265.44e6)["duration_s"] == 90.0
+    assert cap.recipe_for(con, 1263.0e6) is None                 # a different signal
+    assert W.capture_len(cfg, cap.recipe_for(con, 1265.44e6)) == 90.0
+    L = Launches(scene(3.0, 0.4, 2.5), 1265.44e6)
+    rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "c", 29.7, L, quiet=True)
+    tot = W.fixed_watch(rec, 1265.44e6, 2.0)
+    assert tot["plan"]["source"] == "recipe"
+    assert float(L.cmds[0][L.cmds[0].index("-f") + 1]) == pytest.approx(1265.497e6 - 283e3, abs=1)
+    new = rec.con.execute("SELECT target_hz FROM captures WHERE id > 1").fetchall()
+    assert new and all(r["target_hz"] == 1265.44e6 for r in new)  # rows say what was asked for
+
+
+def test_old_catalogue_gains_target_column(tmp_path):
+    import sqlite3
+    st = station(tmp_path)
+    c = sqlite3.connect(st.db)
+    c.executescript(cap.SCHEMA.replace("  target_hz       REAL,\n", ""))
+    c.execute("INSERT INTO captures (freq_hz, recipe) VALUES (1265.497e6, '{}')")
+    c.commit(); c.close()
+    con = cap.connect(st)
+    assert "target_hz" in {r[1] for r in con.execute("PRAGMA table_info(captures)")}
+    assert con.execute("SELECT freq_hz FROM captures").fetchone()[0] == 1265.497e6
