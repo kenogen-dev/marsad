@@ -160,7 +160,16 @@ radiolocation here, which is consistent. The exact installation is not identifia
 signal alone. Levels say nothing about distance: these are multi-megawatt sets and the nearest
 could be tens of miles away.
 
-Analysis scripts were throwaway; the recording is in the SDR++ recordings folder, not this repo.
+Analysis scripts were throwaway; the recording is in the SDR++ recordings folder, not this repo:
+`C:\mydata\projects\sig_init\SDRplus\recordings\baseband_1265440000Hz_00-32-45_15-10-2026.wav`.
+
+**Corrected 2026-10-27 by `marsad characterise` on that file** (RECORDER_DESIGN phase 1): rotation
+12.000 s (9 passes, 1 ms scatter), PRIs 2744.5 / 3156.9 / 3472.7 us, pulse width 111.0 us at half
+amplitude (107.3 at half power, 113.1 at -10 dB; the hand figure 113.8 sits between). **The chirp
+is not linear**: S-shaped, sweeping ~3.5x faster at the ends of the pulse than in the middle,
+-763 -> +853 kHz end to end (a straight-line fit gives -378 -> +649). **Each PRI repeats x5, not
+x4** (the fifth ~2 us longer). The radar is also heard for ~3 s twice per rotation outside the
+main beam, and an unexplained group of 275 us intervals may be an echo (untested).
 
 **Watch the hop centres on narrow surveys.** The first burst23 run used 1264M:1268M, putting hop
 centres at exactly 1265.000 and 1267.000 MHz; their zero-IF DC spikes sit ~24 dB above floor and

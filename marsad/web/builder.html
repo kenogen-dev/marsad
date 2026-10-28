@@ -139,6 +139,12 @@ figcaption { font-size: 12px; color: var(--dim); margin-top: 8px; }
          align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; }
 .bar .listen { background: var(--accent-soft); color: var(--accent); }
 .bar .tune { background: var(--sunk); color: var(--dim); }
+.bar .crop { background: var(--warn-soft); color: var(--warn); }
+.splitkey { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-family: var(--mono);
+            font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.splitkey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px;
+              vertical-align: -1px; border: 1px solid var(--line); }
+.splitline { margin-top: 5px; font-size: 13.5px; color: var(--dim); }
 
 .flags { margin-top: 13px; display: flex; flex-direction: column; gap: 8px; }
 .flag { display: flex; gap: 9px; padding: 9px 11px; border-radius: 5px; font-size: 13.5px; border: 1px solid; }
@@ -308,8 +314,10 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
   <div class="ph"><h2 id="whatH">What rtl_power will do</h2><span class="badge free">Derived</span></div>
   <dl class="read" id="read"></dl>
   <div style="margin-top:13px">
-    <div style="font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)">One sweep</div>
-    <div class="bar"><i class="listen" id="barL"></i><i class="tune" id="barT"></i></div>
+    <div style="font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)">Where the radio's time goes</div>
+    <div class="bar" id="splitBar"><i class="listen" id="barL"></i><i class="crop" id="barC"></i><i class="tune" id="barT"></i></div>
+    <div class="splitkey" id="splitKey"></div>
+    <div class="splitline" id="splitLine"></div>
   </div>
   <div class="flags" id="flags"></div>
 </section>
@@ -372,7 +380,7 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
   <div class="ph"><h2>Integration trade-off</h2><span class="badge lock">Locks comparability</span></div>
   <div class="scroll">
     <table><thead><tr>
-      <th>Integration</th><th>Listening</th><th>Sweeps</th>
+      <th>Integration</th><th>Listening</th><th title="Share of time: listening, kept / listening, cropped away / retuning">Kept · cropped · retune</th><th>Sweeps</th>
       <th>Listen per frequency</th><th>Occupancy step</th><th>CSV</th>
     </tr></thead><tbody id="tradeoff"></tbody></table>
   </div>
@@ -533,6 +541,17 @@ function geometryFftw(lo, hi, rate, bins, timeS, overlapPct, crop, durS, centre)
     mb: sweeps * hops * (bins * 24 + 160) / 1e6,
     centres: centres.map(c => c / 1e6), covered: [lo + binKhz * Math.trunc(bins * crop * 0.5) / 1e3, hi - binKhz * Math.trunc(bins * crop * 0.5) / 1e3]
   };
+}
+
+// How the radio's time divides, for either engine. Listening is dwell / (dwell + overhead)
+// per hop; of that, the crop share is sampled and then thrown away (rtl_power's -c, or the
+// analysis-time crop of rtl_power_fftw's overlap). The kept share uses the bins actually
+// kept, not the nominal crop, so it matches what lands in the file. null when an rtl_power
+// sweep cannot finish inside -i: the model's split would be fiction then.
+function timeSplit(g, integ) {
+  if (!g.engine && integ <= g.retune) return null;
+  const keptFrac = g.fft ? g.kept / g.fft : 1;
+  return { kept: g.listening * keptFrac, cropped: g.listening * (1 - keptFrac), retune: 1 - g.listening };
 }
 
 const num = (v, d = 0) => v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -730,10 +749,28 @@ function cells(g, s) {
   ];
   $("read").innerHTML = items.map(([k, v, u, key]) =>
     `<div class="cell${key ? " key" : ""}"><dt>${k}</dt><dd>${v}${u ? ` <u>${u}</u>` : ""}</dd></div>`).join("");
-  const pct = Math.round(g.listening * 100);
-  $("barL").style.width = pct + "%"; $("barT").style.width = (100 - pct) + "%";
-  $("barL").textContent = pct >= 18 ? pct + "% listening" : "";
-  $("barT").textContent = pct <= 82 ? (100 - pct) + "% retuning" : "";
+  const sp = timeSplit(g, s.integ);
+  if (!sp) {
+    $("barL").style.width = "0%"; $("barC").style.width = "0%"; $("barT").style.width = "100%";
+    $("barL").textContent = $("barC").textContent = "";
+    $("barT").textContent = "sweep cannot finish inside -i";
+    $("splitKey").innerHTML = "";
+    $("splitLine").textContent = `Retuning ${g.hops} hops takes ${num(g.retune, 1)} s, longer than the ${s.integ} s interval, `
+      + "so there is no listening time to split. Fewer hops or a longer -i.";
+    return;
+  }
+  const w = v => (100 * v).toFixed(2) + "%", p = v => num(v * 100, 1) + "%";
+  $("barL").style.width = w(sp.kept); $("barC").style.width = w(sp.cropped); $("barT").style.width = w(sp.retune);
+  $("barL").textContent = sp.kept >= 0.18 ? p(sp.kept) + " kept" : "";
+  $("barC").textContent = sp.cropped >= 0.14 ? p(sp.cropped) + " cropped" : "";
+  $("barT").textContent = sp.retune >= 0.14 ? p(sp.retune) + " retuning" : "";
+  const what = g.engine ? "the analysis-time crop of the hop overlap" : "crop (-c " + s.crop + ")";
+  $("splitKey").innerHTML =
+    `<span><i style="background:var(--accent-soft)"></i>Listening, kept ${p(sp.kept)}</span>`
+    + `<span><i style="background:var(--warn-soft)"></i>Listening, cropped away ${p(sp.cropped)}</span>`
+    + `<span><i style="background:var(--sunk)"></i>Retuning ${p(sp.retune)}</span>`;
+  $("splitLine").textContent = `Of every minute: ${num(60 * sp.kept, 1)} s hearing kept spectrum, `
+    + `${num(60 * sp.cropped, 1)} s hearing hop edges that ${what} discards, ${num(60 * sp.retune, 1)} s retuning.`;
 }
 
 function flags(g, s) {
@@ -862,6 +899,7 @@ function command(g, s) {
   return (s.dryfirst ? line + " --dry-run\n" : "") + line + "\n" + after.join("\n");
 }
 
+const splitCell = sp => sp ? [sp.kept, sp.cropped, sp.retune].map(v => num(v * 100, 0)).join(" · ") : "cannot finish";
 function tradeoff(s) {
   if (isFftw()) {
     const opts = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
@@ -871,7 +909,7 @@ function tradeoff(s) {
     $("tradeoff").innerHTML = opts.map(t => {
       const g = geometryFftw(s.lo, s.hiReq, s.frate, s.fbins, t, s.fover ?? 100 * s.crop, s.crop, s.durS, centre), ok = g.listening >= 0.5;
       return `<tr data-i="${t}" class="${t === s.ftime ? "now" : ""}" style="${ok ? "" : "opacity:.45"}">
-        <td>-t ${t}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${num(g.sweeps)}</td>
+        <td>-t ${t}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${splitCell(timeSplit(g, t))}</td><td>${num(g.sweeps)}</td>
         <td>${secs(g.perFreq)}</td><td>${num(g.occStep, 2)}%</td><td>${num(g.mb, 1)} MB</td></tr>`;
     }).join("");
     $("tradeoff").querySelectorAll("tr").forEach(tr =>
@@ -884,7 +922,7 @@ function tradeoff(s) {
   $("tradeoff").innerHTML = opts.map(i => {
     const g = geometry(s.lo, s.hi, s.bin, i, s.durS, s.crop), ok = i >= g.retune * 1.2;
     return `<tr data-i="${i}" class="${i === s.integ ? "now" : ""}" style="${ok ? "" : "opacity:.45"}">
-      <td>-i ${i}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${num(g.sweeps)}</td>
+      <td>-i ${i}${ok ? "" : " ✕"}</td><td>${num(g.listening * 100, 0)}%</td><td>${splitCell(timeSplit(g, i))}</td><td>${num(g.sweeps)}</td>
       <td>${secs(g.perFreq)}</td><td>${num(g.occStep, 2)}%</td><td>${num(g.mb, 1)} MB</td></tr>`;
   }).join("");
   $("tradeoff").querySelectorAll("tr").forEach(tr =>
