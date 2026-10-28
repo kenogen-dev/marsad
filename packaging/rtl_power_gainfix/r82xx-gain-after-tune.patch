@@ -1,0 +1,43 @@
+diff --git a/src/rtl_power.c b/src/rtl_power.c
+index 86b24b4..25abdaa 100644
+--- a/src/rtl_power.c
++++ b/src/rtl_power.c
+@@ -929,14 +929,6 @@ int main(int argc, char **argv)
+ 		verbose_offset_tuning(dev);
+ 	}
+ 
+-	/* Set the tuner gain */
+-	if (gain == AUTO_GAIN) {
+-		verbose_auto_gain(dev);
+-	} else {
+-		gain = nearest_gain(dev, gain);
+-		verbose_gain_set(dev, gain);
+-	}
+-
+ 	verbose_ppm_set(dev, ppm_error);
+ 
+ 	rtlsdr_set_bias_tee(dev, enable_biastee);
+@@ -962,6 +954,23 @@ int main(int argc, char **argv)
+ 
+ 	/* actually do stuff */
+ 	rtlsdr_set_sample_rate(dev, (uint32_t)tunes[0].rate);
++
++	/* Tune once and only then set the gain.  On an R820T/R860 the sample
++	 * rate call above re-tunes to dev->freq, which is still 0, so
++	 * librtlsdr switches on its automatic HF direct sampling; the first
++	 * real tune switches it off again by re-running the tuner's init,
++	 * which restores the R82xx's default AGC registers and discards any
++	 * gain set earlier.  Hops above 24 MHz never trigger it again. */
++	rtlsdr_set_center_freq(dev, (uint32_t)tunes[0].freq);
++
++	/* Set the tuner gain */
++	if (gain == AUTO_GAIN) {
++		verbose_auto_gain(dev);
++	} else {
++		gain = nearest_gain(dev, gain);
++		verbose_gain_set(dev, gain);
++	}
++
+ 	sine_table(tunes[0].bin_e);
+ 	next_tick = time(NULL) + interval;
+ 	if (exit_time) {
