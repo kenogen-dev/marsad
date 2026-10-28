@@ -232,13 +232,13 @@ def _period_autocorr(series: np.ndarray, dt: float, min_s: float) -> dict | None
         return None
     seg = ac[lo:hi]
     k = int(np.argmax(seg)) + lo
-    if ac[k] < 0.3:
+    if ac[k] < 0.3 or k == lo:      # at the search edge: a decay, not a repeat
         return None
-    if 0 < k < n - 1:   # parabolic refinement
-        a, b, c = ac[k - 1], ac[k], ac[k + 1]
-        d = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) else 0.0
-    else:
-        d = 0.0
+    d = 0.0
+    a, b, c = ac[k - 1], ac[k], ac[k + 1]
+    den = a - 2 * b + c
+    if den < -1e-9:                 # parabolic refinement, only on a true peak; a flat top
+        d = float(np.clip(0.5 * (a - c) / den, -0.5, 0.5))   # once sent it to -2.8e12 s
     return {"period_s": float((k + d) * dt), "correlation": float(ac[k])}
 
 

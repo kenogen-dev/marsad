@@ -271,6 +271,9 @@ Where the build differs from the draft above, and why:
   on the measured centre within 20 kHz, and the radar's measured centre is 57 kHz off its nominal
   frequency, so the first 1 h watch started from the defaults. Rows now carry `target_hz`, the
   frequency the recorder was asked for, and with a recipe the radio tunes on the measured centre.
+  The second capture of the same run had the same fault (a new recipe restarts the radio through
+  the same lookup); a test now makes two captures in one watch and checks the second's tuning and
+  length against the first's recipe.
 
 ## 10. As built (phase 4, the Captures tab, 2026-10-28)
 

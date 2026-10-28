@@ -680,3 +680,31 @@ def test_survey_reports_passes_jobs_and_ambush(tmp_path, monkeypatch):
     cool = [c["mhz"] for g in got for c in g["cooldowns"]]
     assert any(abs(m - 341.31) < 0.01 for m in cool)
     assert got[-1]["state"] == "stopped"
+
+
+def test_second_capture_of_a_run_uses_the_first_ones_recipe(tmp_path):
+    """2026-10-28 radio: within the 11:35 watch the 12:06 capture was again 30 s at the
+    nominal 1265.440 MHz although the 11:36 capture's recipe said 90 s at 1265.308. A new
+    recipe restarts the radio and re-plans through the same lookup as a fresh run, which
+    missed because the signal's measured centre sits off the asked-for frequency. Here the
+    signal sits 40 kHz above the watched 433.92 MHz (the radar's is 57 kHz), the cooldown is
+    a few seconds, and the run must make two captures, the second planned from the first."""
+    st = station(tmp_path, {"capture_s": 4, "cooldown_min": 0.1})
+    cfg = cap.settings(st)
+    f_sig = 433.96e6
+    L = Launches(scene(60.0, 0.4, 2.5, kind="fsk"), f_sig)
+    rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "c", 29.7, L, quiet=True, inline_characterise=True)
+    W.fixed_watch(rec, 433.92e6, 50.0, width_hz=100e3)
+    caps = rec.con.execute("SELECT * FROM captures WHERE iq_status = 'written' ORDER BY started_epoch").fetchall()
+    assert len(caps) >= 2
+    first = json.loads(caps[0]["recipe"])
+    assert abs(first["signal_hz"] - 433.92e6) > 20e3          # the case the old 20 kHz match missed
+    assert first["duration_s"] >= 10                           # a sane repeat, not -2.8e12 s
+    m2 = json.loads(Path(caps[1]["iq_path"]).with_suffix(".sigmf-meta").read_text())["global"]
+    assert m2["marsad:tuned_hz"] == pytest.approx(first["tune_hz"], abs=1)
+    assert m2["marsad:radio_rate_hz"] == first["rtl_rate_hz"]
+    secs = Path(caps[1]["iq_path"]).stat().st_size / 4 / m2["core:sample_rate"]
+    assert secs == pytest.approx(first["duration_s"] + cap.PRE_S, abs=0.3)
+    first_s = Path(caps[0]["iq_path"]).stat().st_size / 4 / caps[0]["store_rate_hz"]
+    assert first_s == pytest.approx(4 + cap.PRE_S, abs=0.3)   # the first had no recipe yet
+    assert float(L.cmds[1][L.cmds[1].index("-f") + 1]) == pytest.approx(first["tune_hz"], abs=1)

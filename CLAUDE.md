@@ -2531,7 +2531,15 @@ marsad watch list [--last 30]
   11:35 watch started from the defaults although the morning's capture had a recipe. Rows now
   carry `target_hz` (the frequency the recorder was asked for; added to old catalogues the first
   time a recorder opens them), older rows match inside their own occupied band, and with a recipe
-  the radio tunes on the measured centre. Pinned in `tests/test_watch.py`.
+  the radio tunes on the measured centre. Pinned in `tests/test_watch.py`. **The same bug hit
+  within a run** (radio, 2026-10-28: the 12:06 capture of the 11:35 watch was again 30 s at
+  1265.440): a new recipe restarts the radio and re-plans through the same lookup, which missed.
+  Two more fixes found by the two-captures test: the measured centre was adopted only within
+  max(20 kHz, half the occupied band) of the asked-for frequency, so a narrow signal 40 kHz off
+  was retuned beside (now: within a quarter of the measuring capture's radio band); and the
+  characteriser's repeat period could run away (-2.8e12 s on gated bursts, a parabolic
+  refinement dividing by a near-zero curvature), giving a 10 s duration; now refined only on a
+  true peak and clamped.
 
 **Captures tab (2026-10-28), `marsad/catalogue.py`** (RECORDER_DESIGN.md phase 4), in the web
 app between Archive and Probe. Read-only on occupancy.db (opened `mode=ro`, so it never migrates

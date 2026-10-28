@@ -129,10 +129,13 @@ def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
     zero_if = (tuner or "").lower() == "e4000"
     target = signal_hz
     if recipe and recipe.get("signal_hz"):
-        # Tune on the centre the characteriser measured when it lies inside the signal
-        # (the radar's chirp centre is 57 kHz above its nominal 1265.44 MHz).
+        # Tune on the centre the characteriser measured (the radar's chirp centre is 57 kHz
+        # above its nominal 1265.44 MHz). The recipe was found for THIS frequency, so its
+        # centre is the signal; it is refused only if it lies outside half the radio band
+        # the measuring capture was made at, i.e. if it could be a different signal.
         occ0 = recipe.get("occupied_hz") or 0.0
-        if abs(recipe["signal_hz"] - signal_hz) <= max(20e3, occ0 / 2):
+        reach = max(20e3, occ0 / 2, 0.25 * float(recipe.get("rtl_rate_hz") or 0.0))
+        if abs(recipe["signal_hz"] - signal_hz) <= reach:
             signal_hz = float(recipe["signal_hz"])
     if recipe and recipe.get("rtl_rate_hz"):
         rtl = float(recipe["rtl_rate_hz"])

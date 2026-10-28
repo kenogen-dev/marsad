@@ -245,3 +245,18 @@ def test_real_radar_recording_preregistered():
     assert 1.3e6 < c["sweep_hz"] < 1.9e6
     assert c["end_to_mid_slope"] > 2
     assert r["family"] == "pulsed, non-linear FM chirp (radar-like)"
+
+
+def test_repeat_period_never_runs_away_on_a_flat_topped_autocorrelation():
+    """2026-10-28: gated FSK bursts (0.4 s on every 2.5 s) gave a repeat period of
+    -2.8e12 s, because the parabolic refinement divided by a near-zero curvature on a
+    flat-topped peak, and the recipe then said "~-0.0 repeats". The period must come out
+    near the true one, or not at all."""
+    dt = 0.01
+    t = np.arange(0, 30, dt)
+    gate = (((t - 1.0) % 2.5) < 0.4).astype(float)
+    r = C._period_autocorr(gate, dt, 0.1)
+    assert r is not None and r["period_s"] == pytest.approx(2.5, abs=dt)
+    flat = np.r_[np.ones(400), np.zeros(400)]          # one block: a decay, not a repeat
+    r2 = C._period_autocorr(flat, dt, 0.1)
+    assert r2 is None or r2["period_s"] > 0
