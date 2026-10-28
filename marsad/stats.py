@@ -207,10 +207,13 @@ def fingerprint_loose(side):
     rp = side.get("rtl_power", {})
     if not rp:
         return None
+    from .rtlpower import build_token
+    build = build_token(side)
     return ("%s-%s MHz | %s kHz | g%s | i%s | c%s | F%s | %s"
             % (rp.get("freq_low_mhz"), rp.get("freq_high_mhz"),
                rp.get("bin_khz"), rp.get("gain_db"), rp.get("integration_s"),
-               rp.get("crop"), rp.get("fir"), side.get("receiver")))
+               rp.get("crop"), rp.get("fir"), side.get("receiver"))
+            + (" | " + build if build else ""))
 
 
 def bin_width(freqs):

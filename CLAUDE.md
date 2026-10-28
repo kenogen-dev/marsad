@@ -2118,8 +2118,10 @@ and leaves it on automatic gain. A second bug hits both radios: rtl_power's per-
 on Windows and overflow on strong carriers, giving `-nan(ind)` or a silently low value - so the
 **"NaN = saturation" readings above (FM checks 2026-10-16/18) are at least partly rtl_power
 overflowing**, and peak levels near them may read low. Fixed build `rtl-sdr/rtl_power_gainfix.exe`
-(+28.0 dB, matching rtl_sdr), source in `packaging/rtl_power_gainfix/`; not yet tested on the XTR,
-not yet used by marsad. Every archived v5 rtl_power run was at g29.7, so none had tested gain.
+(+28.0 dB, matching rtl_sdr), source in `packaging/rtl_power_gainfix/`; on the XTR it matches the
+stock build to 0.05 dB on the floor. **marsad runs it for every rtl_power scan since 2026-10-27**,
+see "Which rtl_power marsad runs" under Existing code. Every archived v5 rtl_power run was at
+g29.7, so none had tested gain.
 
 **V1-4f, 7 h daytime milair map on the v5 (2026-10-27, 09:33-16:33, rtl_power_fftw g40.2).** The
 v5 **hears 316-349 MHz** (+2.3 dB over its quietest 351-400 block, an intermittent ~200 kHz emitter
@@ -2425,6 +2427,29 @@ py -m marsad response --open <tag|csv> --load <tag|csv> --antenna <tag|csv>
     [--name "2130 GP v1"] [--f0 2130] [--smooth-mhz 1] [--margin-db 6]
     [--rx-floor-db -37.5] [--skip-sweeps N] [--out reports/response/<name>_<stamp>]
 ```
+
+**Which rtl_power marsad runs (2026-10-27).** `rtl-sdr/rtl_power_gainfix.exe`, the patched
+build that keeps the v5's gain and sums power in 64 bits (see V1-1 above), for every rtl_power
+scan: `marsad run`, the Probe tab, `tools/run_survey.py` and `marsad calibrate`. If it is not
+installed, marsad runs the stock `rtl_power.exe` and prints one WARNING line. To choose the stock
+build on purpose, put `"rtl_power_exe": "rtl_power"` in station.json (a name, or a path relative
+to the station folder). `marsad config` and `--dry-run` name the program and its build. Every
+rtl_power sidecar now records `exe`, `build` (`gainfix` or `original`), `sha256` and `tuner` in
+its `rtl_power` section; scan_build.md and report.md show it as a "Program" row. Sidecars from
+before this say "build not recorded" and were all the stock build. A running
+`rtl_power_gainfix.exe` counts as holding the SDR.
+
+**The fingerprint rule:** a **v5 (R820T/R860) run made with the gainfix build gets `| gainfix`
+on the end of its fingerprint**, e.g. `225.000-400.000 MHz | 10.8507 kHz | g40.2 | i30 | c0.25 |
+F9 | v5 | gainfix`, because every older v5 rtl_power run had its gain silently ignored and must
+not be compared with a new one; `compare`, `archive new` and response refuse the mix. **XTR
+runs keep their fingerprint unchanged** (`... | F9 | xtr`): the E4000 read the same under both
+builds, so its history stays comparable, and the build is still in the sidecar. A v5 run made
+deliberately with the stock build gets no token, so it matches the old runs, which is correct:
+both ignored the gain. `tests/test_gainfix.py` pins the choice, the fallback, the sidecar fields
+and the rule. **Not in the release zip:** `rtl-sdr/` is not in git and the frozen build ships no
+rtl-sdr executables at all; a release user unzips the RTL-SDR Blog release and builds the gainfix
+exe with `packaging/rtl_power_gainfix/build.cmd` (README says so), or lives with the warning.
 
 **Second engine: rtl_power_fftw (2026-10-21).** `rtl-sdr/rtl_power_fftw.exe` is a native
 Windows build of github.com/AD-Vega/rtl-power-fftw 1.0-beta2, made on this PC with the

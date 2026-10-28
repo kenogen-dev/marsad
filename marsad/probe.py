@@ -590,7 +590,8 @@ def compose(station: Station, form: dict) -> dict:
             "--conditions", conditions, *extra,
             "--non-interactive", "--no-live", "--keep-defaults"]
     if engine == "rtl_power":
-        rtl = ["rtl_power", "-f", freq, "-g", f"{gain:g}", "-i", str(integration),
+        exe, _ = station.rtl_power()       # the build `marsad run` will use
+        rtl = [exe.stem if exe else "rtl_power", "-f", freq, "-g", f"{gain:g}", "-i", str(integration),
                "-c", str(CROP), "-F", str(FIR), "-e", dur_text]
         if device:
             rtl += ["-d", str(device)]

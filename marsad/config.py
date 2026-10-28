@@ -166,6 +166,12 @@ class Station:
         return {name: [tuple(g) for g in r.get("gaps_mhz", [])]
                 for name, r in self.receivers.items()}
 
+    def rtl_power(self):
+        """(path or None, warning or None): the rtl_power build to run.
+        rtl_power_gainfix unless station.json's rtl_power_exe says otherwise."""
+        from .rtlpower import choose_rtl_power
+        return choose_rtl_power(self.data.get("rtl_power_exe"), self.tool_dirs(), self.root)
+
     def tuner_of(self, receiver: str) -> str | None:
         r = self.receivers.get(receiver)
         return (r or {}).get("tuner")

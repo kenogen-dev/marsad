@@ -46,6 +46,13 @@ You need `rtl_power` from the [RTL-SDR Blog Windows release](https://github.com/
 (or your distribution's `rtl-sdr` package on Linux). Unzip it into a folder called
 `rtl-sdr` next to `station.json`, or put it on your PATH.
 
+marsad prefers `rtl_power_gainfix`, a patched rtl_power that keeps the gain on R820T/R860
+dongles (the stock program silently runs them on automatic gain) and does not overflow to
+`-nan` on strong carriers. It is not in the RTL-SDR Blog release and not in the marsad zip:
+build it with `packaging/rtl_power_gainfix/build.cmd` (see `BUILD.md` there) and put
+`rtl_power_gainfix.exe` beside `rtl_power.exe`. Without it marsad runs the stock rtl_power
+and warns once per run; on an E4000 dongle that costs nothing measurable.
+
 **Windows, no Python:** download the `marsad` folder from the releases page, put it anywhere,
 and double-click `marsad.exe`. It starts the web app on http://127.0.0.1:8731/, opens it in
 your browser, and keeps a console window open that says so; close that window to stop. If the

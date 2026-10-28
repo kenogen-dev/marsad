@@ -53,7 +53,7 @@ TUNER_LABEL = {"e4000": "E4000", "r820t": "R820T/R860", "r860": "R820T/R860"}
 SDR_PROGRAMS = [
     "sdrpp", "sdrplusplus", "sdrsharp", "sdruno", "sdrconnect",
     "cubicsdr", "sdrangel", "gqrx", "hdsdr",
-    "rtl_tcp", "rtl_power", "rtl_fm", "rtl_test", "rtl_adsb",
+    "rtl_tcp", "rtl_power", "rtl_power_gainfix", "rtl_fm", "rtl_test", "rtl_adsb",
     "rtl_sdr", "rtl_433", "satdump", "soapysdrserver",
 ]
 
@@ -192,9 +192,11 @@ def fingerprint(sidecar: dict, bin_khz_actual) -> str:
     b = f"{bin_khz_actual:.4f}" if bin_khz_actual else f"~{rp['bin_khz']:g}"
     # The earliest sidecars predate freq_high_mhz_effective; fall back to what was asked.
     hi = rp.get("freq_high_mhz_effective") or rp["freq_high_mhz"]
+    build = build_token(sidecar)
     return (f"{rp['freq_low_mhz']:.3f}-{hi:.3f} MHz | {b} kHz | "
             f"g{rp['gain_db']:g} | "
-            f"i{rp['integration_s']} | c{rp['crop']} | F{rp['fir']} | {sidecar['receiver']}")
+            f"i{rp['integration_s']} | c{rp['crop']} | F{rp['fir']} | {sidecar['receiver']}"
+            + (f" | {build}" if build else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +219,90 @@ def find_tool(tool: str, search_dirs: list[Path]) -> Path | None:
             return Path(d) / name
     hit = shutil.which(tool)
     return Path(hit) if hit else None
+
+
+# Which rtl_power marsad runs (2026-10-27). rtl_power_gainfix is rtl_power with
+# two fixes (packaging/rtl_power_gainfix/BUILD.md): the R820T/R860 tuner gain is
+# set again after the first tune, because the stock program set it before and a
+# driver re-init threw it away, leaving the v5 on automatic gain whatever -g said;
+# and the per-bin power sums are 64-bit, so strong carriers no longer overflow to
+# -nan(ind). Measured: v5 matches rtl_sdr to 0.1 dB at four gains, XTR matches
+# the stock build to 0.05 dB on the floor.
+RTL_POWER_GAINFIX = "rtl_power_gainfix"
+RTL_POWER_BUILDS = {RTL_POWER_GAINFIX: "gainfix", "rtl_power": "original"}
+# Tuners whose gain the stock rtl_power lost. Their gainfix runs carry a build
+# token in the fingerprint; the E4000 behaved the same under both builds.
+GAIN_LOST_TUNERS = ("r820t", "r860")
+
+
+def build_label(exe: Path | str | None) -> str:
+    """'gainfix', 'original', or the bare file name for anything else."""
+    stem = Path(str(exe or "rtl_power")).stem.lower()
+    return RTL_POWER_BUILDS.get(stem, stem)
+
+
+def choose_rtl_power(override: str | None, search_dirs: list[Path],
+                     root: Path | None = None) -> tuple[Path | None, str | None]:
+    """The rtl_power executable to run, and a one-line warning or None.
+
+    `override` is station.json's `rtl_power_exe`: a name ("rtl_power" to choose
+    the stock build on purpose) or a path, relative to the station folder. Without
+    it, rtl_power_gainfix is used when it is installed and the stock rtl_power,
+    with a warning, when it is not.
+    """
+    if override:
+        p = Path(override)
+        if p.parent != Path("."):
+            p = p if p.is_absolute() or root is None else root / p
+            if p.exists():
+                return p, None
+            return None, f"rtl_power_exe in station.json points at {p}, which does not exist"
+        return find_tool(p.stem if p.suffix.lower() == ".exe" else p.name, search_dirs), None
+    fixed = find_tool(RTL_POWER_GAINFIX, search_dirs)
+    if fixed:
+        return fixed, None
+    stock = find_tool("rtl_power", search_dirs)
+    if stock:
+        return stock, (f"{exe_name(RTL_POWER_GAINFIX)} not found, using the stock "
+                       f"{stock.name}: v5 (R820T) gain will be ignored and strong carriers "
+                       "may read -nan. Build it with packaging/rtl_power_gainfix/build.cmd.")
+    return None, None
+
+
+def exe_record(exe: Path | None) -> dict:
+    """What a sidecar keeps about the program that recorded it."""
+    if exe is None:
+        return {}
+    import hashlib
+    rec = {"exe": Path(exe).name, "build": build_label(exe)}
+    try:
+        rec["sha256"] = hashlib.sha256(Path(exe).read_bytes()).hexdigest()
+    except OSError:
+        rec["sha256"] = None
+    return rec
+
+
+def build_token(sidecar: dict) -> str:
+    """The fingerprint's build field: 'gainfix' for an R820T/R860 run made with
+    rtl_power_gainfix, else ''. Old sidecars have no build and get ''.
+
+    v5 runs before the fix had their gain silently ignored, so they must not
+    compare with v5 runs after it. XTR runs keep their fingerprint: the E4000
+    read the same on both builds, and its history stays comparable.
+    """
+    rp = (sidecar or {}).get("rtl_power") or {}
+    if rp.get("build") == "gainfix" and rp.get("tuner") in GAIN_LOST_TUNERS:
+        return "gainfix"
+    return ""
+
+
+def program_line(rp: dict) -> str:
+    """'rtl_power_gainfix.exe (gainfix build, sha256 1a2b3c4d...)' for scan_build.md
+    and report.md. Sidecars from before 2026-10-27 name no program."""
+    if not rp.get("exe"):
+        return "rtl_power (build not recorded; before 2026-10-27 always the stock build)"
+    sha = (rp.get("sha256") or "")[:16]
+    return f"{rp['exe']} ({rp.get('build')} build" + (f", sha256 {sha}...)" if sha else ")")
 
 
 def frozen() -> bool:

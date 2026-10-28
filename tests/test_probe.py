@@ -56,7 +56,9 @@ def test_compose_wide_is_the_preset_at_60_s_with_the_probe_chain():
     assert d["geometry"]["hops"] == 766 and d["geometry"]["sweeps"] == 5
     assert d["geometry"]["retune_s_per_sweep"] == pytest.approx(36.0, abs=0.05)
     assert d["warnings"] == []
-    assert d["rtl_power_line"].startswith("rtl_power -f 52M:1660M:100k -g 29 -i 60 -c 0.25 -F 9 -e 5m")
+    # rtl_power_gainfix where it is installed, the stock name where it is not (CI)
+    assert re.match(r"rtl_power(_gainfix)? -f 52M:1660M:100k -g 29 -i 60 -c 0\.25 -F 9 -e 5m",
+                    d["rtl_power_line"])
 
 
 def test_compose_hunt_builds_the_offset_tile():

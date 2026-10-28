@@ -104,3 +104,33 @@ def test_launcher_honours_the_test_hooks(monkeypatch):
     monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
     assert cli.main([]) == 0
     assert calls == [8745] and opened == []
+
+
+def test_double_click_on_an_empty_release_does_not_take_8731(monkeypatch, tmp_path, capsys):
+    """2026-10-27 18:29: a release in Downloads, 8731 down, took 8731 with an empty
+    station. Now it opens a test port with the idle exit, and says so in one line."""
+    launched, opened = [], []
+    monkeypatch.delenv("MARSAD_PORT", raising=False)
+    monkeypatch.delenv("MARSAD_NO_BROWSER", raising=False)
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if port in launched else None)
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 4242)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
+    monkeypatch.setattr(webapp, "launch_background", lambda station, port: launched.append(port) or _Proc())
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
+    assert cli.main(["--station", str(tmp_path)]) == 0
+    assert launched == [8745] and opened == ["http://127.0.0.1:8745/"]
+    assert r"--station C:\SDR web restart" in capsys.readouterr().out
+
+
+def test_double_click_on_an_empty_release_just_opens_8731_when_it_is_up(monkeypatch, tmp_path):
+    launched, opened = [], []
+    monkeypatch.delenv("MARSAD_PORT", raising=False)
+    monkeypatch.delenv("MARSAD_NO_BROWSER", raising=False)
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if port == 8731 else None)
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 4242)
+    monkeypatch.setattr(webapp, "launch_background", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(cli, "_linger", lambda *a, **k: None)
+    assert cli.main(["--station", str(tmp_path)]) == 0
+    assert launched == [] and opened == ["http://127.0.0.1:8731/"]

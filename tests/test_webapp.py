@@ -67,11 +67,109 @@ def test_a_failed_start_never_stops_the_scan(monkeypatch, tmp_path, capsys):
     assert "the scan goes on" in capsys.readouterr().out
 
 
+def _real_station(tmp_path):
+    (tmp_path / "station.json").write_text("{}", encoding="utf-8")
+    return Station.load(tmp_path)
+
+
 def test_marsad_run_uses_the_same_check(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(webapp, "ensure_running", lambda station, port=8731: seen.append(port) or "up")
-    assert record.start_live_view(_station(tmp_path)) == "up"
+    assert record.start_live_view(_real_station(tmp_path)) == "up"
     assert seen == [8731]
+
+
+# --- a station with no station.json never takes 8731 (2026-10-27) ---------------
+
+def test_empty_station_gets_a_test_port_when_8731_is_down(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
+    assert webapp.port_for(_station(tmp_path)) == 8745
+    out = capsys.readouterr().out
+    assert "no station.json" in out and "test port 8745" in out
+    assert r"marsad --station C:\SDR web restart" in out
+    assert len(out.splitlines()) == 1                    # one line
+
+
+def test_empty_station_skips_busy_test_ports(monkeypatch, tmp_path):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": port in (8745, 8740))
+    assert webapp.port_for(_station(tmp_path)) == 8741
+
+
+def test_empty_station_with_every_test_port_busy_starts_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": True)
+    assert webapp.port_for(_station(tmp_path)) is None
+    assert "not started" in capsys.readouterr().out
+
+
+def test_empty_station_uses_8731_when_it_is_already_up(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True} if port == 8731 else None)
+    assert webapp.port_for(_station(tmp_path)) == 8731
+    assert capsys.readouterr().out == ""
+
+
+def test_a_real_station_keeps_8731(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    assert webapp.port_for(_real_station(tmp_path)) == 8731
+    assert capsys.readouterr().out == ""
+
+
+def test_marsad_run_from_an_empty_station_does_not_take_8731(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
+    monkeypatch.setattr(webapp, "ensure_running", lambda station, port=8731: seen.append(port) or "started")
+    record.start_live_view(_station(tmp_path))
+    assert seen == [8745]
+
+
+def test_web_restart_from_an_empty_station_is_refused(monkeypatch, tmp_path, capsys):
+    """Otherwise it would stop the owner's app and start an empty one in its place."""
+    stopped = []
+    monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "idle")
+    monkeypatch.setattr(webapp, "stop", lambda port=8731: stopped.append(port) or (True, 1))
+    assert webapp.main(["restart"], _station(tmp_path)) == 1
+    assert stopped == []
+    assert "web restart" in capsys.readouterr().out
+
+
+# --- web restart waits long enough for a slow start (2026-10-27) ----------------
+
+class SlowProc:
+    pid = 888
+
+    def poll(self):
+        return None                                     # still running
+
+
+def test_restart_waits_longer_than_the_scan_check(monkeypatch, tmp_path):
+    timeouts = []
+    monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "idle")
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True})
+    monkeypatch.setattr(webapp, "stop", lambda port=8731: (True, 11))
+    monkeypatch.setattr(webapp, "start",
+                        lambda station, port=8731, timeout=20: timeouts.append(timeout) or ("started", 22))
+    assert webapp.main(["restart"], _real_station(tmp_path)) == 0
+    assert timeouts == [webapp.RESTART_TIMEOUT] and webapp.RESTART_TIMEOUT >= 60
+
+
+def test_a_live_process_not_yet_answering_is_starting_not_failed(monkeypatch, tmp_path):
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
+    monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
+    monkeypatch.setattr(webapp, "launch_background", lambda station, port: SlowProc())
+    assert webapp.start(_real_station(tmp_path), 8731, timeout=0) == ("starting", 888)
+
+
+def test_restart_reports_a_slow_start_honestly(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "idle")
+    monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True})
+    monkeypatch.setattr(webapp, "stop", lambda port=8731: (True, 11))
+    monkeypatch.setattr(webapp, "start", lambda station, port=8731, timeout=20: ("starting", 22))
+    assert webapp.main(["restart"], _real_station(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "still loading" in out and "did not come back" not in out
 
 
 def test_background_launch_has_no_window_no_idle_timeout_and_its_own_folder(monkeypatch, tmp_path):
@@ -94,7 +192,7 @@ def test_restart_is_refused_while_a_probe_run_records(monkeypatch, tmp_path, cap
     stopped = []
     monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "recording")
     monkeypatch.setattr(webapp, "stop", lambda port=8731: stopped.append(port) or (True, 1))
-    assert webapp.main(["restart"], _station(tmp_path)) == 1
+    assert webapp.main(["restart"], _real_station(tmp_path)) == 1
     assert stopped == []
     assert "Probe-tab run is recording" in capsys.readouterr().out
 
@@ -104,8 +202,8 @@ def test_restart_with_force_goes_ahead_and_confirms(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "recording")
     monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True})
     monkeypatch.setattr(webapp, "stop", lambda port=8731: stopped.append(port) or (True, 11))
-    monkeypatch.setattr(webapp, "start", lambda station, port=8731: ("started", 22))
-    assert webapp.main(["restart", "--force"], _station(tmp_path)) == 0
+    monkeypatch.setattr(webapp, "start", lambda station, port=8731, timeout=20: ("started", 22))
+    assert webapp.main(["restart", "--force"], _real_station(tmp_path)) == 0
     assert stopped == [8731]
     out = capsys.readouterr().out
     assert "stopped (pid 11)" in out and "started on 8731, pid 22" in out
@@ -116,8 +214,8 @@ def test_restart_when_idle_stops_then_starts(monkeypatch, tmp_path):
     monkeypatch.setattr(webapp, "probe_state", lambda port=8731: "idle")
     monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: {"follow": True})
     monkeypatch.setattr(webapp, "stop", lambda port=8731: order.append("stop") or (True, 11))
-    monkeypatch.setattr(webapp, "start", lambda station, port=8731: order.append("start") or ("started", 22))
-    assert webapp.main(["restart"], _station(tmp_path)) == 0
+    monkeypatch.setattr(webapp, "start", lambda station, port=8731, timeout=20: order.append("start") or ("started", 22))
+    assert webapp.main(["restart"], _real_station(tmp_path)) == 0
     assert order == ["stop", "start"]
 
 

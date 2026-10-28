@@ -43,6 +43,7 @@ import pandas as pd
 
 from . import conditions as auto_cond
 from .config import Station
+from .rtlpower import build_token, program_line
 
 # Filled in by configure(station). The defaults match station.default.json so
 # a bare import behaves like the original tool.
@@ -420,6 +421,7 @@ def sidecar_lines(sc: dict | None) -> list[str]:
         ("Crop / FIR", f"-c {rp.get('crop')} -F {rp.get('fir')}"
                        if rp.get("crop") is not None else None),
         ("Receiver", sc.get("receiver")),
+        ("Program", program_line(rp)),
         ("Antenna", f"{chain.get('antenna_shape')}, whips {chain.get('whip_length_mm')} mm each"
                     if chain.get("antenna_shape") else None),
         ("LNA", chain.get("lna")),
@@ -532,6 +534,10 @@ def compare_sidecars(sa_name, sca, sb_name, scb, step_khz_a, step_khz_b) -> list
             if va != vb:
                 u = f" {unit}" if unit else ""
                 problems.append(f"**{label} differs**: {va}{u} vs {vb}{u}")
+        if ea == eb == "rtl_power" and build_token(sca) != build_token(scb):
+            problems.append(f"**rtl_power build differs**: {build_token(sca) or 'stock'} vs "
+                            f"{build_token(scb) or 'stock'} (the stock build ignored the "
+                            "R820T/R860 gain, so levels cannot be compared)")
         if sca.get("receiver") != scb.get("receiver"):
             problems.append(f"**receiver differs**: {sca.get('receiver')} vs {scb.get('receiver')}")
 

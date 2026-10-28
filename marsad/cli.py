@@ -106,18 +106,22 @@ def launch(station: Station) -> int:
     One viewer per address, always: if the web app already serves 8731, just
     open the browser on it. Otherwise start it in the background with no
     window (marsad/webapp.py), so tidying the desktop can never close it, then
-    open the browser. `marsad web stop` ends it.
+    open the browser. `marsad web stop` ends it. A station with no station.json
+    (a fresh release) never takes 8731: it gets a test port (webapp.port_for).
 
     Two environment variables exist for testing a build without touching the
     owner's address: MARSAD_PORT moves the launcher to another port, and
     MARSAD_NO_BROWSER=1 skips opening the browser.
     """
     from . import webapp
-    port = int(os.environ.get("MARSAD_PORT") or HOME_PORT)
+    port = webapp.port_for(station, int(os.environ.get("MARSAD_PORT") or HOME_PORT))
+    if port is None:                  # an empty station and no free test port
+        _linger()
+        return 1
     url = f"http://127.0.0.1:{port}/"
     use_browser = os.environ.get("MARSAD_NO_BROWSER") != "1"
     outcome = webapp.ensure_running(station, port)
-    if outcome in ("up", "started"):
+    if outcome in ("up", "started", "starting"):
         print(f"  Opening {url} in your browser; this window can close."
               if use_browser else "  (browser not opened: MARSAD_NO_BROWSER is set)")
         if use_browser:
@@ -191,9 +195,11 @@ def main(argv=None) -> int:
         print(f"  surveys          {station.surveys}")
         print(f"  reports          {station.reports}")
         print(f"  rtl-sdr folders  {', '.join(str(d) for d in station.tool_dirs())}")
-        from .rtlpower import find_tool
-        rp = find_tool("rtl_power", station.tool_dirs())
-        print(f"  rtl_power        {rp or 'NOT FOUND (install the RTL-SDR Blog release or set rtl_sdr_dir)'}")
+        from .rtlpower import build_label
+        rp, rp_warning = station.rtl_power()
+        print(f"  rtl_power        {f'{rp}  ({build_label(rp)} build)' if rp else 'NOT FOUND (install the RTL-SDR Blog release or set rtl_sdr_dir)'}")
+        if rp_warning:
+            print(f"                   WARNING: {rp_warning}")
         print(f"  receivers        {', '.join(station.receivers) or 'none'}")
         print(f"  presets          {', '.join(station.presets) or 'none'}")
         print(f"  retune ms/hop    {station.retune_ms_per_hop:g}")

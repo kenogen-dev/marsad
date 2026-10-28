@@ -9,6 +9,7 @@
 
   "rtl_sdr_dir": "rtl-sdr",
   "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
+  "_rtl_power_exe": "Optional. Which rtl_power to run: a name (\"rtl_power\" picks the stock build on purpose) or a path relative to this file. Unset, marsad runs rtl_power_gainfix when it is installed (packaging/rtl_power_gainfix/BUILD.md: it keeps the R820T/R860 gain and does not overflow on strong carriers) and the stock rtl_power with a warning when it is not.",
   "_location": "Set once to record outdoor weather (Open-Meteo, no key) and the sun's elevation in every sidecar's auto_conditions, e.g. \"location\": {\"lat\": 51.48, \"lon\": -0.01} in decimal degrees, west and south negative. Two decimals (~1 km) is plenty. Without it those parts record the reason instead.",
 
   "retune_ms_per_hop": 47.0,

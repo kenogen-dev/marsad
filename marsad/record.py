@@ -34,7 +34,9 @@ from pathlib import Path
 from . import conditions, host
 from .config import Station, source_root
 from .rtlpower import (CROP, FIR, RTL_POWER_MAX_MHZ, TUNER_GAINS, TUNER_LABEL,
-                       actual_bin_width_khz, find_tool, fingerprint, fmt_hms,
+                       actual_bin_width_khz, build_label, exe_record, find_tool,
+                       program_line,
+                       fingerprint, fmt_hms,
                        parse_duration, parse_freq_spec, rtl_power_max_span_mhz,
                        scan_geometry)
 
@@ -398,7 +400,8 @@ def write_scan_build(csv_path: Path, sidecar: dict, geom: dict,
         f"| Crop / FIR | -c {rp['crop']}  -F {rp['fir']} |",
         f"| Duration | {sidecar['duration_requested']} requested, "
         f"{(sidecar.get('duration_actual_s') or 0.0) / 60:.1f} min actual |",
-        f"| Receiver | {sidecar['receiver']} |", "",
+        f"| Receiver | {sidecar['receiver']} |",
+        f"| Program | {program_line(rp)} |", "",
         "## Geometry rtl_power derived", "", "| Quantity | Value |", "|---|---|",
         f"| Hops | {geom['hops']} x {geom['hop_mhz']:.4f} MHz |",
         f"| Sample rate | {geom['sample_rate_hz']/1e6:.6f} MS/s |",
@@ -520,7 +523,8 @@ def start_live_view(station: Station) -> str:
     must never stop a survey recording.
     """
     from . import webapp
-    return webapp.ensure_running(station, VIEWER_PORT)
+    port = webapp.port_for(station, VIEWER_PORT)   # an empty station never takes 8731
+    return webapp.ensure_running(station, port) if port is not None else "failed"
 
 
 def source_is_load(chain_order: str | None) -> bool | None:
@@ -636,7 +640,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
 
     # Looked up here so the summary can print its path; a missing rtl_power is
     # refused only after the chain guard below, which must speak first.
-    rtl_power = find_tool("rtl_power", station.tool_dirs())
+    rtl_power, rtl_power_warning = station.rtl_power()
+    if rtl_power_warning:
+        print(f"\n  WARNING: {rtl_power_warning}")
 
     station.surveys.mkdir(parents=True, exist_ok=True)
     started = dt.datetime.now()
@@ -675,6 +681,8 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
           + ("" if (args.crop, args.fir) == (CROP, FIR)
              else "   NOT standard - not comparable with other surveys"))
     print(f"    receiver    {receiver}")
+    if rtl_power is not None:
+        print(f"    program     {rtl_power.name} ({build_label(rtl_power)} build)")
     chain_src = ("--chain" if args.chain else
                  "saved default" + (f", used by a run at {str(station.defaults.get('chain_used_at')).replace('T', ' ')}"
                                      if station.defaults.get("chain_used_at") else ""))
@@ -743,6 +751,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
             "crop": args.crop,
             "fir": args.fir,
             "device": args.device,
+            # Which build recorded it. tuner is kept beside it because the
+            # fingerprint's build token applies only to R820T/R860 runs.
+            "tuner": tuner,
+            **exe_record(rtl_power),
         },
         "receiver": receiver,
         "chain": {k: chain.get(k) for k in ("antenna_shape", "whip_length_mm", "lna",

@@ -33,6 +33,11 @@ from .config import Station
 PORT = 8731
 LOG_NAME = "live_view.log"
 BUSY_STATES = ("starting", "recording", "stopping", "analysing")
+# Test viewers live on 8740-8749 (CLAUDE.md); 8745 first, as the docs already use it.
+TEST_PORTS = (8745, 8740, 8741, 8742, 8743, 8744, 8746, 8747, 8748, 8749)
+START_TIMEOUT = 20.0      # the check before a scan: never hold a recording up long
+RESTART_TIMEOUT = 60.0    # `web restart`: a cold frozen exe can take >20 s to answer
+EMPTY_HINT = r"marsad --station C:\SDR web restart"
 
 
 def _get_json(port: int, path: str, timeout: float = 1.5):
@@ -112,6 +117,37 @@ def launch_background(station: Station, port: int = PORT) -> subprocess.Popen:
         log.close()                                          # the child holds its own handle
 
 
+def free_test_port() -> int | None:
+    """The first test port (8745, then 8740-8749) with nothing listening on it."""
+    for p in TEST_PORTS:
+        if not host.port_in_use(p):
+            return p
+    return None
+
+
+def port_for(station: Station, port: int = PORT) -> int | None:
+    """The port this station's web app may be started on.
+
+    8731 belongs to the real station. A station with no station.json (a freshly
+    unzipped release, say) must never claim it: on 2026-10-27 a double-click on a
+    release in Downloads took 8731 while it was down, and the page showed an empty
+    archive in place of the real station's. Such a station gets a test port with the 5 min
+    idle exit instead, and one line saying how to point the release at the real
+    station. If 8731 already answers, it is left as is and simply used.
+    None means no port could be found (every test port busy).
+    """
+    if port != PORT or station.file_found or viewer_answers(PORT) is not None:
+        return port
+    alt = free_test_port()
+    if alt is None:
+        print(f"  web app: {station.root} has no station.json, so it does not take {PORT},"
+              f" and every test port 8740-8749 is busy; not started. To use your station: {EMPTY_HINT}")
+        return None
+    print(f"  web app: {station.root} has no station.json, so it opens on test port {alt}"
+          f" (closes after 5 idle min), not {PORT}. To use your station: {EMPTY_HINT}")
+    return alt
+
+
 def wait_until(check, timeout: float, step: float = 0.25) -> bool:
     end = time.time() + timeout
     while True:
@@ -122,11 +158,14 @@ def wait_until(check, timeout: float, step: float = 0.25) -> bool:
         time.sleep(step)
 
 
-def start(station: Station, port: int = PORT, timeout: float = 20.0) -> tuple[str, int | None]:
+def start(station: Station, port: int = PORT,
+          timeout: float = START_TIMEOUT) -> tuple[str, int | None]:
     """Start the web app unless something already answers. Returns (outcome, pid).
 
     outcome: 'up' (was already running), 'started', 'blocked' (port held by
-    something that is not the web app), 'failed' (did not answer in time).
+    something that is not the web app), 'starting' (launched, alive, but not
+    answering yet when the timeout ran out), 'failed' (could not launch, or the
+    process died before answering).
     """
     if viewer_answers(port) is not None:
         return "up", listener_pid(port)
@@ -137,7 +176,11 @@ def start(station: Station, port: int = PORT, timeout: float = 20.0) -> tuple[st
     except (OSError, subprocess.SubprocessError):
         return "failed", None
     if not wait_until(lambda: viewer_answers(port) is not None, timeout):
-        return "failed", proc.pid
+        # Measured 2026-10-27: `web restart` said "did not come back" while the new
+        # app was still loading, and it was up seconds later. A live process is
+        # reported as still starting, not as a failure.
+        alive = getattr(proc, "poll", lambda: None)() is None
+        return ("starting" if alive else "failed"), proc.pid
     return "started", listener_pid(port) or proc.pid
 
 
@@ -157,6 +200,9 @@ def ensure_running(station: Station, port: int = PORT) -> str:
         print(f"  web app: already up on {port}   {url}{note}")
     elif outcome == "started":
         print(f"  web app: started on {port}, pid {pid}   {url}   (no window; `marsad web stop` ends it)")
+    elif outcome == "starting":
+        print(f"  web app: launched on {port}, pid {pid}, still loading   {url}"
+              "   (`marsad web status` confirms; the scan goes on)")
     elif outcome == "blocked":
         print(f"  web app: port {port} is held by another program (pid {pid}), not the web app;"
               " the scan goes on without a page.")
@@ -219,8 +265,15 @@ def main(argv: list, station: Station, prog: str = "marsad web") -> int:
         print(f"  Probe-tab run: {probe_state(port) or 'unknown'}")
         return 0
 
+    if a.action in ("start", "restart") and port == PORT and not station.file_found:
+        # A restart from an empty station would stop the real app and put an empty one
+        # in its place - the 2026-10-27 accident, by another road.
+        print(f"  web app: not {'started' if a.action == 'start' else 'restarted'} on {PORT}:"
+              f" {station.root} has no station.json. To use your station: {EMPTY_HINT}")
+        return 1
+
     if a.action == "start":
-        return 0 if ensure_running(station, port) in ("up", "started") else 1
+        return 0 if ensure_running(station, port) in ("up", "started", "starting") else 1
 
     why = restart_refusal(port, a.force)
     if why:
@@ -237,9 +290,13 @@ def main(argv: list, station: Station, prog: str = "marsad web") -> int:
     print(f"  web app: stopped (pid {pid})" if pid else f"  web app: was not running on {port}")
     if a.action == "stop":
         return 0
-    outcome, pid = start(station, port)
+    outcome, pid = start(station, port, timeout=RESTART_TIMEOUT)
     if outcome == "started":
         print(f"  web app: started on {port}, pid {pid}   http://127.0.0.1:{port}/")
+        return 0
+    if outcome == "starting":
+        print(f"  web app: launched on {port}, pid {pid}, but not answering after"
+              f" {RESTART_TIMEOUT:g} s; still loading. Check with `marsad web status`.")
         return 0
     print(f"  web app: did not come back on {port} ({outcome}; see reports/{LOG_NAME})")
     return 1

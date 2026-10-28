@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 from .config import Station
-from .rtlpower import RTL_MAX_SAMPLE_HZ, CROP, find_tool
+from .rtlpower import RTL_MAX_SAMPLE_HZ, CROP
 
 
 def sweep_times(csv_path: Path) -> tuple[list[dt.datetime], int]:
@@ -96,7 +96,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad calibrat
     if args.csv:
         csv_path = Path(args.csv)
     else:
-        rtl_power = find_tool("rtl_power", station.tool_dirs())
+        rtl_power, warning = station.rtl_power()
+        if warning:
+            print(f"  WARNING: {warning}")
         if rtl_power is None:
             raise SystemExit("rtl_power not found (rtl-sdr/ folder or PATH)")
         hop_mhz = RTL_MAX_SAMPLE_HZ * (1 - CROP) / 1e6
