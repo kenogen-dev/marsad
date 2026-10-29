@@ -2679,7 +2679,10 @@ their fingerprints match.
 
 Refuses to start if another program holds the SDR; validates `-g` against the E4000
 gain steps; names the CSV per the convention; prompts for antenna/chain/conditions
-(remembering answers in `station.json`); writes the JSON sidecar before recording so
+(remembering answers in `station.json`), except that **`--chain` and `--conditions` both
+given skip the station-notes questions** (header fields from station.json, as for
+`--non-interactive`; since 2026-10-28, when a chained 10 h run sat at the first prompt with
+the owner away; the "Start anyway?" device prompt still asks); writes the JSON sidecar before recording so
 an interrupted run still has one; then runs `survey.py analyze`. Size estimates are a
 range because rtl_power rounds bin width down to a power-of-2 FFT, giving up to twice
 the requested bins — the sidecar records the actual width as `bin_khz_actual`.

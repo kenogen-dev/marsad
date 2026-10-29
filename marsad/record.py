@@ -227,9 +227,16 @@ def warn_long_run(duration_s: int) -> None:
 def ask_conditions(args, defaults: dict) -> dict:
     """Ask about the physical setup. Enter accepts the shown default."""
     chain = dict(defaults)
+    # Both given: the run already describes itself, and a run chained after another
+    # (`marsad watch ...; marsad run ...`, owner away) must not stop at a prompt.
+    # 2026-10-28: a 10 h milair map never started because of these four questions.
+    given = bool((args.chain or "").strip() and (args.conditions or "").strip())
     # No terminal (scheduled run, piped input) means nobody can answer prompts.
-    if args.non_interactive or not sys.stdin or not sys.stdin.isatty():
-        if not args.non_interactive:
+    if given or args.non_interactive or not sys.stdin or not sys.stdin.isatty():
+        if given and not args.non_interactive:
+            print("  Chain and conditions given; station-notes questions skipped "
+                  "(header fields from station.json; chain_order is the record).")
+        elif not args.non_interactive:
             print("  No terminal for questions; using saved station.json defaults.")
         chain["conditions"] = args.conditions or ""
         if args.chain:
