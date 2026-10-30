@@ -217,13 +217,8 @@ def stop(port: int = PORT, timeout: float = 10.0) -> tuple[bool, int | None]:
     if pid is None:
         return not host.port_in_use(port), None
     try:
-        if host.IS_WINDOWS:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=15)
-        else:
-            import os
-            import signal
-            os.kill(pid, signal.SIGTERM)
-    except (OSError, subprocess.SubprocessError):
+        host.kill_pid(pid)
+    except OSError:
         pass
     return wait_until(lambda: not host.port_in_use(port), timeout), pid
 

@@ -238,3 +238,45 @@ def test_a_test_viewer_off_8731_still_exits_when_idle(monkeypatch, tmp_path):
     webapp.launch_background(_station(tmp_path), 8745)
     cmd = calls[0]
     assert cmd[cmd.index("--exit-after-idle") + 1] == "5"
+
+
+def test_stop_terminates_the_listener_directly_never_through_a_child(monkeypatch):
+    """2026-10-29: `marsad web stop` ran taskkill with pipes, which never returns on this
+    PC; the timeout was swallowed and 8731 stayed up. Now it is one direct call."""
+    killed, freed = [], []
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 5150)
+    monkeypatch.setattr(host, "kill_pid", lambda pid: killed.append(pid) or freed.append(True))
+    monkeypatch.setattr(host, "port_in_use", lambda port: not freed)
+
+    def no_child(*a, **k):
+        raise AssertionError(f"stop() started a child process: {a}")
+    monkeypatch.setattr(subprocess, "run", no_child)
+    monkeypatch.setattr(subprocess, "Popen", no_child)
+    assert webapp.stop(8745, timeout=2) == (True, 5150)
+    assert killed == [5150]
+
+
+def test_stop_reports_a_listener_it_could_not_end(monkeypatch):
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: 5150)
+
+    def denied(pid):
+        raise PermissionError("access denied")
+    monkeypatch.setattr(host, "kill_pid", denied)
+    monkeypatch.setattr(host, "port_in_use", lambda port: True)
+    assert webapp.stop(8745, timeout=0.3) == (False, 5150)
+
+
+def test_sdr_check_lists_processes_without_tasklist(monkeypatch):
+    """tasklist from Python also hangs on this PC, so the SDR-in-use check reads the
+    process list with one system call."""
+    if not host.IS_WINDOWS:
+        return
+
+    def no_child(*a, **k):
+        raise AssertionError("running_sdr_programs started a child process")
+    monkeypatch.setattr(subprocess, "run", no_child)
+    monkeypatch.setattr(host, "windows_process_names",
+                        lambda: ["system", "rtl_power_gainfix.exe", "python.exe", "sdrpp.exe"])
+    assert host.running_sdr_programs() == ["rtl_power_gainfix.exe", "sdrpp.exe"]
+    monkeypatch.undo()
+    assert "python.exe" in host.windows_process_names()     # the real call, on this machine

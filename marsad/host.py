@@ -17,14 +17,51 @@ from .rtlpower import SDR_PROGRAMS, frozen
 IS_WINDOWS = os.name == "nt"
 
 
+def windows_process_names() -> list[str]:
+    """Executable names of every running process, from the ToolHelp snapshot API.
+
+    Not `tasklist`: on this PC (2026-10-29) tasklist started from Python never
+    returns - 20-30 s and a timeout every time, even with stdin closed - so the
+    SDR-in-use check was quietly answering "can't tell". This is one system call."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)              # TH32CS_SNAPPROCESS
+    if snap in (None, wintypes.HANDLE(-1).value):
+        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
+    names = []
+    try:
+        e = PROCESSENTRY32W()
+        e.dwSize = ctypes.sizeof(e)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            names.append(e.szExeFile.lower())
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return names
+
+
+def kill_pid(pid: int) -> None:
+    """End a process now. On Windows os.kill with SIGTERM is TerminateProcess, a direct
+    call: `taskkill` started from Python hangs on this PC the way tasklist does, which
+    made `marsad web stop` time out and leave 8731 running (2026-10-29)."""
+    os.kill(pid, signal.SIGTERM)
+
+
 def running_sdr_programs() -> list[str] | None:
     """Names of SDR programs running now. [] means clear, None means can't tell."""
     try:
         if IS_WINDOWS:
-            out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
-                                 capture_output=True, text=True, timeout=30).stdout
-            names = [line.split('","')[0].strip('"').strip().lower()
-                     for line in out.splitlines() if line.startswith('"')]
+            names = windows_process_names()
         else:
             out = subprocess.run(["ps", "-eo", "comm="],
                                  capture_output=True, text=True, timeout=30).stdout
