@@ -50,6 +50,7 @@ from .rtlpower import find_tool, parse_duration
 
 FAMILY_14_4 = (14.4, "14.4 MHz SDR clock harmonic")
 STATUS_EVERY_S = 2.0       # how often a running watch rewrites its status file
+RECENT_EVENTS = 12         # events the status file lists, for the Scan tab's markers
 
 
 # ---------------------------------------------------------------- small parsers
@@ -149,6 +150,7 @@ class Recorder:
         self.inline = inline_characterise
         self.st = None                    # the live status, once start_status has run
         self._hb = threading.Event()
+        self.sess = None                  # the session listening now: its live spectrum goes in the status
 
     def say(self, text: str) -> None:
         if not self.quiet:
@@ -166,7 +168,7 @@ class Recorder:
             self.st = {"state": "running", "mode": mode, "receiver": self.rx["role"],
                        "serial": self.rx["serial"], "pid": os.getpid(), "started": time.time(),
                        "ends_at": ends_at, "job": None, "events": 0, "last_event": None,
-                       "capture": None, "captures": 0, "cooldowns": {}, **fields}
+                       "capture": None, "captures": 0, "cooldowns": {}, "recent_events": [], **fields}
         self._hb = threading.Event()
         threading.Thread(target=self._beat, daemon=True).start()
         self.write_status()
@@ -203,6 +205,11 @@ class Recorder:
             job["next_capture_at"] = max(nxt) if nxt else None       # None: the next event may record
         d["ambush"] = ({"mhz": job["target_mhz"], "until": job["until"]}
                        if job and job.get("kind") == "ambush" else None)
+        # The session replaces its `live` dict whole, so this reads it without a lock and
+        # never touches the stream: power per column only, the same for every tier.
+        sess = self.sess
+        live = getattr(sess, "live", None) if sess is not None else None
+        d["spectrum"] = dict(live) if (live and d.get("job")) else None
         d["updated"] = now
         return d
 
@@ -296,6 +303,7 @@ class Recorder:
                            on_capture_closed=on_closed, stop=stop, restart=restart,
                            stop_after_capture=stop_after_capture)
         reader = cap.StreamReader(stream, sess.block * 2)
+        self.sess = sess
         try:
             out = sess.run(reader)
         except KeyboardInterrupt:
@@ -303,6 +311,7 @@ class Recorder:
             raise
         finally:
             stop_proc()
+            self.sess = None
             self.note_status(job=None, capture=None)
         self.clock = t0 + out["seconds"]
         out["eof"] = out["ended"] == "eof"
@@ -351,9 +360,10 @@ class Recorder:
         state["prev_start"] = start
         rid = cap.add_row(self.con, row)
         if self.st is not None:
-            self.note_status(events=self.st["events"] + 1,
-                             last_event={"at": start, "mhz": row["freq_hz"] / 1e6, "snr_db": row["snr_peak_db"],
-                                         "iq": iq, "private": private})
+            last = {"at": start, "mhz": row["freq_hz"] / 1e6, "snr_db": row["snr_peak_db"],
+                    "iq": iq, "private": private}
+            self.note_status(events=self.st["events"] + 1, last_event=last,
+                             recent_events=(self.st.get("recent_events") or [])[-(RECENT_EVENTS - 1):] + [last])
         state["rows"].append(rid)
         self.say(f"    event {row['started'][11:19]}  {row['freq_hz'] / 1e6:.4f} MHz  "
                  f"peak {row['snr_peak_db']:.1f} dB  {row['duration_s']:.2f} s  {iq}"

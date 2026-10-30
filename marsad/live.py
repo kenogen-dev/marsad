@@ -760,6 +760,94 @@ def survey_list(station: Station) -> list:
     return out
 
 
+def started_at(path: Path) -> float:
+    """When a recording was created. Two radios write two files at once, and the one
+    modified last flips back and forth with every flush, so "newest" for the Scan tab
+    means newest STARTED. On Windows st_ctime is the creation time."""
+    s = path.stat()
+    return getattr(s, "st_birthtime", s.st_ctime)
+
+
+def newest_recording(station: Station):
+    """The newest-started recording of either engine: rtl_power's .csv or rtl_power_fftw's .dat."""
+    if not station.surveys.exists():
+        return None
+    files = list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat"))
+    return max(files, key=lambda p: (started_at(p), p.stat().st_mtime)) if files else None
+
+
+STILL_WRITING_S = 300.0      # a recording untouched this long is not being written any more
+
+
+def recording_active(path: Path, now: float | None = None) -> bool:
+    """Is this recording still being written? Its sidecar has no `finished_local` (the
+    recorder stamps that when the program exits), and the file grew recently: within
+    STILL_WRITING_S, or three of its write intervals for a slow scan (rtl_power writes
+    once per -i, rtl_power_fftw once per pass). A run killed without warning never gets
+    `finished_local`, so the clock is what retires it."""
+    now = time.time() if now is None else now
+    try:
+        age = now - path.stat().st_mtime
+    except OSError:
+        return False
+    every = 0.0
+    try:
+        d = json.loads(path.with_suffix(".json").read_text())
+        if d.get("finished_local"):
+            return False
+        eng = d.get(d.get("engine") or "rtl_power") or {}
+        every = float(eng.get("integration_s") or (d.get("geometry") or {}).get("sweep_s") or 0)
+    except (OSError, ValueError, TypeError):
+        pass
+    return age <= max(STILL_WRITING_S, 3 * every)
+
+
+def other_recording(station: Station, main: str | None, now: float | None = None):
+    """The newest recording being written that is not the one the Scan tab shows: the
+    second radio's `marsad run`, when two run at once. None when there is no such run."""
+    if not station.surveys.exists():
+        return None
+    files = list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat"))
+    for f in sorted(files, key=started_at, reverse=True):
+        if f.name != main and recording_active(f, now):
+            return f
+    return None
+
+
+OTHER_COLS, OTHER_KEEP = 600, 120     # the second-radio panel is small: half the columns, 120 rows
+OTHER_TAILERS: dict = {}              # its own tailers, so the main view's keep their full width
+
+
+def other_payload(station: Station, main: str | None, since: int = 0, file: str | None = None) -> dict:
+    """What the Scan tab's second-radio panel draws: the other recording being written
+    (its latest rows from `since`, as /data gives them), and every running recorder's
+    status, which carries the live spectrum of the band a `marsad watch` is parked on.
+    `file` is the recording the page has been drawing; a different answer tells it to
+    start again from row 0."""
+    from . import catalogue        # needs numpy; the rest of the app does not
+    out = {"other": None, "recorders": []}
+    f = other_recording(station, main)
+    if f is not None:
+        with TAIL_LOCK:
+            t = OTHER_TAILERS.get(f.name)
+            if t is None:
+                t = (DatTailer if f.suffix.lower() == ".dat" else Tailer)(f, OTHER_COLS, OTHER_KEEP)
+                OTHER_TAILERS[f.name] = t
+            for k in [k for k in OTHER_TAILERS if k != f.name]:
+                del OTHER_TAILERS[k]          # one at a time is all the panel shows
+        t.poll()
+        p = t.payload(since if file == f.name else 0)
+        fp = p["meta"].get("fingerprint") or hunt.report_info(station, f.stem).get("fingerprint")
+        p["fingerprint"] = fp
+        p.pop("hop_centres_mhz", None)
+        out["other"] = p
+    try:
+        out["recorders"] = [r for r in catalogue.live_recorders(station) if r.get("running")]
+    except Exception:  # noqa: BLE001 - a bad status file must not cost the panel the recording
+        out["recorders"] = []
+    return out
+
+
 # The waterfall's "internal" layer: what the receiver makes on its own. The
 # confirmed internal families (CLAUDE.md: the 14.4 MHz clock family; 28.8 is half
 # of it) are tagged on the page; the floor comes from a terminated run with the
@@ -915,12 +1003,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
     args = ap.parse_args(argv)
 
     def newest_csv():
-        """The newest recording of either engine: rtl_power's .csv or rtl_power_fftw's .dat."""
-        if not station.surveys.exists():
-            return None
-        files = sorted(list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat")),
-                       key=lambda p: p.stat().st_mtime)
-        return files[-1] if files else None
+        return newest_recording(station)
 
     if args.csv:
         path = Path(args.csv)
@@ -1022,6 +1105,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 fw = float(pr.get("floor_window") or cfg["floor_window_mhz"])
                 pk = t.peaks(cfg["peak_threshold_db"], fw, cfg["spur_families"], cfg["readout_families"])
                 body = json.dumps({**t.payload(since), "peaks": pk, "live": live_name}).encode()
+            elif u.path == "/other":
+                # The second-radio panel: whatever is being recorded besides `main`.
+                main_name = (q.get("main") or [""])[0] or (live["path"].name if live["path"] else None)
+                body = json.dumps(other_payload(station, main_name, int((q.get("since") or ["0"])[0]),
+                                                (q.get("file") or [""])[0] or None)).encode()
             elif u.path == "/internal":
                 name = (q.get("file") or [None])[0] or (live["path"].name if live["path"] else None)
                 t = get_tailer(station, name, args.cols, args.keep) if name else None

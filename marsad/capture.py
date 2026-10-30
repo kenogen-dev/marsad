@@ -54,6 +54,9 @@ CALIBRATE_BLOCKS = 25     # 0.5 s of floor before anything can trigger
 FLOOR_ROWS = 250          # quiet rows the floor is the median of (~5 s)
 FLOOR_CAP = 2.0           # no bin's floor above 2x (3 dB) the band's typical bin: a steady carrier cannot hide itself
 PRE_S = 1.0               # IQ kept from before the trigger
+LIVE_COLS = 256           # the status file's live spectrum: power per column, nothing else
+LIVE_HOLD_S = 2.0         # ... averaged and max-held over this long
+LIVE_EVERY = 10           # recomputed every this many blocks (~0.2 s)
 
 PRIVATE = "PRIVATE: do not decode"
 ANOMALY = "ANOMALY: review"
@@ -570,13 +573,51 @@ class Session:
         self.capture = None          # what the last capture was, for the caller
         self.captures = 0
         self.stat_max = -99.0
+        # The web app's picture of this tuning: power only, LIVE_COLS columns, held
+        # over LIVE_HOLD_S. Replaced whole (never mutated), so the status thread can
+        # read it without touching the stream. No phase, nothing that carries content.
+        self.live_g = max(1, self.nfft // LIVE_COLS)
+        self.live_mean = deque(maxlen=max(1, int(round(LIVE_HOLD_S / self.block_s))))
+        self.live_max = deque(maxlen=self.live_mean.maxlen)
+        self.live = None
 
     # -- per block
     def _rows(self, x: np.ndarray):
         fr = x.reshape(self.k, self.nfft) * self.win
         P = np.abs(np.fft.fftshift(np.fft.fft(fr, axis=1), axes=1)) ** 2 / self.nfft
         Pw = P[:, self.wb]
+        self._live_add(P)
         return Pw.mean(axis=0), Pw
+
+    def _live_add(self, P: np.ndarray) -> None:
+        g = self.live_g
+        n = (self.nfft // g) * g
+        self.live_mean.append(P[:, :n].mean(axis=0).reshape(-1, g).mean(axis=1))
+        self.live_max.append(P[:, :n].max(axis=0).reshape(-1, g).max(axis=1))
+        if self.n_blocks % LIVE_EVERY == 0 and self.floor is not None:
+            self.live = self.live_view()
+
+    def live_view(self) -> dict:
+        """The tuning as the Scan tab draws it: mean and max-hold power per column over
+        the last ~2 s, the floor and the trigger level in the watched window. dB on the
+        recorder's own scale (power per FFT bin), so floor and mean compare directly."""
+        db = lambda a: [round(float(v), 1) for v in 10 * np.log10(np.maximum(a, 1e-12))]
+        mean = np.mean(np.array(self.live_mean), axis=0)
+        mx = np.max(np.array(self.live_max), axis=0)
+        bin_hz = self.rate / self.nfft
+        g = self.live_g
+        tune = float(self.plan["tune_hz"])
+        first = tune - self.rate / 2 + (g - 1) / 2 * bin_hz          # centre of column 0
+        floor_db = float(10 * np.log10(np.median(self.floor))) if self.floor is not None else None
+        f_wb = tune + (self.wb - self.nfft // 2) * bin_hz
+        return {"at": time.time(), "tuned_mhz": tune / 1e6,
+                "lo_mhz": first / 1e6, "hi_mhz": (first + (len(mean) - 1) * g * bin_hz) / 1e6,
+                "mean_db": db(mean), "max_db": db(mx),
+                "hold_s": round(len(self.live_mean) * self.block_s, 2),
+                "watch_mhz": [float(f_wb.min()) / 1e6, float(f_wb.max()) / 1e6],
+                "floor_db": None if floor_db is None else round(floor_db, 1),
+                "trigger_db": None if floor_db is None else round(floor_db + self.threshold, 1),
+                "threshold_db": self.threshold}
 
     def _update_floor(self, row: np.ndarray) -> None:
         self.quiet.append(row)

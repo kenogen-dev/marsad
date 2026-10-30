@@ -2615,6 +2615,23 @@ rtl_power's scale; see the characterisation section for the measured offset.
 `tests/test_rpf.py` pins the hop plan (the program's own Plan::Plan arithmetic), geometry,
 fingerprint, command line, log parser and the parser on a sample file.
 
+**Second-radio panel on the Scan tab (2026-10-29), `live.other_payload`, `GET /other`.** With
+two radios running, the main view follows one recording and the panel under its spectrum shows
+the other: (1) the newest recording **still being written** that is not the main one (sidecar
+has no `finished_local` and the file grew within 5 min, or three write intervals for a slow
+scan; a killed run retires itself by the clock), drawn as latest pass, median and max-hold
+over its last 120 passes plus a small waterfall, labelled receiver, tag, file, pass count and
+fingerprint (its own 600-column tailers, so the main view keeps its width); (2) every running
+`marsad watch`, drawn from its status file: the session now puts a **power spectrum of its
+tuning** in `recorder_status_<serial>.json` (`spectrum`: 256 columns, mean and max-hold over the
+last ~2 s, the floor and the trigger level, floor + 12 dB, in the watched window, tuned
+frequency) plus `recent_events` (last 12) for markers. Power per column only, the same for
+every tier: a private band still gets no IQ of any kind. The status thread reads a dict the
+session replaces whole and never touches the stream. With neither, the panel is one line.
+**"Newest" now means newest STARTED** (creation time), for the main view's follow too: two
+runs flush in turn, and newest-modified flipped the view between them. Polled every 2 s while
+the Scan tab is open. `tests/test_second_radio.py` pins the choice, the endpoint and the field.
+
 **The web app shows rtl_power_fftw runs live (2026-10-22).** `marsad live` on 8731 follows
 the newest recording of either engine, `surveys/*.csv` or `surveys/*.dat`, and the Scan tab's
 survey list and Archive table carry both, with an `fftw` tag. A `.dat` is read by

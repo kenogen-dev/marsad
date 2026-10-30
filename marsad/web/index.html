@@ -1,7 +1,10 @@
 <!doctype html><html><head><meta charset="utf-8">
 <title>SDR station</title>
 <style>
-:root{--bg:#0a0e13;--panel:#121a22;--line:#253442;--ink:#dde6ee;--dim:#8599a8;--accent:#4fd3e8}
+:root{--bg:#0a0e13;--panel:#121a22;--line:#253442;--ink:#dde6ee;--dim:#8599a8;--accent:#4fd3e8;--amber:#e8b14f;--green:#4fcf96;--muted:#c58bff}
+#ot-spec,.ot-rec canvas{height:170px}#ot-fall{height:110px}
+.ot-h{font-size:12px;color:var(--ink);margin:2px 0 6px}.ot-h b{color:var(--accent);font-weight:600}
+.ot-sub{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}.ot-sub:first-of-type{border-top:0;margin-top:0;padding-top:0}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px ui-sans-serif,system-ui,sans-serif}
 header{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
@@ -228,6 +231,21 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
     <div class="key under" id="key-sel" hidden><span><i style="background:#c58bff;height:3px"></i><span id="key-sel-t">selected sweep</span></span>
       <a href="#" id="sel-clear" style="color:var(--accent)">clear</a></div>
     <div class="key under"><span class="pk" id="pk" style="margin-left:0"></span></div></div>
+  <div class="wrap" id="ot"><div class="lab">Second radio — whatever else is recording right now</div>
+    <div class="note" id="ot-none" style="margin:0">Second radio: checking…</div>
+    <div class="ot-sub" id="ot-run" hidden>
+      <div class="ot-h" id="ot-run-h"></div>
+      <canvas id="ot-spec"></canvas><div class="xs" id="ot-xs"></div>
+      <canvas id="ot-fall" style="margin-top:6px"></canvas>
+      <div class="key under">
+        <span><i style="background:var(--accent);height:3px"></i>latest complete sweep</span>
+        <span><i style="background:var(--muted)"></i>median of the sweeps held here</span>
+        <span><i style="background:var(--amber);opacity:.6"></i>max-hold</span>
+        <span>waterfall: newest at the top, last 120 sweeps</span>
+      </div>
+    </div>
+    <div id="ot-recs"></div>
+  </div>
   <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number and its start time<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
     <div class="fctl">
       <span class="grp">sweep height</span><span id="fh-btns"></span>
@@ -1091,6 +1109,129 @@ function recRender(){
 }
 async function recPoll(){
   try{const d=await (await fetch('/captures/recorders')).json();recs=d.recorders||[];recRender();}catch(e){}
+}
+// ---- second-radio panel: the recording the main view is NOT showing, and any marsad watch
+const OT_KEEP=120;
+let ot={file:null,have:0,rows:[],stamps:[]};
+const cssv=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+function otTicks(lo,hi,el){
+  // the page's ticks() starts at 1 MHz steps; a watch's tuning is a few hundred kHz wide
+  let tk=null;
+  for(const step of [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5])
+    if((hi-lo)/step<=8){const vals=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)vals.push(+v.toFixed(4));tk={step,vals};break;}
+  if(!tk||tk.vals.length<2)tk=ticks(lo,hi);
+  el.innerHTML=tk.vals.map(v=>`<span style="position:absolute;left:${(v-lo)/(hi-lo)*100}%;transform:translateX(-50%)">${+v.toFixed(3)}</span>`).join('');
+  return tk;}
+function otAxes(x,W,H,lo,hi,tk,dlo,dhi){
+  x.fillStyle=cssv('--bg');x.fillRect(0,0,W,H);
+  x.strokeStyle=cssv('--line');x.lineWidth=1;
+  for(const v of tk.vals){const px=Math.round((v-lo)/(hi-lo)*W)+.5;x.beginPath();x.moveTo(px,0);x.lineTo(px,H);x.stroke();}
+  x.fillStyle=cssv('--dim');x.font='10px ui-monospace,Consolas,monospace';
+  x.fillText(dhi.toFixed(0)+' dB',4,11);x.fillText(dlo.toFixed(0)+' dB',4,H-4);}
+function otTrace(x,arr,W,H,dlo,dhi,col,lw){
+  x.save();x.strokeStyle=col;x.lineWidth=lw;x.beginPath();let pen=false;
+  const n=arr.length;
+  for(let i=0;i<n;i++){const v=arr[i];if(v==null)continue;    // an empty column (fewer bins than columns): bridge it
+    const px=i/Math.max(1,n-1)*W,py=H-(v-dlo)/(dhi-dlo)*H;
+    if(pen)x.lineTo(px,py);else{x.moveTo(px,py);pen=true;}}
+  x.stroke();x.restore();}
+function otIngest(o){
+  if(!o){ot={file:null,have:0,rows:[],stamps:[]};return;}
+  if(o.file!==ot.file)ot={file:o.file,have:0,rows:[],stamps:[]};
+  ot.rows.push(...o.rows);ot.stamps.push(...o.stamps);
+  ot.rows=ot.rows.slice(-OT_KEEP);ot.stamps=ot.stamps.slice(-OT_KEEP);
+  ot.have=o.total;ot.o=o;}
+function otDrawRun(){
+  const o=ot.o,box=document.getElementById('ot-run');
+  box.hidden=!ot.file;if(!ot.file||!o)return;
+  const m=o.meta||{},n=o.cols;
+  document.getElementById('ot-run-h').innerHTML=`<b>${esc((m.receiver||'?').toUpperCase())}</b> · ${esc(m.tag||m.preset||'')} · `
+    +`<span class="s">${esc(o.file)}</span> · pass <b>${o.total}</b>${o.expected?' of '+o.expected:''}`
+    +(m.engine==='rtl_power_fftw'?' <span style="color:var(--amber)">(rtl_power_fftw scale, not rtl_power\'s)</span>':'')
+    +(o.fingerprint?`<br><span class="s" style="color:var(--dim)">${esc(o.fingerprint)}</span>`:'');
+  if(o.lo==null||o.hi==null)return;
+  const latest=ot.rows.length?ot.rows[ot.rows.length-1]:o.partial;
+  const mx=new Array(n).fill(null),md=new Array(n).fill(null);
+  for(let c=0;c<n;c++){const v=[];for(const r of ot.rows)if(r[c]!=null)v.push(r[c]);
+    if(v.length){v.sort((a,b)=>a-b);md[c]=v[Math.floor(v.length/2)];mx[c]=v[v.length-1];}}
+  const all=[].concat(...ot.rows).filter(v=>v!=null);
+  if(o.partial)all.push(...o.partial.filter(v=>v!=null));
+  if(!all.length)return;
+  const dlo=Math.floor(pct(all,.02)-3),dhi=Math.ceil(Math.max(...all)+3);
+  const cv=document.getElementById('ot-spec'),x=fit(cv),W=cv.width,H=cv.height;
+  const tk=otTicks(o.lo,o.hi,document.getElementById('ot-xs'));
+  otAxes(x,W,H,o.lo,o.hi,tk,dlo,dhi);
+  otTrace(x,mx,W,H,dlo,dhi,cssv('--amber'),1);
+  otTrace(x,md,W,H,dlo,dhi,cssv('--muted'),1);
+  if(latest)otTrace(x,latest,W,H,dlo,dhi,cssv('--accent'),1.5);
+  // waterfall, newest at the top
+  const fv=document.getElementById('ot-fall'),fx2=fit(fv),FW=fv.width,FH=fv.height;
+  const img=fx2.createImageData(n,OT_KEEP),flo=pct(all,.05),fhi=pct(all,.995);
+  for(let r=0;r<ot.rows.length;r++){const row=ot.rows[ot.rows.length-1-r];
+    let prev=null;
+    for(let c=0;c<n;c++){const v=row[c]!=null?row[c]:prev,k=(r*n+c)*4;prev=v;
+      const [R,G,B]=v==null?[0,0,0]:cmap((v-flo)/Math.max(1e-6,fhi-flo));
+      img.data[k]=R;img.data[k+1]=G;img.data[k+2]=B;img.data[k+3]=255;}}
+  const tmp=document.createElement('canvas');tmp.width=n;tmp.height=OT_KEEP;tmp.getContext('2d').putImageData(img,0,0);
+  fx2.fillStyle=cssv('--bg');fx2.fillRect(0,0,FW,FH);fx2.imageSmoothingEnabled=false;
+  fx2.drawImage(tmp,0,0,n,Math.max(1,ot.rows.length),0,0,FW,FH);}   // fill the height with what there is
+function otRecHtml(r,i){
+  const j=r.job||{},sp=r.spectrum;
+  const head=`<b>${esc((r.receiver||'?').toUpperCase())}</b> SN ${esc(r.serial)} · ${esc(r.mode)}`
+    +(j.kind?` · ${esc(j.kind)} on <b>${Number(j.target_mhz).toFixed(4)}</b> MHz (tuned ${Number(j.tuned_mhz).toFixed(4)})`:'')
+    +(j.tier?` · ${j.tier==='private'?'<span class="badge priv">PRIVATE: do not decode</span>':esc(j.tier)}${j.band?' '+esc(j.band):''}`:'')
+    +` · ${r.events} event${r.events===1?'':'s'}`;
+  return `<div class="ot-sub ot-rec"><div class="ot-h">${head}</div>`
+    +(sp?`<canvas id="ot-rc${i}"></canvas><div class="xs" id="ot-rx${i}"></div>
+      <div class="key under"><span><i style="background:var(--accent);height:3px"></i>average over the last ${sp.hold_s} s</span>
+      <span><i style="background:var(--amber);opacity:.6"></i>max-hold, same ${sp.hold_s} s</span>
+      <span><i class="dash"></i>floor in the watched window (shaded)</span>
+      <span><i style="background:var(--amber);height:2px"></i>trigger: floor + ${sp.threshold_db} dB, reached by a 20 ms sub-band average</span>
+      <span><i class="tri" style="border-bottom-color:var(--green)"></i>recent events (grey: private band)</span></div>`
+     :`<div class="note" style="margin:0">no spectrum: ${r.job?'the radio is just starting on this tuning':'the radio is idle, waiting for the survey to trigger it'}</div>`)
+    +'</div>';}
+function otDrawRec(r,i){
+  const sp=r.spectrum;if(!sp)return;
+  const cv=document.getElementById('ot-rc'+i);if(!cv)return;
+  const x=fit(cv),W=cv.width,H=cv.height,lo=sp.lo_mhz,hi=sp.hi_mhz;
+  const vals=sp.mean_db.concat(sp.max_db);if(sp.trigger_db!=null)vals.push(sp.trigger_db);
+  const dlo=Math.floor(Math.min(...vals)-3),dhi=Math.ceil(Math.max(...vals)+3);
+  const tk=otTicks(lo,hi,document.getElementById('ot-rx'+i));
+  otAxes(x,W,H,lo,hi,tk,dlo,dhi);
+  const X=f=>(f-lo)/(hi-lo)*W,Y=v=>H-(v-dlo)/(dhi-dlo)*H;
+  const [wa,wb]=sp.watch_mhz;
+  x.fillStyle='rgba(79,211,232,.08)';x.fillRect(X(wa),0,Math.max(2,X(wb)-X(wa)),H);
+  otTrace(x,sp.max_db,W,H,dlo,dhi,cssv('--amber'),1);
+  otTrace(x,sp.mean_db,W,H,dlo,dhi,cssv('--accent'),1.5);
+  if(sp.floor_db!=null){x.save();x.strokeStyle=cssv('--dim');x.setLineDash([3,4]);x.beginPath();
+    x.moveTo(X(wa)-6,Y(sp.floor_db));x.lineTo(X(wb)+6,Y(sp.floor_db));x.stroke();
+    x.setLineDash([]);x.strokeStyle=cssv('--amber');x.lineWidth=2;x.beginPath();
+    x.moveTo(X(wa)-6,Y(sp.trigger_db));x.lineTo(X(wb)+6,Y(sp.trigger_db));x.stroke();x.restore();}
+  const tx=Math.round(X(sp.tuned_mhz))+.5;
+  x.save();x.strokeStyle=cssv('--dim');x.setLineDash([2,3]);x.beginPath();x.moveTo(tx,0);x.lineTo(tx,H);x.stroke();x.restore();
+  x.font='10px ui-monospace,Consolas,monospace';
+  const now=Date.now()/1000;
+  for(const e of (r.recent_events||[])){if(e.mhz<lo||e.mhz>hi)continue;
+    const px=X(e.mhz);x.fillStyle=e.private?cssv('--dim'):cssv('--green');
+    x.beginPath();x.moveTo(px-5,16);x.lineTo(px+5,16);x.lineTo(px,6);x.closePath();x.fill();
+    const ago=now-e.at;x.fillText(ago<120?Math.round(ago)+' s ago':Math.round(ago/60)+' min ago',px+7,27);}
+}
+let otBusy=false;
+async function otPoll(){
+  if(otBusy||!document.getElementById('pane-scan').classList.contains('on'))return;
+  otBusy=true;
+  try{
+    const d=await (await fetch('/other?main='+encodeURIComponent(curFile||liveFile||'')+'&since='+ot.have
+      +(ot.file?'&file='+encodeURIComponent(ot.file):''))).json();
+    otIngest(d.other);
+    const rs=d.recorders||[],none=document.getElementById('ot-none');
+    none.hidden=!!(d.other||rs.length);
+    none.textContent='Second radio: nothing else is recording (no other marsad run being written, no marsad watch running).';
+    otDrawRun();
+    document.getElementById('ot-recs').innerHTML=rs.map(otRecHtml).join('');
+    rs.forEach(otDrawRec);
+  }catch(e){}
+  otBusy=false;
 }
 const csEl=id=>document.getElementById('cs-'+id);
 const csMHz=f=>f==null?'—':(f/1e6).toFixed(4);
@@ -2144,6 +2285,8 @@ loadSurveys();
 setInterval(loadSurveys,30000);
 recPoll();
 setInterval(recPoll,3000);
+otPoll();
+setInterval(otPoll,2000);
 tick();
 let startPane='scan';
 try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}
