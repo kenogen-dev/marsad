@@ -2586,6 +2586,35 @@ or writes it) and on the pool. **There is no delete control anywhere.**
   pins the list, the event pages, the slice-at-a-time read, the exports byte for byte and the
   private refusals, including through HTTP.
 
+**Archiving captures (2026-10-30), `marsad/capture_archive.py`.** On the Captures tab every event
+page has **Archive…**: keep a good capture for good without it counting against `pool_gb`. The dialog
+asks what to take (this event; this capture and every event inside it; the whole signal group; an
+event that owns a capture always brings the events inside it, so none is left pointing at nothing),
+whether fingerprints also stay in the pool (default yes: small, quick to view) and whether exports go
+too (default no: they can be made again from the SigMF; left out, they stay in the pool), plus a label
+and a note. **Show what would move** lists every file and the MB it frees; nothing changes until the
+amber **Archive: move N file(s) ...** button and a second confirm. One zip goes to
+`recorder.archive` (default `recordings/archive`; absolute paths allowed; **refused if it is inside
+the pool**), named `arch_<MHz>_<UTC>_<label>.zip`: the files at their pool-relative paths,
+`manifest.json` (the catalogue rows as they were, sha256 and size per file, receivers, gains, chains,
+the note) and `README.txt`. **Order, the only path by which anything leaves the pool:** write
+`.zip.part`, re-open it and hash every member against the hash taken while writing, rename it, and only
+then remove the originals, each first checked to be unchanged in size and age since it was zipped. A
+failed check removes nothing from the pool and deletes only the half-written zip. A capture a running
+recorder is writing (its status file's `capture.file`, while fresh) is refused, as is one with no
+`.sigmf-meta` yet. Private-tier events archive as fingerprints and rows only; an IQ-like file of a
+private row is never zipped, and the export / IQ 403 rules are unchanged. **The rows stay in
+occupancy.db** with `iq_status` "archived" and a new `archive_path` column (added the first time an
+archive is made); the list shows an ARCHIVED badge and an "archived" filter; a fingerprint that left
+the pool is read back out of the zip. **Restore to the pool** verifies the zip, unzips each file
+through a `.part` with its hash checked, refuses rather than overwrite a different file already in the
+pool, gives the rows their old status from the manifest, and keeps the zip ("also archived").
+The strip shows "archive N GB, not counted in the pool"; the pool figure drops by what left.
+`today` (the daily cap) still counts what was written today, archived or not. Endpoints
+`POST /captures/archive/plan`, `/captures/archive` (needs `"confirm": true`), `/captures/restore`.
+`tests/test_capture_archive.py` pins it with no radio. (`marsad/archive.py` is the occupancy archive
+of surveys, a different thing.)
+
 **Second engine: rtl_power_fftw (2026-10-21).** `rtl-sdr/rtl_power_fftw.exe` is a native
 Windows build of github.com/AD-Vega/rtl-power-fftw 1.0-beta2, made on this PC with the
 Visual Studio Build Tools that were already installed (static FFTW 3.3.10, the same

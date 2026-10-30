@@ -163,6 +163,12 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .badge.anom{color:#fbe9c8;border-color:#e8b14f;background:#3a2c14}
 .badge.iq{color:var(--dim)}
 .badge.iq.w{color:var(--accent);border-color:#2d6a75}
+.badge.arch{color:#c9b8ff;border-color:#5a4a8a;background:#1d1830}
+#cs-ar{margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:6px}
+#cs-ar .opt{display:block;margin:3px 0}
+#cs-ar-plan{margin-top:8px}
+#cs-ar-plan table{border-collapse:collapse;font-size:12px}
+#cs-ar-plan td{padding:1px 8px 1px 0}
 .cs-grp{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:var(--bg)}
 .cs-grp>.h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;padding:9px 12px;cursor:pointer}
 .cs-grp>.h:hover{background:var(--panel)}
@@ -293,6 +299,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <div class="cs-meter"><div class="s" id="cs-pool">pool —</div><div class="bar"><div id="cs-poolbar"></div></div></div>
         <div class="cs-meter"><div class="s" id="cs-day">today —</div><div class="bar"><div id="cs-daybar"></div></div></div>
       </div>
+      <div class="cs-rec" id="cs-arch">archive: —</div>
       <div class="cs-rec" id="cs-status">recorder: —</div>
     </div>
     <div class="wrap">
@@ -304,7 +311,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <label>Show <select id="cs-badge">
           <option value="">everything</option><option value="open">OPEN only</option>
           <option value="private">PRIVATE only</option><option value="anomaly">ANOMALY: review</option>
-          <option value="written">with IQ written</option></select></label>
+          <option value="written">with IQ written</option><option value="archived">ARCHIVED</option></select></label>
         <button class="btn" id="cs-go">Refresh</button>
       </div>
       <p class="note" id="cs-note">loading…</p>
@@ -335,6 +342,31 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
           <button class="btn" id="cs-x-cf32" title="complex float32 .cf32 plus a SigMF .sigmf-meta, for Inspectrum, URH and GNU Radio">Export .cf32 + SigMF</button>
           <span class="note" id="cs-x-out" style="margin:0"></span>
         </div>
+      </div>
+      <div id="cs-ar">
+        <div id="cs-ar-arch" hidden></div>
+        <div id="cs-ar-new">
+          <button class="btn" id="cs-ar-open" title="zip chosen files into the archive folder, check the zip, then take them out of the pool">Archive…</button>
+          <span class="note" style="margin:0">keep this for good without it counting against the pool</span>
+          <div id="cs-ar-dlg" hidden style="margin-top:8px">
+            <div class="hm-l">What to archive</div>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="event" checked> this event only <span class="note" style="margin:0">(if it owns a capture, the events inside that capture come too)</span></label>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="capture"> this capture and every event inside it</label>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="group"> the whole signal group</label>
+            <div class="hm-l" style="margin-top:6px">Files</div>
+            <label class="opt"><input type="checkbox" checked disabled> SigMF data + meta and the characterise report (always, for events with IQ)</label>
+            <label class="opt"><input type="checkbox" id="cs-ar-fp" checked> fingerprints: also leave a copy in the pool (small; they stay quick to view). Untick to move them into the zip too.</label>
+            <label class="opt"><input type="checkbox" id="cs-ar-ex"> exports (WAV / cf32). Off by default: they can be made again from the SigMF. Left out, they stay in the pool.</label>
+            <div class="frm" style="margin-top:6px">
+              <label>Label <input id="cs-ar-label" placeholder="e.g. radar-good" maxlength="40"></label>
+              <label style="flex:1">Note <input id="cs-ar-note" style="width:100%" placeholder="why this one is worth keeping"></label>
+            </div>
+            <div class="frm"><button class="btn" id="cs-ar-preview">Show what would move</button>
+              <button class="btn" id="cs-ar-cancel">Cancel</button></div>
+            <div id="cs-ar-plan"></div>
+          </div>
+        </div>
+        <div class="note" id="cs-ar-out" style="margin:6px 0 0"></div>
       </div>
       <div id="cs-more" class="cs-two" style="margin-top:12px"></div>
     </div>
@@ -1238,14 +1270,20 @@ const csMHz=f=>f==null?'—':(f/1e6).toFixed(4);
 function csBadges(r){
   return (r.badges||[]).map(b=>b==='OPEN'?'<span class="badge open">OPEN</span>'
     :b.startsWith('PRIVATE')?'<span class="badge priv">PRIVATE: do not decode</span>'
+    :b==='ARCHIVED'?'<span class="badge arch">ARCHIVED</span>'
     :'<span class="badge anom">ANOMALY: review</span>').join('')
-    +(r.iq_status?`<span class="badge iq${r.iq_status==='written'?' w':''}">${esc(r.iq_status)}</span>`:'');}
+    +(r.iq_status&&r.iq_status!=='archived'?`<span class="badge iq${r.iq_status==='written'?' w':''}">${esc(r.iq_status)}</span>`:'');}
 function csBar(id,used,cap){const p=cap>0?Math.min(100,100*used/cap):0;csEl(id).style.width=p+'%';}
 function capturesInit(){
   if(!cs.ready){cs.ready=true;
     csEl('go').onclick=capturesLoad;
     for(const id of ['date','badge'])csEl(id).onchange=capturesLoad;
-    csEl('x-wav').onclick=()=>csExport('wav');csEl('x-cf32').onclick=()=>csExport('cf32');}
+    csEl('x-wav').onclick=()=>csExport('wav');csEl('x-cf32').onclick=()=>csExport('cf32');
+    csEl('ar-open').onclick=()=>{csEl('ar-dlg').hidden=false;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';};
+    csEl('ar-cancel').onclick=()=>{csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';};
+    csEl('ar-preview').onclick=csArPlan;
+    document.querySelectorAll('input[name=cs-ar-scope]').forEach(i=>i.onchange=()=>{csEl('ar-plan').innerHTML='';});
+    for(const id of ['ar-fp','ar-ex'])csEl(id).onchange=()=>{csEl('ar-plan').innerHTML='';};}
   capturesLoad();
 }
 async function capturesLoad(){
@@ -1258,6 +1296,7 @@ async function capturesLoad(){
   csEl('pool').innerHTML=`pool <b>${s.used_gb.toFixed(2)}</b> of ${s.pool_gb} GB  ·  ${esc(s.pool)}`;
   csEl('day').innerHTML=`today <b>${s.today_gb.toFixed(2)}</b> of ${s.daily_gb} GB`;
   csBar('poolbar',s.used_gb,s.pool_gb);csBar('daybar',s.today_gb,s.daily_gb);
+  csEl('arch').innerHTML=`archive <b>${(s.archive_gb||0).toFixed(2)}</b> GB  ·  ${esc(s.archive||'')}  ·  not counted in the pool`;
   csCool=(d.status&&d.status.cooldowns)||[];
   recRender();
   const keep=csEl('date').value;
@@ -1269,7 +1308,7 @@ async function capturesLoad(){
     return `<div class="cs-grp${cs.open.has(key)?' open':''}" data-k="${key}"><div class="h">`
       +`<b>${g.f_mhz.toFixed(4)} MHz</b><span class="fam">${esc(g.family||'not characterised')}</span>`
       +(g.band?`<span class="cnt">${esc(g.band)}</span>`:'')
-      +`<span class="cnt">${g.events} event${g.events===1?'':'s'}, ${g.captures} capture${g.captures===1?'':'s'}, peak ${g.peak_db.toFixed(1)} dB, last ${esc((g.last||'').slice(0,19).replace('T',' '))}</span>`
+      +`<span class="cnt">${g.events} event${g.events===1?'':'s'}, ${g.captures} capture${g.captures===1?'':'s'}${g.archived?`, ${g.archived} archived`:''}, peak ${g.peak_db.toFixed(1)} dB, last ${esc((g.last||'').slice(0,19).replace('T',' '))}</span>`
       +(g.private?'<span class="badge priv">PRIVATE: do not decode</span>':'<span class="badge open">OPEN</span>')
       +(g.anomaly?'<span class="badge anom">ANOMALY: review</span>':'')
       +`</div><div class="ev"><table><thead><tr><th>Time</th><th>MHz</th><th>SNR dB</th><th>bw kHz</th><th>dur s</th><th>mode</th><th style="text-align:left">badges</th></tr></thead><tbody>`
@@ -1332,6 +1371,7 @@ async function csEvent(id){
   ].join('');
   csEl('priv').hidden=!e.private;
   csEl('iqbox').hidden=true;csEl('x-out').textContent='';
+  csArShow(e);
   const more=[];
   if(e.recipe)more.push(`<div><div class="hm-l">Recipe for the next capture</div><pre class="cmd">${esc(JSON.stringify(e.recipe,null,1))}</pre></div>`);
   if(e.report)more.push(`<div><div class="hm-l">Characterise report</div><pre class="md" style="padding:8px">${esc(e.report)}</pre></div>`);
@@ -1350,6 +1390,62 @@ async function csEvent(id){
     csEl('wf-l').textContent=`${v.f_lo_khz.toFixed(0)} kHz`;csEl('wf-c').textContent=`${v.centre_mhz.toFixed(4)} MHz`;
     csEl('wf-r').textContent=`+${v.f_hi_khz.toFixed(0)} kHz`;csEl('env-r').textContent=v.seconds.toFixed(1)+' s';
   }catch(err){csEl('wf-t').textContent='could not read the capture: '+err;}
+}
+// ---- archive: zip, verify, then take out of the pool (capture_archive.py)
+const csMB=b=>(b/1e6).toFixed(b<1e7?1:0)+' MB';
+function csArOpts(){return {id:cs.sel,scope:document.querySelector('input[name=cs-ar-scope]:checked').value,
+  keep_fp:csEl('ar-fp').checked,exports:csEl('ar-ex').checked};}
+function csArShow(e){
+  const r=e.row,a=e.archive,arch=r.iq_status==='archived';
+  csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';
+  csEl('ar-new').hidden=arch;
+  const box=csEl('ar-arch');box.hidden=!a;
+  if(a)box.innerHTML=(a.error?`<b>Archive:</b> ${esc(a.file)} — ${esc(a.error)}`
+      :`<b>${arch?'Archived':'Also archived'}</b> in ${esc(a.file)} (${csMB(a.bytes)}, ${esc((a.created_utc||'').replace('T',' ').replace('+00:00',''))} UTC, `
+       +`${a.events} event(s), ${a.captures} capture(s))`+(a.note?` — “${esc(a.note)}”`:''))
+    +(arch&&!a.error?' <button class="btn" id="cs-ar-restore" title="unzip back into the pool, checking every file; the zip is kept">Restore to the pool</button>':'');
+  const rb=document.getElementById('cs-ar-restore');
+  if(rb)rb.onclick=async()=>{
+    if(!confirm(`Unzip ${a.file} back into the recorder pool?\n\nEvery file is checked against its hash. The zip stays in the archive folder as a second copy.`))return;
+    csEl('ar-out').textContent='restoring…';
+    try{const d=await (await fetch('/captures/restore',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:cs.sel})})).json();
+      if(d.error){csEl('ar-out').textContent=d.error;return;}
+      const id=cs.sel;await capturesLoad();await csEvent(id);
+      csEl('ar-out').textContent=`${d.note}: ${d.events} event(s), ${csMB(d.bytes_restored)} back in the pool.`;
+    }catch(err){csEl('ar-out').textContent='restore failed: '+err;}};
+}
+async function csArPlan(){
+  csEl('ar-plan').innerHTML='<span class="note">working out what would move…</span>';
+  let p;try{p=await (await fetch('/captures/archive/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(csArOpts())})).json();}catch(err){csEl('ar-plan').textContent=String(err);return;}
+  if(p.error){csEl('ar-plan').innerHTML=`<div class="say">${esc(p.error)}</div>`;return;}
+  const leave=p.files.filter(f=>f.leaves_pool),stay=p.files.filter(f=>!f.leaves_pool);
+  const row=f=>`<tr><td>${esc(f.kind)}</td><td>${esc(f.rel)}</td><td style="text-align:right">${csMB(f.bytes)}</td></tr>`;
+  const kinds=leave.reduce((m,f)=>(m[f.kind]=(m[f.kind]||0)+1,m),{});
+  csEl('ar-plan').innerHTML=`<p class="note" style="margin:0 0 6px">${p.events} event(s), ${p.captures} capture(s)`
+      +(p.private?`, ${p.private} on a private band (fingerprints and rows only)`:'')+`. One zip in ${esc(p.archive_dir)}, ${csMB(p.bytes_in_zip)}.</p>`
+    +(leave.length?`<div class="hm-l">Leaves the pool once the zip has been checked: ${leave.length} file(s), ${Object.entries(kinds).map(([k,n])=>n+' '+k).join(', ')}</div>`
+      +`<details><summary>list</summary><table>${leave.map(row).join('')}</table></details>`
+      :'<div class="hm-l">Nothing leaves the pool: the zip holds copies only.</div>')
+    +(stay.length?`<div class="hm-l" style="margin-top:4px">Copied into the zip and also kept in the pool: ${stay.length} file(s), ${csMB(stay.reduce((a,f)=>a+f.bytes,0))}</div>`:'')
+    +(p.notes.length?`<ul class="note">${p.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:'')
+    +`<div class="frm" style="margin-top:6px"><button class="btn" id="cs-ar-go" style="border-color:var(--amber)">`
+    +`Archive: move ${leave.length} file(s) out of the pool, freeing ${csMB(p.bytes_leaving_pool)}</button></div>`;
+  csEl('ar-go').onclick=()=>csArGo(p);
+}
+async function csArGo(p){
+  const n=p.files.filter(f=>f.leaves_pool).length;
+  if(!confirm(`Write the zip, check every file in it, then take ${n} file(s) (${csMB(p.bytes_leaving_pool)}) out of the recorder pool?\n\nIf the check fails, nothing leaves the pool.`))return;
+  csEl('ar-plan').innerHTML='';csEl('ar-dlg').hidden=true;
+  csEl('ar-out').textContent=`archiving ${csMB(p.bytes_in_zip)}: writing the zip, then checking it…`;
+  try{const d=await (await fetch('/captures/archive',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...csArOpts(),note:csEl('ar-note').value,label:csEl('ar-label').value,confirm:true})})).json();
+    if(d.error){csEl('ar-out').textContent=d.error;return;}
+    const id=cs.sel;await capturesLoad();await csEvent(id);
+    csEl('ar-out').textContent=`archived and checked: ${d.zip} (${csMB(d.zip_bytes)}), ${d.events} event(s); ${csMB(d.bytes_freed)} freed in the pool.`
+      +(d.notes&&d.notes.length?' '+d.notes.join('; '):'');
+  }catch(err){csEl('ar-out').textContent='archive failed: '+err;}
 }
 async function csExport(fmt){
   if(cs.sel==null)return;

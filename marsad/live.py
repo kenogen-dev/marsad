@@ -1075,6 +1075,29 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     except catalogue.Refused as exc:
                         self._send(json.dumps({"error": str(exc)}).encode(), code=403)
                         return
+                elif u.path in ("/captures/archive/plan", "/captures/archive", "/captures/restore"):
+                    # The only way anything leaves the pool: zipped, verified, then moved,
+                    # and only with confirm=true (capture_archive.py says the order).
+                    from . import capture_archive as ca
+                    try:
+                        eid = int(form.get("id") or 0)
+                        opts = dict(scope=str(form.get("scope") or "event"),
+                                    include_exports=bool(form.get("exports")),
+                                    keep_fingerprints=form.get("keep_fp", True) is not False)
+                        if u.path == "/captures/archive/plan":
+                            out = ca.plan(station, eid, **opts)
+                        elif u.path == "/captures/archive":
+                            out = ca.archive(station, eid, note=str(form.get("note") or ""),
+                                             label=str(form.get("label") or ""),
+                                             confirm=form.get("confirm") is True, **opts)
+                        else:
+                            out = ca.restore(station, eid)
+                    except ca.Refused as exc:
+                        self._send(json.dumps({"error": str(exc)}).encode(), code=403)
+                        return
+                    except OSError as exc:          # a full disk, a file held open: said, not crashed
+                        self._send(json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode(), code=500)
+                        return
                 elif u.path == "/scan/stop":
                     name = str(form.get("file") or "")
                     t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)

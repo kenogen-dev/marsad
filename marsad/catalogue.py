@@ -2,8 +2,8 @@
 
 Reads the `captures` table in occupancy.db and the files in the recorder pool; never
 writes to either, except that an export makes a COPY of an open-band capture in an
-`exports` folder beside it. Nothing here deletes anything, and there is no endpoint
-that could.
+`exports` folder beside it. Nothing here deletes anything. The one way a file leaves
+the pool is capture_archive.py: zipped, verified, then moved, on an explicit confirm.
 
 - `summary`  the list: storage strip, events grouped by signal, filters.
 - `event`    one event: its row, the SigMF meta, the characterise report, the recipe,
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import io
 import json
 import os
 import sqlite3
@@ -72,6 +73,8 @@ def badges(row: dict, cfg: dict) -> list:
     out = ["PRIVATE: do not decode" if is_private(row, cfg) else "OPEN"]
     if cap.ANOMALY in (row.get("flags") or ""):
         out.append("ANOMALY: review")
+    if row.get("iq_status") == "archived":
+        out.append("ARCHIVED")
     return out
 
 
@@ -109,6 +112,8 @@ def rows(con, cfg: dict, date: str | None = None, lo_mhz=None, hi_mhz=None, badg
         out = [r for r in out if "ANOMALY: review" in r["badges"]]
     elif badge == "written":
         out = [r for r in out if r["iq_status"] == "written"]
+    elif badge == "archived":
+        out = [r for r in out if r["iq_status"] == "archived"]
     return out
 
 
@@ -139,6 +144,7 @@ def group(rs: list) -> list:
             "anomaly": any("ANOMALY: review" in r["badges"] for r in ev),
             "events": len(ev),
             "captures": sum(1 for r in ev if r["iq_status"] == "written"),
+            "archived": sum(1 for r in ev if r["iq_status"] == "archived"),
             "last": ev[0].get("started"),
             "peak_db": max((r.get("snr_peak_db") or 0) for r in ev),
             "rows": ev,
@@ -149,16 +155,23 @@ def group(rs: list) -> list:
 
 # ---------------------------------------------------------------- storage and status
 
-_POOL_CACHE = {"t": 0.0, "pool": None, "bytes": 0}
+_POOL_CACHE = {"t": 0.0, "pool": None, "bytes": 0, "archive_gb": 0.0}
 
 
 def storage(station: Station, cfg: dict, con) -> dict:
+    from . import capture_archive
     pool = cap.pool_dir(station, cfg)
     if _POOL_CACHE["pool"] != str(pool) or time.time() - _POOL_CACHE["t"] > 30:
-        _POOL_CACHE.update(t=time.time(), pool=str(pool), bytes=cap.folder_bytes(pool))
+        _POOL_CACHE.update(t=time.time(), pool=str(pool), bytes=cap.folder_bytes(pool),
+                           archive_gb=capture_archive.size_gb(station, cfg))
     today = cap.bytes_since(con, cap.local_midnight(time.time())) if con is not None else 0
+    try:
+        adir = str(capture_archive.archive_dir(station, cfg))
+    except Refused as exc:
+        adir = str(exc)
     return {"pool": str(pool), "used_gb": _POOL_CACHE["bytes"] / 1e9, "pool_gb": float(cfg.get("pool_gb", 100)),
-            "today_gb": today / 1e9, "daily_gb": float(cfg.get("daily_gb", 20))}
+            "today_gb": today / 1e9, "daily_gb": float(cfg.get("daily_gb", 20)),
+            "archive": adir, "archive_gb": _POOL_CACHE["archive_gb"]}
 
 
 STALE_S = 15.0        # a running watch rewrites its file every 2 s; silence this long means it is gone
@@ -279,7 +292,10 @@ def event(station: Station, event_id: int) -> dict:
         private = is_private(row, cfg)
         out = {"row": {k: v for k, v in row.items() if k != "recipe"}, "private": private,
                "badges": badges(row, cfg), "recipe": None, "meta": None, "report": None,
-               "capture": None, "exports": []}
+               "capture": None, "exports": [], "archive": None}
+        if row.get("archive_path"):
+            from . import capture_archive
+            out["archive"] = capture_archive.describe(station, row["archive_path"])
         if row.get("recipe"):
             try:
                 out["recipe"] = json.loads(row["recipe"])
@@ -348,8 +364,13 @@ def fingerprint_view(station: Station, event_id: int) -> dict:
         row = _get(con, event_id)
     finally:
         con.close()
-    p = _inside(row.get("fingerprint"), station, cfg)
-    z = np.load(p)
+    try:
+        z = np.load(_inside(row.get("fingerprint"), station, cfg))
+    except Refused:
+        if not row.get("archive_path"):
+            raise
+        from . import capture_archive          # taken out of the pool: read it from the zip
+        z = np.load(io.BytesIO(capture_archive.member(station, row["archive_path"], row["fingerprint"])))
     spec = z["spec_db"].astype(np.float32)
     over = spec - z["floor_db"].astype(np.float32)[None, :]
     img = _maxpool(over, FP_MAX_ROWS, FP_MAX_BINS)
