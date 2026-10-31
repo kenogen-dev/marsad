@@ -7,6 +7,7 @@
     marsad compare-runs A B      the pre-registered A/B statistics
     marsad spur-stats a/bins.csv b/bins.csv
     marsad drift <tag>           per-sweep whole-band median
+    marsad events <tag>          broadband steps and one-sweep transients in a survey
     marsad adsb-check            1090 MHz positive control
     marsad archive list|add|new|trend|band|seen|mark
     marsad live                  the web app, without opening a browser
@@ -41,6 +42,7 @@ COMMANDS = {
     "compare-runs": "A/B statistics for two finished reports",
     "spur-stats": "harmonic-family statistic for one or two bins.csv",
     "drift": "per-sweep whole-band median of one survey",
+    "events": "broadband steps and one-sweep transients in one survey (25 MHz blocks)",
     "adsb-check": "1090 MHz ADS-B receive check",
     "archive": "the occupancy.db archive (list, add, new, trend, band, seen, mark)",
     "live": "the local web app",
@@ -169,6 +171,9 @@ def main(argv=None) -> int:
     if cmd == "drift":
         from . import drift
         return drift.main(args, station, prog)
+    if cmd == "events":
+        from . import events
+        return events.main(args, station, prog)
     if cmd == "adsb-check":
         from . import adsb
         return adsb.main(args, station, prog)

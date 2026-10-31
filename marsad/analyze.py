@@ -35,7 +35,7 @@ import json
 import math
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -914,7 +914,8 @@ def spur_summary(pk: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(sorted(rows.values(), key=lambda d: -d["count"]))
 
 
-def write_report(s: Survey, a: Analysis, out: Path, mask, sidecar: dict | None = None):
+def write_report(s: Survey, a: Analysis, out: Path, mask, sidecar: dict | None = None,
+                 events: list | None = None):
     f = s.freqs_hz / 1e6
     span = f[-1] - f[0]
     band = 1.0 if span <= 20 else 10.0 if span <= 300 else 50.0
@@ -935,6 +936,7 @@ def write_report(s: Survey, a: Analysis, out: Path, mask, sidecar: dict | None =
         + ("" if pk.empty else f" ({int((pk.spur_tags != '').sum())} tagged as likely spurs)"),
         "",
         *sidecar_lines(sidecar),
+        *(events or []),
         "## Images",
         "",
         "![combined: spectrum + occupancy + waterfall, shared frequency axis](combined.png)",
@@ -1070,12 +1072,16 @@ def parse_mask(items, receiver):
 
 def run_one(csv, args, base_out: Path):
     s = load_survey(csv, crop=getattr(args, "crop", None))
+    full = replace(s)           # every sweep: the events finder looks for transients in the warm-up too
     drop_sweeps(s, args.skip_sweeps)
     keep_sweeps(s, getattr(args, 'max_sweeps', 0))
+    n = s.dropped_sweeps + len(s.times)
+    full.times, full.power_db = full.times[:n], full.power_db[:n]
     sc = load_sidecar(csv)
     mask = parse_mask(args.mask, args.receiver)
     if mask:
         apply_mask(s, mask)
+        apply_mask(full, mask)
     a = analyze(s, threshold_db=args.threshold, floor_window_mhz=args.floor_window)
     out = base_out / s.name
     out.mkdir(parents=True, exist_ok=True)
@@ -1084,7 +1090,10 @@ def run_one(csv, args, base_out: Path):
     plot_occupancy(s, a, out / "occupancy.png")
     plot_combined(s, a, out / "combined.png")
     save_tables(s, a, out)
-    write_report(s, a, out, mask, sc)
+    from . import events
+    ev = events.find(full, skip=s.dropped_sweeps)
+    events.write(ev, out)
+    write_report(s, a, out, mask, sc, events.section(ev))
     print(f"{s.name}: {len(s.times)} sweeps, {len(s.freqs_hz):,} bins, {len(a.peaks)} signals"
           f"{'' if sc else ' (no sidecar)'} -> {out}")
     return s, a, sc

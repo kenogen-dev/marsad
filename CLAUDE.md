@@ -3008,6 +3008,55 @@ total change -0.35 dB and settled std 0.025 dB; `casc4-noferrite` settles by swe
 py tools/drift.py <tag-or-csv> [--threshold 0.1] [--plot-text]
 ```
 
+**Event finder (2026-10-30), `marsad/events.py`.** The broadband emitter of V1-4n (02:19-05:12)
+was found by eye; now every analysis looks for such things. It works on the **per-sweep median of
+each 25 MHz block and of the whole band** (one number per block per sweep; a single line cannot move
+it, a broadband emitter steps it cleanly, and it repeats to a few hundredths of a dB). Each series is
+cut at its own change points (median of the next 6 sweeps minus median of the previous 6, at least
+max(0.5 dB, 5 x the settled sweep-to-sweep scatter)); each cut is moved to the earliest sweep from
+which the series stays on the new side, so a switch-on after a dip, or a switch-off that dips and
+overshoots, dates to where the new level begins. A segment that sits above (or below) **both
+neighbours** by that much is an **event**: its neighbours are the baseline, because a night has no
+single quiet level (V1-4n: -0.43 before, +0.45 during, -0.41 after, ~0 once the morning starts, so a
+long rolling median lands between them and a 4-8 h one was tried and failed). An edge segment counts
+against its one neighbour when it is the shorter and the neighbour is not itself an event. Events
+seen in several series (runs overlapping for half the shorter) are one event, dated by the whole
+band when it saw it. **Broadband rule:** the whole band moved, or at least two blocks moved and all
+the same way; one block up while its neighbour goes down is a hump changing shape, not an emitter.
+Shape: **step** (at most 2 sweeps part-way across the change) or **ramp**. **Warm-up** is looked for
+directly (a slow settling seldom makes a 6-sweep step): the smoothed whole band moving one way (80 %
+of its moves one sign) by the threshold before it holds within half of it for a quarter of the run;
+reported as "warm-up / trend", never as an event, and the search starts after it. **Transients:** a
+sweep (or two) off the median of the 4 sweeps before AND the 4 after, same direction, by max(0.5 dB,
+6 x scatter), in the whole band or at least two blocks; the smaller of the two differences is used,
+so a step's edge never counts. Sustained changes are searched after the run's warm-up skip;
+transients in **every** sweep, skip included (a sweep judged against its own neighbours does not care
+that the level is settling; A3's first lift is sweep 10 of a 10-sweep skip).
+
+Output: an **"## Events"** section in report.md (above Images) and **`events.csv`** in the report
+folder (kind, shape, start, end, start_sweep, sweeps, duration_min, whole_db, blocks_moved, note, one
+`d_<block>` column each), from `marsad analyze` / `marsad run` for both engines. On any existing
+survey:
+
+```
+marsad events <tag|report|csv|dat> [--block 25] [--min-db 0.5] [--min-sweeps 6] [--skip-sweeps N] [--out DIR]
+```
+
+`--skip-sweeps` defaults to what the report used ("first N discarded"), else 0; it writes events.csv
+and replaces (or adds) the report.md section. Levels are relative dB on the engine's own scale.
+
+Validated, scored against predictions written first (commit message): **V1-4n** (skip 130) one
+emitter, **step 02:20:16 -> 05:11:47**, whole band **+0.76 dB**, 250-275 +0.59, 275-300 +1.11,
+300-325 +0.81 (225-250 and 325-350 under 0.5, 375-400 0.0), the two-sweep dip at 02:19:13-45 a
+transient; plus 8 smaller events 06:04-09:46, all the 270 MHz hump (225-300 only, whole band under
+0.5) switching through the morning, as M1 saw it. **A3** (skip 10) no sustained change, one-sweep
+lifts at **08:26:55** (+2.4 dB whole band) and **08:36:26** (+1.8). **V1-1b** with its skip of 130:
+nothing; with no skip: warm-up, settled from sweep 83, and nothing else. The per-25 MHz block
+changes on V1-4n are smaller and less even than the "+1.0 to +1.4 dB across 225-349" read by eye;
+the whole band's +0.76 is the clean figure. `tests/test_events.py` pins all three on their per-sweep
+block medians (`tests/data/events_*_blocks.csv`, derived; the raw CSVs are untouched) and a synthetic
+survey through the analyser and the CLI.
+
 `tools/adsb_check.py` - 1090 MHz ADS-B positive control. Fixed gain, counts frames and
 distinct ICAO, prints pass/weak/fail. The sensitivity half of a characterisation, which a
 terminated run cannot provide. Compare chains on the DF17 count, not the ICAO count.
