@@ -12,6 +12,12 @@ The station folder is found in this order:
   4. the source checkout (the folder above this package)
   5. the current directory, with built-in defaults
 
+station.local.json beside station.json, if it exists, is laid over it (dicts merged
+key by key, anything else replaced). It holds what must not go into git - today the
+station's `location` - and .gitignore keeps it out. Nothing writes it: `marsad run`,
+the Chain tab and calibrate-retune write station.json only, re-read from disk, so a
+local key can never be copied into the shared file.
+
 Built-in defaults come from station.default.json beside this module, which
 describes the station the program was first written for. `marsad init` copies it
 out so a new station has something to edit.
@@ -26,6 +32,7 @@ from pathlib import Path
 from .rtlpower import frozen
 
 STATION_FILE = "station.json"
+LOCAL_FILE = "station.local.json"       # git-ignored overlay (the location)
 DEFAULT_FILE = Path(__file__).resolve().parent / "station.default.json"
 
 # The flat keys the pre-packaging station.json held: just the chain answers.
@@ -106,6 +113,15 @@ class Station:
                     base["defaults"].update(val)
                 else:
                     base[key] = val
+        local = root / LOCAL_FILE
+        if local.exists():
+            try:
+                over = json.loads(local.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                print(f"  (ignoring unreadable {local.name}: {exc})", file=sys.stderr)
+                over = {}
+            if isinstance(over, dict):
+                _overlay(base, _strip_notes(over))
         return cls(root, base, found)
 
     @property
@@ -239,6 +255,15 @@ class Station:
             raise SystemExit(f"{self.file} already exists (use --force to replace it)")
         self.file.write_text(DEFAULT_FILE.read_text(encoding="utf-8"), encoding="utf-8")
         return self.file
+
+
+def _overlay(base: dict, over: dict) -> None:
+    """Lay `over` onto `base` in place: dicts merge key by key, anything else replaces."""
+    for key, val in over.items():
+        if isinstance(val, dict) and isinstance(base.get(key), dict):
+            _overlay(base[key], val)
+        else:
+            base[key] = val
 
 
 def _is_legacy(d: dict) -> bool:

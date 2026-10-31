@@ -30,3 +30,6 @@ rtl_err.txt
 # A stray copy of reports/survey_deep_1h_deep-2049-uwb-g42-B_20261022-0650 (2026-10-22),
 # byte-identical to it; generated output stays out of git like reports/.
 SDRreports/
+
+# The station's private overlay (its location): laid over station.json, never committed.
+station.local.json

@@ -7,7 +7,8 @@ the start of the run and once at the end:
 
   weather  outdoor temperature, humidity, pressure, cloud, rain, wind, from
            Open-Meteo's free no-key API (https://open-meteo.com), for the
-           station's `location` in station.json. One request, 5 s timeout.
+           station's `location` (station.local.json, laid over station.json
+           and kept out of git). One request, 5 s timeout.
   sun      sun elevation and azimuth and day / twilight / night, computed here
            from the location and the clock (no network).
   pc       Windows uptime, seconds since the last keyboard or mouse input (the
@@ -42,7 +43,8 @@ TIMEOUT_S = 5.0
 # location
 # ----------------------------------------------------------------------------
 def location_of(station_data: dict) -> tuple[float, float] | None:
-    """(lat, lon) from station.json's `location`, or None if absent or malformed."""
+    """(lat, lon) from the station's `location` (station.local.json over station.json),
+    or None if absent or malformed."""
     loc = (station_data or {}).get("location")
     if not isinstance(loc, dict):
         return None
@@ -223,8 +225,9 @@ def snapshot(station_data: dict, surveys: Path | None = None, *, stem: str | Non
     snap = {"taken_local": now.isoformat(timespec="seconds")}
     loc = location_of(station_data)
     if loc is None:
-        reason = ("no `location` in station.json; add "
-                  '"location": {"lat": ..., "lon": ...} to record weather and sun')
+        reason = ("no `location` for this station; put "
+                  '{"location": {"lat": ..., "lon": ...}} in station.local.json '
+                  "(git ignores it) to record weather and sun")
         snap["weather"] = {"error": reason}
         snap["sun"] = {"error": reason}
     else:

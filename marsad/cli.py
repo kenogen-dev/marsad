@@ -207,6 +207,9 @@ def main(argv=None) -> int:
         import json
         print(f"  station folder   {station.root}")
         print(f"  station.json     {'found' if station.file_found else 'NOT found, using built-in defaults'}")
+        local = station.root / "station.local.json"
+        print(f"  local overlay    {'station.local.json found (git-ignored)' if local.exists() else 'none'}"
+              + (", location set" if "location" in station.data else ", no location"))
         print(f"  surveys          {station.surveys}")
         print(f"  reports          {station.reports}")
         print(f"  rtl-sdr folders  {', '.join(str(d) for d in station.tool_dirs())}")

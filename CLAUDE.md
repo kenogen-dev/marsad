@@ -2458,9 +2458,16 @@ elevation/azimuth and day / civil twilight / twilight / night computed locally (
 or mouse input, the cheap proxy for whether the displays have slept, which Windows will not
 report cheaply; and `previous_recording`: the newest earlier sidecar's end time and run length,
 because the XTR's PLL range drifts as it warms), and `indoor: null` until there is a room
-thermometer. Weather and sun need **`"location": {"lat": .., "lon": ..}` in station.json**
-(decimal degrees, west/south negative; the `_location` note there has an example); without it,
-or offline, each part records the reason and the run carries on: nothing in it can fail a run.
+thermometer. Weather and sun need **`{"location": {"lat": .., "lon": ..}}` in
+`station.local.json`** beside station.json (decimal degrees, west/south negative; the `_location`
+note in station.json has an example); without it, or offline, each part records the reason and
+the run carries on: nothing in it can fail a run. **`station.local.json` (2026-10-30)** is a
+git-ignored overlay, laid over station.json when marsad loads (dicts merged key by key, anything
+else replaced), so the station's position never reaches GitHub; it was in station.json until then,
+uncommitted. Nothing writes it: `marsad run`, the Chain tab and calibrate-retune re-read
+station.json from disk and write only that, so a local key is never copied in. `marsad config`
+says whether it was found and whether a location is set. `tests/test_station_local.py` pins the
+overlay, the location reaching conditions, writes leaving it out, and the ignore rule.
 `--dry-run` prints the start snapshot. report.md's settings table and scan_build.md show it as
 "Conditions, measured at start/end" beside the typed text, which is unchanged (scan_build.md
 labels it "Conditions (typed)"). Sidecars from before 2026-10-26 have no block and show no rows.
