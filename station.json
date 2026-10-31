@@ -415,6 +415,6 @@
     "pool_gb": 30,
     "daily_gb": 10
   },
-  "_recorder_caps": "Owner's limit (2026-10-28): marsad's capture pool is capped at 5 GB total, 2 GB per day. Raise only on the owner's word.",
+  "_recorder_caps": "Owner's limit: marsad's capture pool is capped at 30 GB total, 10 GB per day (5 / 2 GB set 2026-10-28; 30 / 10 confirmed by the owner 2026-10-30). Raise only on the owner's word.",
   "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
 }
