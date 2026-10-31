@@ -408,8 +408,13 @@
     "whip_length_mm": 230,
     "lna": "NO",
     "filter": "yes",
-    "chain_order": "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the window glass) > Flamingo+ FM notch (window unit) > 3 ft RG316 coax > SMA bulkhead (at cage) > SMA jumper (6 in, S-bend, no ferrite) > v5 (in aluminium cage, foam support, in the XTR's position, plugged direct into USB bulkhead) > USB bulkhead (at cage) > USB cable (1 ft M:M with chokes) > USB cable (16 ft with multiple chokes) > USB isolator > PC",
-    "chain_used_at": "2026-10-27T09:33:27"
+    "chain_order": "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the right window glass) > resistive 2-way SMA power divider (DC-5 GHz, 6 dB per output; RFout1 > 6 in coax jumper (no DC block) > Flamingo+ FM notch > 3 ft coax > v5 recorder; RFout2 to the XTR) > 6 in coax jumper > Flamingo+ FM notch (the XTR's unit) > SMA adapter > LaNA (powered by the XTR's bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead (at XTR cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, resting on stacked foam at its future wall-mount position) > USB bulkhead (at cage) > USB cable (1 ft M:M) > USB cable (16 ft) > PC (no isolator)",
+    "chain_used_at": "2026-10-30T13:12:38"
   },
+  "recorder": {
+    "pool_gb": 30,
+    "daily_gb": 10
+  },
+  "_recorder_caps": "Owner's limit (2026-10-28): marsad's capture pool is capped at 5 GB total, 2 GB per day. Raise only on the owner's word.",
   "_defaults": "Last-used answers to the sidecar questions. `sdr run` rewrites this section after every run; everything else in this file is left alone."
 }

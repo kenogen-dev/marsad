@@ -2152,6 +2152,186 @@ at 341.31 MHz, bursts at 319.51 and 303-316), no 350 MHz step (0.18 dB), 385.03 
 100%. 296.99 switched off once at 11:03:22; 259.58 stayed on all day; 262.66 was intermittent -
 so M1's "one local source" reading does not repeat. Terminated twin still owed. RUNSHEET V1-4f.
 
+**Wall mount, A/B/A (2026-10-28, 20:34-23:52): equivalent, the comparison set stands.** v5 in its
+aluminium cage moved from the desk into the 3D-printed wall slide-in mount (rotated, ~2 cm higher),
+nothing else changed; `milair` g29.7 gainfix. A1 desk 95 min (last 30 min used), B wall 40 min, A2
+desk 40 min (5 min skipped each), and the first 35 min after skip of the night map as B2 (wall).
+B started after an isolator power-cycle (the move dropped the dongle off USB, 21 min after A1
+ended); A2 2.5 min after B, the map 16 min after A2. In the blocks the antenna barely reaches
+(351-380, 380-400 MHz), **B minus mean(A1, A2) +0.12 / +0.06 dB and B2 minus A2 +0.02 / +0.09 dB**,
+inside the 0.5 dB handled floor and opposite in sign between pairs. The received blocks 225-349
+fell 0.6-1.7 dB from A1 to A2 with the radio on the desk both times (the evening environment), and
+B sits between A1 and A2 in every one of them (B - meanA -0.35 to +0.35). Lines, including the v5's
+own 259.20 spur and the 385.03 control, moved within 1-2 dB with mixed signs, inside the 3.4 dB
+per-line handling scatter. **The mount costs nothing measurable**: the wall is the v5's standing
+position from 2026-10-29, chain text "in the 3D-printed wall-mounted slide-in mount*", with the
+asterisk meaning "equivalence-tested 2026-10-28 against the desk, same comparison set".
+
+**V1-4n, 12 h overnight milair map on the wall (2026-10-29, 00:08-12:08, g29.7 gainfix), scored
+against the predictions written before it:**
+
+| Prediction | Result |
+|---|---|
+| 385.03 MHz in >= 95% of sweeps | **failed as worded, 91.4%**; in every one of the 127 sweeps it was absent, 385.76 was on (median +23 dB). The trunked control channel hops, as M1 saw; the system was present 100% |
+| 259.58 MHz on all night | **inconclusive**: a weak line, 4-6 dB over its +/-1 MHz median (empty controls nearby -0.8 to +0.8), lowest 02:20-05:10 |
+| 296.99 MHz on, off only after sunrise | **held**: on all night, one switch-off at **11:44**; V1-4f saw it go at 11:03 the day before, so it is a late-morning off, not sunrise |
+| 270 MHz hump lowest 01:00-05:00, then rising | **refuted**: 250-300 was at its **highest** 02:20-05:10 |
+| room lines step with display sleep | **not testable**: `user_idle_s` is recorded only at start and end |
+| 316-349 1-1.5 dB over the load floor (V1-2) | **exceeded**: +2.09 dB (V1-3 read +1.4 by day); 351-380 +1.53, 380-400 +0.54, 250-300 +8.7 |
+
+**The night's one event: a broadband emitter on 02:19:45-05:12**, a clean step of +1.0 to +1.4 dB
+across 225-349 MHz, +0.2 at 351-380 and nothing at 380-400. It switched on with a one-sweep dip
+just before the rise and went off through two dips and a brief overshoot between 05:07 and 05:12,
+the signature of something with its own power stage cycling. The weak "lines going off" in that
+window (259.58, 262.66, 300.0) are the floor rising under them, not the lines stopping. Source
+unidentified; 2 h 52 min starting at 02:19 fits a scheduled task (the PC's automatic maintenance,
+a heating cycle, an appliance timer) but nothing has been tested. Another night with the same
+window would say whether it repeats on a schedule.
+
+**USB power on the v5 path (2026-10-29), inline USB meter, idle / streaming (`rtl_test -s 2400000`):**
+
+| Meter position | Idle | Streaming |
+|---|---|---|
+| PC port -> isolator | 4.975 V, 0.276 A | 4.975 V, 0.386 A |
+| isolator output -> 16 ft cable | 5.041 V, 0.055 A | 5.049 V, 0.126 A |
+| 1 ft M:M -> cage USB bulkhead | 5.000 V, (0.000 A) | **4.941 V**, (0.000 A) |
+
+The zero currents at the bulkhead are the meter mounted backwards (power enters its socket side,
+and it measures one direction only); position 2 is the dongle's current, since the cable draws
+nothing. **The v5 gets 4.94 V streaming, inside USB's 4.75-5.25 V.** It draws only **0.126 A**
+streaming (predicted 0.25-0.35, refuted). The isolator is the big consumer: 0.64 W out for 1.92 W
+in, about 33% efficient, ~1.1-1.3 W of its own. The 17 ft from isolator to bulkhead drops 0.108 V
+at 0.126 A, **about 0.86 ohm of loop resistance**, so a dongle drawing 0.3 A would see ~4.79 V and
+0.4 A ~4.71 V, below spec. The XTR (E4000 plus an always-on bias-tee feeding the LaNA) draws more
+than the v5, so **its path is the one that can sag**; meter it at position 2 when it is reconnected.
+Two `rtl_test -s 2400000` runs through the meter: **0 samples per million lost** each, so the
+meter passes high-speed data cleanly and the v5 path is sound on both power and data. Incidentals:
+`rtl_eeprom` shows the v5's **"Bias Tee always on: yes"** flag set, which does nothing on a board
+with no bias-tee circuit (0.1 mV measured 2026-10-16; leave the EEPROM alone); and rtl_test's
+"Enabled direct sampling mode, input 2" is the R820T's automatic HF mode at 0 Hz, harmless here.
+
+**XTR USB path (2026-10-29), its own route with no isolator: PC > 16 ft USB > new 1 ft M:M > cage
+USB bulkhead, ~5.9 m.** Meter at the PC port (the only joint on this route where it reads current
+the right way round): idle **5.000 V, 0.114 A**, streaming **4.966 V, 0.198 A**; `rtl_test -s
+2400000` 60 s, **0 samples per million lost**. XTR SMA input open (nothing attached). Bias-tee feeding nothing (in the two-radio plan the
+LaNA runs from its own USB-C and the XTR arm has a DC block), so 0.198 A is the operating figure;
+even at the v5 path's 0.86 ohm the dongle would see ~4.80 V, inside spec. The meter reads current
+in one direction only: plug into the side power comes from, socket toward the dongle.
+**Both radios streaming together** (v5 on the isolator as device 0, XTR direct as device 1, two
+`rtl_test -s 2400000` at once, ~60 s): **0 samples per million lost on each**, so the PC carries
+two 2.4 MS/s streams. The second window listed device 0 as `, , SN: Ç`: a dongle already open in
+another program cannot have its USB strings read, so it shows garbage. Normal, not a fault.
+
+**Splitter A/B/A on the XTR (2026-10-29/30), `milair` g19, 230 mm vertical dipole on the right
+window, XTR on foam at its future wall spot.** A1 `xtr-dipole-baseline-wallspot` 19:13 (60 min),
+B `xtr-split-B-before-lana` 21:21 (40 min), A2 `xtr-split-A2-direct` 00:02 (40 min), 10 sweeps
+skipped each. B put a resistive 2-way divider (3 x 16.7 ohm, 6 dB per arm) between the antenna and
+the XTR's notch, the other arm to the v5 (connected, not streaming) through a DC block. **The LaNA
+cannot be powered through this divider** (the bias-tee voltage collapses across the resistors and
+its LED goes out), so in this test it sits after the divider on the XTR arm.
+
+| Block (median over sweeps) | A1 | B | A2 | A2 - A1 | B - mean(A) | predicted |
+|---|---|---|---|---|---|---|
+| 225-310 | -23.59 | -28.78 | -23.34 | +0.25 | **-5.32** (floor -6.44) | -4 to -6: held |
+| 250-300 (270 hump) | -22.40 | -30.01 | -21.88 | +0.52 | **-7.87** (floor -8.78) | more than the divider can cost |
+| 316-349 | -40.47 | -44.32 | -40.58 | -0.11 | **-3.80** | none |
+| 351-380 | -31.52 | -35.53 | -31.20 | +0.32 | **-4.17** (floor -4.58) | -2 to -4: held at the edge |
+| 380-400 | -36.30 | -38.14 | -35.58 | +0.73 | -2.20 | none |
+| 385.0 carrier, per-sweep max | -8.9 | -9.7 | -5.3 | **+3.6** | -2.6 | -6.0 to -6.5: **bracket failed** |
+
+**The bracket holds on the floor** (A2 - A1 within 0.75 dB in every block) and **fails on the
+carrier**: steady within each run (p10-p90 under 2.5 dB) but 3.6 dB higher at midnight than at
+19:00, and only 0.8 dB lower in B than in A1. The trunked transmitter changed its own level
+between runs, so the carrier says nothing about the divider. Read the divider on the floor:
+**it costs 4-5 dB of received noise below 400 MHz on the XTR arm**, the size expected from a 6 dB
+divider feeding a chain whose floor is partly the LaNA's own noise.
+
+**250-300 fell 7.9-8.8 dB, more than a 6 dB divider can take off a power sum.** Not explained.
+Two candidates, untested: the 270 MHz hump is a switching local source that M1 saw step down
+abruptly, and it may have been low during B only; or the short dipole's mismatch transfers
+differently into the divider's resistive 50 ohm than into the LaNA directly.
+
+**New: at the wall spot the XTR hears 316-349 MHz.** M1 (2026-10-26, desk position, old USB route)
+read -43.96 there, equal to its terminated twin M1-T (-43.88), and that was the basis for "the
+XTR is nearly deaf across 315-350". A1 and A2 read -40.5, **3.5 dB over that terminated level**,
+and B drops 3.8 dB back onto it, so the excess arrives through the antenna port. 351-380 is also
+2.8 dB above M1. What changed since M1: the XTR's position (wall spot), its USB route (no isolator,
+16 ft direct), and the room (v5 on the wall, the 02:19 broadband emitter of V1-4n also covered
+225-349).
+
+**Terminated twin at the wall spot (`xtr-wallspot-term-g19`, 2026-10-30, load > DC block on the
+notch input, 40 min): matches M1-T to 0.2 dB in every block** (225-250 -39.98 vs -39.78, 250-300
+-40.18 vs -40.00, 316-349 **-44.06 vs -43.88**, 351-380 -41.62 vs -41.44, 380-400 -41.72 vs
+-41.56). The new position and the direct USB route without the isolator add nothing conducted.
+**So the 3.5 dB at 316-349 is received through the antenna**: the XTR is not deaf there, it
+just had nothing to hear on 2026-10-26. Something in 316-349 (and +1.5 to +2.8 dB at 351-400) is
+present now that was not during M1, in both A1 (19:13) and A2 (00:02), so steady rather than the
+02:19 event. A terminated run cannot see emissions that reach the antenna through the air, so a
+local source is not excluded: candidates are the v5's isolator (a ~1.2 W DC-DC converter, now on
+the wall), the XTR or its new USB cable radiating from the wall spot, or a new source outside.
+Next, antenna on with one candidate unplugged at a time, 40 min each, against A2.
+
+**Isolator pair (2026-10-30, 07:33 and 08:21): the isolator is not the source, and both runs were
+through the splitter.** `xtr-wallspot-noisolator` (isolator and v5 unpowered) and
+`xtr-wallspot-isolator-A3` (both back on) agree to 0.6 dB in every block, so switching the isolator
+changes nothing. Both read 6-9 dB below A2, which looked like an environmental drop until it turned
+out the antenna had gone back **through the splitter** after the terminated twin (v5 arm without its
+DC block, harmless: the LaNA blocks the bias-tee DC). Their levels match splitter run B within about
+1 dB, so the "drop" was the divider. Both sidecars carry a `chain_correction` and
+`chain_order_actual`. The 316-349 finding is unchanged: direct, the XTR hears ~3.5 dB there; through
+the divider it falls back to the terminated level. Source still unidentified; the isolator is cleared.
+A3 also spanned a thunderstorm (two broadband one-sweep lifts, 08:26:55 and 08:36:26, cause not
+established).
+
+**v5 arm of the splitter (`v5-split-arm`, 2026-10-30 09:13-11:13, `milair` g29.7 gainfix, 65 min
+warm-up discarded, 110 sweeps analysed; XTR on the other arm powered, not streaming).** Scored
+against V1-2 (load, warm) and V1-3 (antenna direct, cold):
+
+| Block | split arm over load | direct over load | predicted for the arm |
+|---|---|---|---|
+| 225-250 | +1.17 | +4.50 | (power sum: +1.6) |
+| 250-300 | **+3.07** | +9.21 | +3 to +4: held |
+| 316-349 | **+0.89** | +1.43 | within 0.3: **failed** |
+| 351-380 | +0.21 | +1.58 | within 0.5: held |
+| 380-400 | -0.06 | +0.67 | within 0.5: held |
+| 385.03 carrier over local floor | **+21.1**, on in 100% of sweeps | +23.9, 80% | +17 to +18: exceeded |
+
+The 316-349 excess is not spread across the block: it is +1.0 to +2.0 dB at 316-331, falling to
++0.1 at 340-349. The bottom of the block is the skirt of the received energy below 316, and the
+top 10 MHz is on the load floor. So the v5 arm hears **no new 316-349 source**, unlike the XTR
+direct at the wall spot. The 270 hump fell about 7.6 dB through the divider (power-sum
+prediction +4.6, measured +3.1), the same over-6 dB loss the XTR arm showed at 250-300 (7.9-8.8),
+now on both arms on different days, so it looks like the divider and the short dipole, not the
+hump switching. The carrier lost only 2.7 dB, but the trunked transmitter's level moves 3-4 dB
+between days, so it says nothing about the divider. The settled whole-band median was flat from
+10:04 (-41.92 to -41.95), so the 65 min discard was enough. **Verdict: the v5 arm works as a
+splitter arm should, about 6 dB down with no LNA, adequate for trigger-and-record on what the XTR
+finds, not for surveying weak signals itself.**
+**For the two-radio plan:** the divider costs the XTR 4-5 dB of floor, plus whatever the LaNA's
+position costs, and the LaNA cannot sit ahead of it on bias-tee power. Two antennas (dipole on the
+v5, UWB on the XTR) remain the better setup for independent surveys; the divider is for
+trigger-and-record, where the v5 only needs to hear what the XTR already found.
+
+**First two-radio watch, `watch2-4h` (2026-10-30, 13:12-17:12, `marsad watch survey milair 4h`,
+XTR g19 through the splitter, v5 recorder g29.7 on the other arm, room untouched).** 480 survey
+sweeps, not interrupted. **67 events, 33 IQ captures written, 2.0 GB.** Against the predictions:
+296.99 and 259.58 MHz triggered and were recorded (4 times each, AM-like): **held**. Every
+380-400 MHz event, 385.03 included, was fingerprint-only, 30 private rows and **zero IQ files**:
+**held**. No trigger on a clock line or hop centre: **held** (299.999 is the exempt reference;
+the nearest triggers to hop centres, ~17-22 kHz off, were confirmed by the v5, which has no DC
+spike, e.g. 246.90 MHz at 23 dB). Storage under 10 GB: **held**, but **1.94 GB of the 2.0 came
+from one signal recorded 9 times in 6 min**: a ~650 kHz-wide hump at **345.2-345.8 MHz** from
+16:57 to ~17:07 (survey: 345.55 MHz, rare burst, one sweep over floor+10; v5: sparse ~200 us
+pulses, 0.002% duty, groupings near 10 Hz and 1 Hz). Each pass its peak bin landed somewhere
+else in the hump, and the 30 min cooldown is keyed per frequency at 25 kHz, so every pass looked
+like a new signal and got a 216 MB capture at 2.4 MS/s. **Fixed in b77319c the same evening:**
+two triggers are one signal when their occupied bands overlap, |df| <= max(25 kHz, (w1+w2)/2),
+for the cooldown (in a run and after a restart), the 2-pass counter and the dispatcher; pinned
+in `tests/test_watch.py` on a 651 kHz hump wandering +/-300 kHz (one capture in 30 min). The hump sits inside 316-349 MHz, the band the XTR hears ~3.5 dB
+over its terminated floor at the wall spot; whether it is that source is untested (it was
+present ~10 min of 4 h, and the excess is steady). Other open-band repeaters: 313.30 (x5),
+307.36 (pulsed / OFDM-like, x3), 368.99, 370.89, 371.89, 360.64, 237.36, 298.90, 246.90.
+
 ### Printer room catalogue P1 (2026-10-26, 21:04-22:48): nothing in 52-1660 MHz, in any state
 
 Six wide runs, stub A (blade) taped at the back middle of the case: unplugged, off, idle,
