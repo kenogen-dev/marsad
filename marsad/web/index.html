@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset="utf-8">
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SDR station</title>
 <style>
 :root{--bg:#0a0e13;--panel:#121a22;--line:#253442;--ink:#dde6ee;--dim:#8599a8;--accent:#4fd3e8;--amber:#e8b14f;--green:#4fcf96;--muted:#c58bff}
@@ -36,11 +36,16 @@ canvas{display:block;width:100%;image-rendering:pixelated}
 .ro{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);margin-top:6px;min-height:16px}
 .ro b{color:var(--accent);font-weight:600}
 canvas{cursor:crosshair}
-.tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;scrollbar-width:thin}
+.tab{flex:0 0 auto}
 .tab{padding:9px 16px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
      cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:5px 5px 0 0;user-select:none}
 .tab:hover{color:var(--ink)}
 .tab.on{color:var(--accent);background:var(--bg);border-color:var(--line);margin-bottom:-1px}
+@media (max-width:700px){.tabs{padding:0 8px}.tab{padding:9px 10px}}
+/* phone width (the page has a viewport tag since 2026-10-30): long one-line texts wrap, and a
+   dropdown is never wider than the screen, whatever its longest option */
+@media (max-width:700px){#pk{white-space:normal}select{max-width:calc(100vw - 120px);min-width:0 !important}.frm input.wide{min-width:0 !important;max-width:calc(100vw - 110px)}label{max-width:100%;box-sizing:border-box}}
 .pane{display:none}
 .pane.on{display:block}
 .pick{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
@@ -169,20 +174,30 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 #cs-ar-plan{margin-top:8px}
 #cs-ar-plan table{border-collapse:collapse;font-size:12px}
 #cs-ar-plan td{padding:1px 8px 1px 0}
+/* The list sits under the event viewer in its own scroll box, so clicking through events
+   keeps the viewer in sight (owner's request 2026-10-30). Shorter on a phone.
+   The viewer scrolls inside itself too: an event's page (fingerprint, facts, waterfall,
+   envelope, recipe, report) is far taller than a screen, and below it the list would be
+   out of reach again. Scrolled past the strip, viewer and list share one screen. */
+#cs-ev{max-height:50vh;overflow:auto}
+#cs-groups{max-height:min(32vh,460px);overflow:auto;border:1px solid var(--line);border-radius:6px;padding:0 6px;outline:none}
+#cs-groups:focus-visible{border-color:var(--accent)}
+@media (max-width:700px){#cs-ev{max-height:52vh}#cs-groups{max-height:28vh}}
 .cs-grp{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:var(--bg)}
 .cs-grp>.h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;padding:9px 12px;cursor:pointer}
 .cs-grp>.h:hover{background:var(--panel)}
 .cs-grp>.h b{font:600 15px ui-monospace,Consolas,monospace;color:var(--accent)}
 .cs-grp>.h .fam{color:var(--ink)}
 .cs-grp>.h .cnt{color:var(--dim);font-size:12.5px}
-.cs-grp .ev{display:none;padding:0 6px 6px;overflow-x:auto;max-height:420px;overflow-y:auto}
+.cs-grp .ev{display:none;padding:0 6px 6px}
+.cs-grp .ev thead th{position:sticky;top:0;z-index:1;background:var(--bg)}
 .cs-grp.open .ev{display:block}
 .cs-grp tr.sel{background:rgba(79,211,232,.12)}
 #cs-ev canvas{height:220px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
 #cs-ev canvas.env{height:120px}
 .cs-facts td{text-align:left;white-space:normal;font-size:12px}
 .cs-facts td:first-child{color:var(--dim);width:170px;font-family:ui-sans-serif,system-ui,sans-serif}
-.cs-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px}
+.cs-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:12px}
 </style></head><body>
 <header>
   <h1><span class="dot" id="dot"></span>SDR station</h1>
@@ -302,21 +317,6 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <div class="cs-rec" id="cs-arch">archive: —</div>
       <div class="cs-rec" id="cs-status">recorder: —</div>
     </div>
-    <div class="wrap">
-      <div class="lab">Every event the recorder catalogued, grouped by signal — click a signal to open its events, an event to see it</div>
-      <div class="frm" style="margin-bottom:8px">
-        <label>Date <select id="cs-date"><option value="">all dates</option></select></label>
-        <label>From <input type="number" id="cs-lo" step="0.001" placeholder="MHz"></label>
-        <label>to <input type="number" id="cs-hi" step="0.001" placeholder="MHz"></label>
-        <label>Show <select id="cs-badge">
-          <option value="">everything</option><option value="open">OPEN only</option>
-          <option value="private">PRIVATE only</option><option value="anomaly">ANOMALY: review</option>
-          <option value="written">with IQ written</option><option value="archived">ARCHIVED</option></select></label>
-        <button class="btn" id="cs-go">Refresh</button>
-      </div>
-      <p class="note" id="cs-note">loading…</p>
-      <div id="cs-groups"></div>
-    </div>
     <div class="wrap" id="cs-ev" hidden>
       <div class="lab" id="cs-ev-t">Event</div>
       <div id="cs-ev-badges" style="margin-bottom:8px"></div>
@@ -369,6 +369,21 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <div class="note" id="cs-ar-out" style="margin:6px 0 0"></div>
       </div>
       <div id="cs-more" class="cs-two" style="margin-top:12px"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Every event the recorder catalogued, grouped by signal — click a signal to open its events, an event to see it above (↑ ↓ move through the open events)</div>
+      <div class="frm" style="margin-bottom:8px">
+        <label>Date <select id="cs-date"><option value="">all dates</option></select></label>
+        <label>From <input type="number" id="cs-lo" step="0.001" placeholder="MHz"></label>
+        <label>to <input type="number" id="cs-hi" step="0.001" placeholder="MHz"></label>
+        <label>Show <select id="cs-badge">
+          <option value="">everything</option><option value="open">OPEN only</option>
+          <option value="private">PRIVATE only</option><option value="anomaly">ANOMALY: review</option>
+          <option value="written">with IQ written</option><option value="archived">ARCHIVED</option></select></label>
+        <button class="btn" id="cs-go">Refresh</button>
+      </div>
+      <p class="note" id="cs-note">loading…</p>
+      <div id="cs-groups" tabindex="0"></div>
     </div>
   </main>
 </div>
@@ -1301,6 +1316,11 @@ async function capturesLoad(){
   recRender();
   const keep=csEl('date').value;
   csEl('date').innerHTML='<option value="">all dates</option>'+d.dates.map(x=>`<option${x===keep?' selected':''}>${x}</option>`).join('');
+  // First visit: open the newest event, so the viewer above the list is never empty.
+  let newest=null;
+  if(cs.sel==null&&!cs.auto){for(const g of d.groups)for(const r of g.rows)
+    if(!newest||(r.started||'')>(newest.r.started||''))newest={r,k:g.f_mhz.toFixed(3)};
+    if(newest){cs.auto=true;cs.open.add(newest.k);}}
   csEl('note').textContent=d.db?`${d.total} event(s) in ${d.groups.length} signal(s), from ${d.db}`
     :'No captures yet. `marsad watch fixed` or `marsad watch survey` fill this list.';
   csEl('groups').innerHTML=d.groups.map(g=>{
@@ -1321,7 +1341,28 @@ async function capturesLoad(){
     const g=h.parentElement,k=g.dataset.k;g.classList.toggle('open');
     if(g.classList.contains('open'))cs.open.add(k);else cs.open.delete(k);});
   document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>tr.onclick=()=>csEvent(+tr.dataset.id));
+  if(newest)csEvent(newest.r.id);
 }
+// Keep a row in view inside the list's own box (never scrolls the page), below the
+// sticky column header of its table.
+function csRowInView(tr){
+  const box=csEl('groups'),b=box.getBoundingClientRect(),r=tr.getBoundingClientRect();
+  const hh=(tr.closest('table').querySelector('thead')||{}).offsetHeight||0;
+  if(r.top<b.top+hh)box.scrollTop-=b.top+hh-r.top+2;
+  else if(r.bottom>b.bottom)box.scrollTop+=r.bottom-b.bottom+2;
+}
+// Up / down move through the events of the open signals while the Captures tab shows.
+document.addEventListener('keydown',ev=>{
+  if(ev.key!=='ArrowDown'&&ev.key!=='ArrowUp')return;
+  if(!document.getElementById('pane-captures').classList.contains('on'))return;
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test((ev.target||{}).tagName||''))return;
+  const rows=[...document.querySelectorAll('#cs-groups .cs-grp.open tr[data-id]')];
+  if(!rows.length)return;
+  let i=rows.findIndex(r=>+r.dataset.id===cs.sel);
+  i=ev.key==='ArrowDown'?Math.min(rows.length-1,i+1):Math.max(0,i<0?0:i-1);
+  ev.preventDefault();
+  csEvent(+rows[i].dataset.id);
+});
 function csPaint(cv,d){
   // uint8 rows x cols (dB over the floor, scale_db) painted with the Scan tab's colour map
   const raw=atob(d.img),W=d.cols,H=d.rows;
@@ -1344,7 +1385,8 @@ function csEnv(cv,d){
 function csFact(k,v){return v==null||v===''?'':`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;}
 async function csEvent(id){
   cs.sel=id;
-  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>tr.classList.toggle('sel',+tr.dataset.id===id));
+  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>{
+    const on=+tr.dataset.id===id;tr.classList.toggle('sel',on);if(on)csRowInView(tr);});
   const box=csEl('ev');box.hidden=false;
   let e;try{e=await (await fetch('/captures/event?id='+id)).json();}catch(err){return;}
   if(e.error){csEl('ev-t').textContent=e.error;return;}
