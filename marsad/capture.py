@@ -305,10 +305,20 @@ def recipe_for(con, freq_hz: float, tol_hz: float = 20e3) -> dict | None:
     return None
 
 
-def last_captured(con, freq_hz: float, tol_hz: float) -> float | None:
-    """When the recorder last spent a capture on this frequency (epoch), IQ or fingerprint."""
-    rows = near(con, freq_hz, tol_hz, "captured = 1")
-    return rows[0]["started_epoch"] if rows else None
+def last_captured(con, freq_hz: float, tol_hz: float, width_hz: float = 0.0) -> float | None:
+    """When the recorder last spent a capture on this signal (epoch), IQ or fingerprint.
+
+    Same signal = the two occupied bands overlap: |f - f_row| <= max(tol, (width + row
+    bandwidth) / 2). A broad hump whose peak bin wanders pass to pass (345.2-345.8 MHz,
+    2026-10-30: nine 216 MB captures in six minutes) is then one signal, as on the
+    Captures tab.
+    """
+    f = "COALESCE(target_hz, freq_hz)" if has_target(con) else "freq_hz"
+    r = con.execute(
+        "SELECT MAX(started_epoch) FROM captures WHERE captured = 1 AND "
+        f"ABS({f} - ?) <= MAX(?, (? + COALESCE(bandwidth_hz, 0)) / 2)",
+        (freq_hz, tol_hz, width_hz)).fetchone()
+    return r[0] if r else None
 
 
 def bytes_since(con, epoch: float) -> int:

@@ -369,7 +369,7 @@ def test_triggers_hop_centre_and_hop_wide_never_fire():
 def test_reference_carrier_once_a_day_and_never_an_artefact():
     caught = []
     t = W.Triggers({"threshold_db": 12, "passes": 2, "reference_carriers_mhz": [299.999]},
-                   last_handled=lambda f, tol: caught[-1] if caught else None)
+                   last_handled=lambda f, tol, w=0.0: caught[-1] if caught else None)
     tag = ["100 MHz PCIe clock harmonic (x3)"]
     day = time.mktime((2026, 10, 28, 9, 0, 0, 0, 0, -1))
     t.feed([d(299.999, 15, tag)], day)
@@ -379,6 +379,40 @@ def test_reference_carrier_once_a_day_and_never_an_artefact():
     t.fired.clear()
     assert t.feed([d(299.999, 15, tag)], day + 3 * 3600) == []          # same day
     assert t.feed([d(299.999, 15, tag)], day + 16 * 3600)                 # 01:00 next day
+
+
+def test_a_broad_hump_whose_peak_wanders_is_one_signal(tmp_path):
+    """345.2-345.8 MHz, 2026-10-30: a ~650 kHz pulsed hump whose peak bin landed somewhere
+    else each pass fired nine 216 MB captures in six minutes. Same signal = overlapping bands."""
+    rng = np.random.default_rng(3)
+    t = W.Triggers({"threshold_db": 12, "passes": 2, "ambush_db": 40, "cooldown_min": 30})
+    t0, fired = 1e9, []
+    for n in range(30):                                          # one pass a minute, 30 min
+        hump = 345.5 + rng.uniform(-0.3, 0.3)
+        fired += t.feed([d(hump, 18, w=651.0), d(347.5, 15)], t0 + 60 * n)
+    assert sum(1 for a in fired if abs(a["f_mhz"] - 345.5) < 0.4) == 1
+    assert sum(1 for a in fired if a["f_mhz"] == 347.5) == 1     # a narrow signal 2 MHz away still gets its own
+    # and after a restart, the catalogue row alone holds the cooldown across the hump
+    con = cap.connect(station(tmp_path))
+    cap.add_row(con, {"started": "2026-10-30T16:57:16", "started_epoch": t0, "freq_hz": 345.5414e6,
+                      "target_hz": 345.5414e6, "bandwidth_hz": 651e3, "captured": 1})
+    assert cap.last_captured(con, 345.1865e6, 25e3, 651e3) == t0           # 355 kHz away, bands overlap
+    assert cap.last_captured(con, 345.8054e6, 25e3, 600e3) == t0
+    assert cap.last_captured(con, 347.5e6, 25e3, 12.5e3) is None
+    assert cap.last_captured(con, 345.60e6, 25e3, 0) == t0                 # inside the row's own band
+    assert cap.last_captured(con, 345.90e6, 25e3, 0) is None               # outside it
+    con.close()
+
+
+def test_dispatcher_treats_overlapping_bands_as_one_job():
+    started = []
+    disp = W.Dispatcher(lambda job: (started.append(job["f_mhz"]), job["stop"].wait(0.3)))
+    disp.submit({"kind": "ambush", "f_mhz": 345.54, "snr_db": 25, "width_khz": 651})
+    time.sleep(0.1)
+    disp.submit({"kind": "ambush", "f_mhz": 345.19, "snr_db": 26, "width_khz": 640})   # same hump: already parked
+    disp.submit({"kind": "capture", "f_mhz": 347.5, "snr_db": 15, "width_khz": 12.5})
+    disp.close(5)
+    assert started == [345.54, 347.5]
 
 
 def test_ambush_on_one_strong_pass():

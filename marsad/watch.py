@@ -555,11 +555,18 @@ def trigger_families(station: Station) -> list:
     return fams
 
 
+def same_signal(f1_mhz: float, w1_khz: float, f2_mhz: float, w2_khz: float, tol_khz: float = 25.0) -> bool:
+    """Two detections are one signal when their occupied bands overlap (at least within tol)."""
+    return abs(f1_mhz - f2_mhz) * 1e3 <= max(tol_khz, ((w1_khz or 0) + (w2_khz or 0)) / 2)
+
+
 class Triggers:
     """The trigger rules, as a state machine fed one pass at a time. No radio, no clock.
 
-    `last_handled(freq_hz)` says when the recorder last spent a capture on a frequency
-    (the catalogue, so a restart does not re-capture). Returns actions:
+    `last_handled(freq_hz, tol_hz, width_hz)` says when the recorder last spent a capture
+    on that signal (the catalogue, so a restart does not re-capture). Two detections are
+    the same signal when their occupied bands overlap (`same_signal`), so a broad hump whose
+    peak bin wanders pass to pass cools down once, not once per bin. Returns actions:
     {"kind": "capture" | "ambush", "f_mhz", "snr_db", "width_khz", "why"}.
     """
 
@@ -569,18 +576,18 @@ class Triggers:
         self.ambush_db = float(cfg.get("ambush_db", 20))
         self.cooldown_s = float(cfg.get("cooldown_min", 30)) * 60
         self.refs = [float(x) for x in cfg.get("reference_carriers_mhz", [])]
-        self.last_handled = last_handled or (lambda f, tol: None)
-        self.fired: dict = {}             # freq key -> epoch, until the catalogue has the row
-        self.tracks: list = []            # {"f", "count", "pass"}
+        self.last_handled = last_handled or (lambda f, tol, w=0.0: None)
+        self.fired: dict = {}             # freq MHz -> (epoch, width kHz), until the catalogue has the row
+        self.tracks: list = []            # {"f", "w", "count", "pass"}
         self.n = 0
 
     def reference(self, f_mhz: float, tol_khz: float) -> bool:
         return any(abs(f_mhz - r) * 1e3 <= max(tol_khz, 15.0) for r in self.refs)
 
-    def cooling(self, f_mhz: float, now: float, tol_khz: float) -> bool:
+    def cooling(self, f_mhz: float, now: float, tol_khz: float, width_khz: float = 0.0) -> bool:
         tol = max(tol_khz, 25.0)
-        times = [t for k, t in self.fired.items() if abs(k - f_mhz) * 1e3 <= tol]
-        last = self.last_handled(f_mhz * 1e6, tol * 1e3)
+        times = [t for k, (t, w) in self.fired.items() if same_signal(k, w, f_mhz, width_khz, tol)]
+        last = self.last_handled(f_mhz * 1e6, tol * 1e3, width_khz * 1e3)
         if last is not None:
             times.append(last)
         if not times:
@@ -601,10 +608,10 @@ class Triggers:
                 continue                                  # a known artefact never triggers
             tol = max(2 * d["tol_khz"] / 1.5, 25.0)
             prev = next((t for t in self.tracks if t["pass"] == self.n - 1
-                         and abs(t["f"] - d["f_mhz"]) * 1e3 <= tol), None)
+                         and same_signal(t["f"], t["w"], d["f_mhz"], d["width_khz"], tol)), None)
             count = prev["count"] + 1 if prev else 1
-            tracks.append({"f": d["f_mhz"], "count": count, "pass": self.n})
-            if self.cooling(d["f_mhz"], now, d["tol_khz"]):
+            tracks.append({"f": d["f_mhz"], "w": d["width_khz"], "count": count, "pass": self.n})
+            if self.cooling(d["f_mhz"], now, d["tol_khz"], d["width_khz"]):
                 continue
             act = {"f_mhz": d["f_mhz"], "snr_db": d["snr_db"], "width_khz": d["width_khz"],
                    "reference": ref}
@@ -615,7 +622,7 @@ class Triggers:
                 act.update(kind="ambush", why=f"one pass at {d['snr_db']:.1f} dB")
             else:
                 continue
-            self.fired[d["f_mhz"]] = now
+            self.fired[d["f_mhz"]] = (now, d["width_khz"])
             actions.append(act)
         self.tracks = tracks
         return actions
@@ -639,9 +646,11 @@ class Dispatcher:
     def submit(self, act: dict) -> None:
         with self.lock:
             cur = self.current
-            if cur and abs(cur["f_mhz"] - act["f_mhz"]) * 1e3 <= 25 and cur["kind"] == "ambush":
+            def same(q):
+                return same_signal(q["f_mhz"], q.get("width_khz", 0), act["f_mhz"], act.get("width_khz", 0))
+            if cur and same(cur) and cur["kind"] == "ambush":
                 return                              # already parked there; it records when it shows
-            self.queue = [q for q in self.queue if abs(q["f_mhz"] - act["f_mhz"]) * 1e3 > 25]
+            self.queue = [q for q in self.queue if not same(q)]
             self.queue.append(act)
             self.queue.sort(key=lambda q: (-self.PRIORITY[q["kind"]], -q["snr_db"]))
             if cur and self.PRIORITY[act["kind"]] > self.PRIORITY[cur["kind"]]:
@@ -916,7 +925,7 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
     print(f"  following {path.name}")
     fw = float(pre.get("floor_window") or 2.0)
     survey_name = path.stem
-    trig = Triggers(cfg, lambda f, tol: cap.last_captured(rec.con, f, tol))
+    trig = Triggers(cfg, lambda f, tol, w=0.0: cap.last_captured(rec.con, f, tol, w))
     xtr_ppm = cap.ppm_of(cfg, surveyor["serial"])
     disp = Dispatcher(survey_job(rec, station, survey_name, xtr_ppm))
     rec.start_status("survey + recorder", ends_at=t_start + dur, survey=survey_name,
