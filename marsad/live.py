@@ -1267,6 +1267,25 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 from . import catalogue
                 one = lambda k: (q.get(k) or [""])[0] or None
                 try:
+                    if u.path == "/captures/audio":
+                        # Listening to an open-band capture: demodulated slice by slice and
+                        # streamed as WAV. Never written to disk; private refused (403) by
+                        # audio_plan before a single byte is sent.
+                        num = lambda k, d=0.0: float(one(k)) if one(k) else d
+                        plan = catalogue.audio_plan(station, int(one("id") or 0), one("mode") or "am",
+                                                    num("start"), num("offset_khz") * 1e3,
+                                                    num("dur", None))
+                        self.send_response(200)
+                        self.send_header("Content-Type", "audio/wav")
+                        self.send_header("Content-Length", str(plan["bytes"]))
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        try:
+                            for part in catalogue.audio_stream(plan):
+                                self.wfile.write(part)
+                        except (ConnectionError, OSError):
+                            pass                            # the page stopped or moved the slider
+                        return
                     if u.path == "/captures":
                         num = lambda k: float(one(k)) if one(k) else None
                         out = catalogue.summary(station, one("date"), num("lo"), num("hi"), one("badge"))

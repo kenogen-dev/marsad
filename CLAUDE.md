@@ -2773,6 +2773,23 @@ or writes it) and on the pool. **There is no delete control anywhere.**
   pins the list, the event pages, the slice-at-a-time read, the exports byte for byte and the
   private refusals, including through HTTP.
 
+**Captures tab, viewer on top, and listening (2026-10-30).** The event viewer now sits straight under the
+pool / recorder strip and scrolls inside itself (50vh); the filters and signal groups follow in their own
+box (32vh, sticky column headers), so viewer and list share one screen and clicking through events never
+loses the viewer. Up / Down step through the open signals' events; the first visit opens the newest
+event. The page has a viewport tag now and every tab measured 375 px wide on a 375 px phone. **Listen**,
+at the top of the IQ box (open events with IQ only): `GET /captures/audio?id&mode&start&offset_khz`
+(`catalogue.audio_plan` / `audio_stream`) reads the SigMF capture half a second at a time and streams a
+mono 16-bit WAV straight to the socket, **never to disk**. Modes: **am** (10 kHz channel, magnitude, DC
+removed), **nfm** (12.5 kHz channel, phase step, 5 kHz deviation) and **envelope** (the whole band's
+magnitude, max-held per output sample, the noise gated out at 1.3 x the chunk median, full scale only for
+8 x that, no DC filter): on the 1265 radar capture it is quiet between beams with bursts at 0.9, 12.9 and
+24.9 s, the rotation. Offset tunes within the capture's band; the AGC drops at once and rises 5 % a
+chunk. 15-250 x real time on this PC. **A private event is refused (403)**, also a row claiming open in a
+private band, by the same `is_private` as /captures/iq and /captures/export. `tests/test_capture_audio.py`
+pins the WAV length, the FSK's 600 Hz in nfm, the 2.5 s rhythm 20 dB over the gaps in envelope, the
+refusals over HTTP and that nothing is opened for writing.
+
 **Archiving captures (2026-10-30), `marsad/capture_archive.py`.** On the Captures tab every event
 page has **Archive…**: keep a good capture for good without it counting against `pool_gb`. The dialog
 asks what to take (this event; this capture and every event inside it; the whole signal group; an

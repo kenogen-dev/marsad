@@ -195,6 +195,8 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 .cs-grp tr.sel{background:rgba(79,211,232,.12)}
 #cs-ev canvas{height:220px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
 #cs-ev canvas.env{height:120px}
+#cs-au{margin:2px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:6px}
+#cs-au-pos{accent-color:var(--accent)}
 .cs-facts td{text-align:left;white-space:normal;font-size:12px}
 .cs-facts td:first-child{color:var(--dim);width:170px;font-family:ui-sans-serif,system-ui,sans-serif}
 .cs-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:12px}
@@ -331,6 +333,24 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
       <div id="cs-priv" class="say" hidden><b>PRIVATE: do not decode.</b> This band carries private communications, so the recorder kept
         only the power fingerprint above. No IQ was ever written for it, and there is nothing to play or export.</div>
       <div id="cs-iqbox" hidden>
+        <div id="cs-au">
+          <div class="hm-l">Listen to the capture — demodulated on the station, streamed, never saved</div>
+          <div class="frm">
+            <label>Mode <select id="cs-au-mode">
+              <option value="am">AM</option><option value="nfm">narrow FM</option>
+              <option value="envelope">pulse / envelope (rhythm)</option></select></label>
+            <label title="where in the capture's band to listen, from its centre">Offset <input type="number" id="cs-au-off" step="0.5" value="0" style="width:84px"> kHz</label>
+            <button class="btn" id="cs-au-play">▶ Play</button>
+            <button class="btn" id="cs-au-stop">■ Stop</button>
+            <label>Volume <input type="range" id="cs-au-vol" min="0" max="1" step="0.05" value="0.8"></label>
+          </div>
+          <div class="frm" style="margin-top:4px">
+            <input type="range" id="cs-au-pos" min="0" max="1" step="0.1" value="0" style="flex:1;min-width:160px">
+            <span class="note" id="cs-au-t" style="margin:0">0.0 s</span>
+          </div>
+          <div class="note" id="cs-au-msg" style="margin:2px 0 0"></div>
+          <audio id="cs-au-el" preload="none"></audio>
+        </div>
         <div class="hm-l" id="cs-wf-t">IQ waterfall</div>
         <canvas id="cs-wf"></canvas>
         <div class="ax"><span id="cs-wf-l">—</span><span id="cs-wf-c">—</span><span id="cs-wf-r">—</span></div>
@@ -1294,6 +1314,7 @@ function capturesInit(){
     csEl('go').onclick=capturesLoad;
     for(const id of ['date','badge'])csEl(id).onchange=capturesLoad;
     csEl('x-wav').onclick=()=>csExport('wav');csEl('x-cf32').onclick=()=>csExport('cf32');
+    csAuWire();
     csEl('ar-open').onclick=()=>{csEl('ar-dlg').hidden=false;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';};
     csEl('ar-cancel').onclick=()=>{csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';};
     csEl('ar-preview').onclick=csArPlan;
@@ -1383,7 +1404,47 @@ function csEnv(cv,d){
   g.fillText(hi.toFixed(1)+' dBFS',4,11);g.fillText(lo.toFixed(1)+' dBFS',4,H-4);
 }
 function csFact(k,v){return v==null||v===''?'':`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;}
+// ---- listening: /captures/audio demodulates a slice of the capture on the station and
+// streams WAV into the <audio> element; nothing is saved. Open events with IQ only: the
+// control lives in the IQ box, which private events never show, and the server refuses
+// a private event with 403 whatever is asked.
+const csAu={id:null,start:0,len:0,dragging:false};
+function csAuStop(){const a=csEl('au-el');a.pause();a.removeAttribute('src');a.load();}
+function csAuSetup(e,r){
+  csAuStop();csAu.id=r.id;csAu.start=0;
+  csAu.len=e.capture?e.capture.seconds:0;
+  const fam=(r.family||'').toLowerCase();
+  csEl('au-mode').value=/puls|chirp|radar/.test(fam)?'envelope':/fm|fsk/.test(fam)?'nfm':'am';
+  const half=(r.store_rate_hz||0)/2e3;
+  csEl('au-off').value=0;csEl('au-off').min=-half;csEl('au-off').max=half;
+  csEl('au-off').title=half?`within ±${half.toFixed(1)} kHz of the capture's centre`:'';
+  const pos=csEl('au-pos');pos.max=Math.max(0.1,csAu.len);pos.value=0;
+  csEl('au-t').textContent=`0.0 of ${csAu.len.toFixed(1)} s`;csEl('au-msg').textContent='';
+}
+async function csAuPlay(){
+  const a=csEl('au-el'),start=+csEl('au-pos').value||0;
+  const q=new URLSearchParams({id:csAu.id,mode:csEl('au-mode').value,start:start.toFixed(2),offset_khz:csEl('au-off').value||0});
+  csAuStop();csAu.start=start;csEl('au-msg').textContent='demodulating…';
+  // a refusal (403) or a bad offset comes back as JSON: ask first, so the message can be shown
+  try{const h=await fetch('/captures/audio?'+q+'&dur=0');
+    if(!h.ok){const j=await h.json().catch(()=>({}));csEl('au-msg').textContent=j.error||('refused: '+h.status);return;}}
+  catch(err){csEl('au-msg').textContent='could not reach the station: '+err;return;}
+  a.src='/captures/audio?'+q;a.volume=+csEl('au-vol').value;
+  try{await a.play();csEl('au-msg').textContent='';}catch(err){csEl('au-msg').textContent='the browser would not play it: '+err;}
+}
+function csAuWire(){
+  const a=csEl('au-el'),pos=csEl('au-pos');
+  csEl('au-play').onclick=csAuPlay;csEl('au-stop').onclick=()=>{csAuStop();csEl('au-msg').textContent='stopped';};
+  csEl('au-vol').oninput=()=>{a.volume=+csEl('au-vol').value;};
+  for(const id of ['au-mode','au-off'])csEl(id).onchange=()=>{if(!a.paused)csAuPlay();};
+  pos.oninput=()=>{csAu.dragging=true;csEl('au-t').textContent=`${(+pos.value).toFixed(1)} of ${csAu.len.toFixed(1)} s`;};
+  pos.onchange=()=>{csAu.dragging=false;if(!a.paused||a.getAttribute('src'))csAuPlay();};
+  a.ontimeupdate=()=>{if(csAu.dragging)return;const t=Math.min(csAu.len,csAu.start+a.currentTime);
+    pos.value=t;csEl('au-t').textContent=`${t.toFixed(1)} of ${csAu.len.toFixed(1)} s`;};
+  a.onended=()=>{csEl('au-msg').textContent='end of the capture';};
+}
 async function csEvent(id){
+  if(csAu.id!==id&&csEl('au-el'))csAuStop();
   cs.sel=id;
   document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>{
     const on=+tr.dataset.id===id;tr.classList.toggle('sel',on);if(on)csRowInView(tr);});
@@ -1423,7 +1484,7 @@ async function csEvent(id){
     else{csPaint(csEl('fp'),f);csEl('fp-l').textContent=`${f.f_lo_khz.toFixed(0)} kHz`;
       csEl('fp-r').textContent=`+${f.f_hi_khz.toFixed(0)} kHz around ${f.signal_mhz.toFixed(4)} MHz · ${f.seconds.toFixed(2)} s`;}}catch(err){}
   if(e.private||!e.capture)return;        // no IQ: by design (private) or not written (cooldown, pool full)
-  csEl('iqbox').hidden=false;csEl('wf-t').textContent='IQ waterfall: reading the capture…';
+  csEl('iqbox').hidden=false;csAuSetup(e,r);csEl('wf-t').textContent='IQ waterfall: reading the capture…';
   try{const v=await (await fetch('/captures/iq?id='+id)).json();
     if(cs.sel!==id)return;
     if(v.error){csEl('wf-t').textContent=v.error;return;}

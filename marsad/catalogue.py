@@ -469,6 +469,140 @@ def iq_view(station: Station, event_id: int) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- listening
+
+AUDIO_MODES = {"am": 10e3, "nfm": 12.5e3, "envelope": None}   # channel width; envelope: the whole band
+AUDIO_RATE = 48000             # aimed at; the real rate is the capture rate over a whole decimation
+AUDIO_MAX_S = 180              # one request plays at most this much
+AUDIO_CHUNK_S = 0.5            # read and demodulate this much at a time
+NFM_DEVIATION_HZ = 5000.0
+ENV_GATE = 1.3                 # envelope mode keeps what stands this far over the chunk's median
+ENV_FULL = 8.0                 # ... and only something this many times the gate reaches full scale
+
+
+def audio_plan(station: Station, event_id: int, mode: str = "am", start_s: float = 0.0,
+               offset_hz: float = 0.0, dur_s: float | None = None) -> dict:
+    """What /captures/audio will play for an event, or Refused.
+
+    Refused for anything private, exactly as iq_view and export are (the row's tier, its
+    flags, or the band table now), and for an event with no IQ. The audio itself is made
+    by audio_stream, on the fly, and never written anywhere."""
+    if mode not in AUDIO_MODES:
+        raise Refused(f"unknown mode {mode!r} (am, nfm or envelope)")
+    cfg = cap.settings(station)
+    con = open_ro(station)
+    if con is None:
+        raise Refused("there is no captures catalogue yet")
+    try:
+        row = _get(con, event_id)
+        if is_private(row, cfg):
+            raise Refused("private band: nothing to listen to, by design (PRIVATE: do not decode)")
+        c = covering_capture(con, row)
+    finally:
+        con.close()
+    if c is None:
+        raise Refused("no IQ was written for this event (" + (row.get("iq_status") or "not recorded") + ")")
+    data = _inside(c["iq_path"], station, cfg)
+    g = _meta(data)["global"]
+    fs = float(g["core:sample_rate"])
+    _, n = _reader(data, g["core:datatype"])
+    if abs(offset_hz) >= fs / 2:
+        raise Refused(f"offset {offset_hz / 1e3:g} kHz is outside the capture's band (+/-{fs / 2e3:g} kHz)")
+    decim = max(1, int(fs // AUDIO_RATE))
+    start = int(max(0.0, min(float(start_s), n / fs)) * fs)
+    count = n - start
+    if dur_s is not None:
+        count = min(count, int(max(0.0, float(dur_s)) * fs))
+    count = min(count, int(AUDIO_MAX_S * fs))
+    out_n = -(-count // decim)
+    return {"data": data, "datatype": g["core:datatype"], "fs": fs, "n": n, "start": start,
+            "count": count, "decim": decim, "rate": int(round(fs / decim)), "mode": mode,
+            "offset_hz": float(offset_hz), "bw_hz": AUDIO_MODES[mode], "samples": out_n,
+            "bytes": 44 + 2 * out_n, "seconds": n / fs}
+
+
+def _wav_mono16_header(n: int, rate: int) -> bytes:
+    return (b"RIFF" + struct.pack("<I", 36 + 2 * n) + b"WAVE"
+            + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", 2 * n))
+
+
+def audio_stream(plan: dict):
+    """Yield a mono 16-bit WAV for the plan: the header, then PCM a chunk at a time.
+
+    am        channel low-pass, magnitude, DC removed
+    nfm       channel low-pass, phase step between samples, scaled for 5 kHz deviation
+    envelope  the magnitude over the whole capture band, max-held over each output sample,
+              so a 114 us radar pulse is a click and a pulse train is its rhythm
+    The offset moves the listening point within the capture's band (mixed with a phase
+    that runs on across chunks). An AGC (down at once, up 5 % a chunk) sets the level. Nothing
+    is written to disk: the bytes go to the caller and nowhere else."""
+    from scipy import signal
+    read, _ = _reader(plan["data"], plan["datatype"])
+    fs, decim, mode = plan["fs"], plan["decim"], plan["mode"]
+    chunk = max(decim, int(AUDIO_CHUNK_S * fs) // decim * decim)
+    sos = None
+    if plan["bw_hz"] and plan["bw_hz"] / 2 < 0.45 * fs:
+        sos = signal.butter(6, plan["bw_hz"] / 2, fs=fs, output="sos")
+    zi = None if sos is None else np.zeros((sos.shape[0], 2), dtype=np.complex128)
+    hp_b, hp_a = [1.0, -1.0], [1.0, -0.995]                 # DC removal, ~38 Hz at 48 kHz
+    hp_zi = np.zeros(1)
+    w = -2 * np.pi * plan["offset_hz"] / fs
+    prev = None
+    gain = None
+    env_floor = None
+    yield _wav_mono16_header(plan["samples"], plan["rate"])
+    done, left = 0, plan["count"]
+    while left > 0:
+        k = min(chunk, left)
+        i0 = plan["start"] + done
+        x = read(i0, k).astype(np.complex128)
+        if len(x) < k:                                      # a short file: pad with silence
+            x = np.concatenate([x, np.zeros(k - len(x), np.complex128)])
+        if w:
+            x = x * np.exp(1j * np.mod(w * (np.arange(k, dtype=np.float64) + i0), 2 * np.pi))
+        if mode == "envelope":
+            m = np.abs(x)
+            pad = (-len(m)) % decim
+            a = np.pad(m, (0, pad)).reshape(-1, decim).max(axis=1)
+            # Gate the noise out: the chunk's median is the hiss level (pulses are a tiny
+            # share of the time), so whatever stands ENV_GATE x above it is kept and the rest
+            # is silence. A sparse pulse train is then clicks in quiet, not clicks in hiss.
+            fl = float(np.median(a)) * ENV_GATE
+            if env_floor is None or fl < env_floor:
+                env_floor = fl
+            else:
+                env_floor = 0.95 * env_floor + 0.05 * fl
+            a = np.maximum(a - env_floor, 0.0)
+        else:
+            if sos is not None:
+                x, zi = signal.sosfilt(sos, x, zi=zi)
+            z = x[::decim]
+            if mode == "am":
+                a = np.abs(z)
+            else:
+                zz = np.concatenate([[prev if prev is not None else z[0]], z])
+                a = np.angle(zz[1:] * np.conj(zz[:-1])) * (fs / decim) / (2 * np.pi * NFM_DEVIATION_HZ)
+                prev = z[-1]
+        if mode != "envelope":                              # the gate already took the floor away;
+            if not done:                                    # a DC filter there would turn a steady
+                hp_zi = signal.lfilter_zi(hp_b, hp_a) * a[0]  # burst into two clicks
+            a, hp_zi = signal.lfilter(hp_b, hp_a, a, zi=hp_zi)
+        # Level: from the chunk's peak in envelope mode (sparse pulses would make any
+        # percentile the noise), its 99.5th percentile otherwise. Down at once, up by at most
+        # 5 % per chunk, so a quiet stretch between bursts is not turned up into hiss.
+        p = float(np.max(np.abs(a)) if mode == "envelope" else np.percentile(np.abs(a), 99.5)) + 1e-9
+        target = (0.9 if mode == "envelope" else 0.5) / p
+        if mode == "envelope" and env_floor:
+            # never louder than full scale for something ENV_FULL x the noise floor, so a
+            # stretch with no signal stays near silence instead of its noise filling the scale
+            target = min(target, 0.9 / (ENV_FULL * env_floor))
+        gain = target if gain is None else min(target, gain * 1.05)
+        yield (np.clip(a * gain, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+        done += k
+        left -= k
+
+
 # ---------------------------------------------------------------- exports
 
 def _wav_name(meta: dict, stem: str) -> str:
