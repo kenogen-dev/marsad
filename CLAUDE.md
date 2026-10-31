@@ -2332,6 +2332,31 @@ over its terminated floor at the wall spot; whether it is that source is unteste
 present ~10 min of 4 h, and the excess is steady). Other open-band repeaters: 313.30 (x5),
 307.36 (pulsed / OFDM-like, x3), 368.99, 370.89, 371.89, 360.64, 237.36, 298.90, 246.90.
 
+**12 h night watch, `watch2-12h-night` (2026-10-30 21:43 - 10-31 09:49, same rig and gains as
+`watch2-4h`, first long run with the b77319c cooldown fix).** **255 events, 116 IQ captures,
+2.75 GB.** Against the predictions written before it:
+
+| Prediction | Result |
+|---|---|
+| no signal recorded more than once per 30 min; IQ under 3 GB | **held**: no repeat inside 30 min in any group; 2.75 GB. The 345 MHz runaway did not recur |
+| the 02:19 broadband emitter steps on near 02:20 and off near 05:12 | **not seen as worded**: no step at 02:20. The 225-349 MHz median (15 min slots) rose ~0.8 dB at **01:30-01:45** and fell ~1 dB at **04:45**, back up from 05:45. The event finder did not flag it: through the splitter the whole-band scatter is 0.42 dB per sweep, so its threshold sits above this. Same kind of event on an earlier schedule is the likely reading, unproven |
+| 380-400 MHz fingerprint-only, zero IQ | **held**: 124 private events (386.50 x51, 387.44 x49, 386.98 x21, ...), no IQ file |
+| 296.99 MHz on all night | **held**: recorded every 30-31 min from 21:45 to 09:23, 24 captures |
+
+**259.58 MHz agrees with the floor reading independently:** captured every half hour except
+**01:09-04:44**, the raised-floor window, as on 10-29 where the weak lines vanished under the
+emitter rather than stopping. Also a gap 05:44-07:31.
+
+**New: a comb of weak lines at 303.3-310.3 MHz, ~296 kHz apart** (304.44, 304.73, 305.04, 305.33,
+305.63, 305.94, 306.23, 306.47, 306.77, 307.06, 307.37, 307.67, 307.96, 308.27, ... 310.30), each
+9-14 dB over the local floor, 1-5 captures each, scattered through the night. Every one was
+confirmed by the v5 (which has no DC spike), and the spacing is far finer than the survey's hop
+plan, so it is not an instrument artefact. One source with a ~296 kHz line spacing is the obvious
+reading; unidentified. `watch2-4h`'s 307.36 "pulsed / OFDM-like" is one of its lines. Also:
+313.30 MHz again (23 events, up to 25 dB), and weak bursts at 346.54-346.67 (x3) near the
+345 MHz hump. The events section of the report lists the 270 MHz hump switching in steps through
+the evening and the morning (22:28, 23:08, 00:13, 07:34-09:10).
+
 ### Printer room catalogue P1 (2026-10-26, 21:04-22:48): nothing in 52-1660 MHz, in any state
 
 Six wide runs, stub A (blade) taped at the back middle of the case: unplugged, off, idle,

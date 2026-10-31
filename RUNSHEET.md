@@ -1157,6 +1157,24 @@ there. Details in CLAUDE.md "Block H4".
 
 ---
 
+## W. Two-radio watches (XTR surveys through the splitter, v5 records)
+
+**W1 `watch2-4h` (2026-10-30, 13:12-17:12) - DONE.** 67 events, 33 captures, 2.0 GB; 1.94 GB of it
+one 345 MHz hump recorded 9 times, which led to the overlap cooldown fix (b77319c). CLAUDE.md
+"First two-radio watch".
+
+**W2 `watch2-12h-night` (2026-10-30 21:43 - 10-31 09:49) - DONE, three of four held.** 255 events,
+116 captures, 2.75 GB. No repeat inside 30 min (held); 380-400 fingerprint-only (held); 296.99 on
+all night (held); the 02:19 emitter not seen at 02:20, but the 225-349 floor rose ~0.8 dB at
+01:30-01:45 and fell at 04:45, and 259.58 went uncaptured over exactly 01:09-04:44. New: a
+~296 kHz comb of weak lines at 303.3-310.3 MHz. CLAUDE.md "12 h night watch".
+
+**Next for the emitter:** one night straight into the antenna (no splitter), so the per-sweep
+scatter drops and the event finder can see a 0.8 dB step, as it did on the v5 on 10-29 (+0.76 dB); a third night says whether
+the start time wanders (02:19 on 10-29, ~01:40 on 10-31) or follows something in the house.
+
+---
+
 ## Rules that apply to every run
 
 - Check the device index first. USB order is not guaranteed: `.\rtl-sdr\rtl_test.exe`
