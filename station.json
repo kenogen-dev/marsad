@@ -98,10 +98,10 @@
     },
     "milair": {
       "freq": "225M:400M:12.5k",
-      "gain": 29.0,
-      "integration": 10,
+      "gain": 19.0,
+      "integration": 30,
       "receiver": "xtr",
-      "note": "Military air UHF"
+      "note": "Military air UHF. XTR at g19 (g29 hits full scale); the v5 runs it at g29.7 with the gainfix build. -i 30 since M1 (2026-10-26)"
     },
     "900": {
       "freq": "902M:935M:5k",
@@ -199,6 +199,69 @@
   "_builder_profiles": "Extra named profiles the scan builder offers; they emit `custom` to the CLI.",
   "known_mhz": [
     {
+      "a": 250,
+      "b": 300,
+      "t": "broadband hump peaking ~270 MHz, received (gone terminated), switches in steps; masks weak UHF satcom 243-270"
+    },
+    {
+      "a": 259.2,
+      "b": 259.2,
+      "t": "28.8 MHz x9 - the v5's own spur",
+      "k": "spur"
+    },
+    {
+      "a": 259.58,
+      "b": 259.58,
+      "t": "steady local line, on all day and night"
+    },
+    {
+      "a": 262.66,
+      "b": 262.66,
+      "t": "intermittent local line"
+    },
+    {
+      "a": 296.99,
+      "b": 296.99,
+      "t": "local line, on all night, switches off late morning (11:03, 11:44)"
+    },
+    {
+      "a": 310,
+      "b": 315,
+      "t": "XTR roll-off, ~3.5 dB step even terminated (tuner response)",
+      "k": "bad"
+    },
+    {
+      "a": 316,
+      "b": 349,
+      "t": "XTR at the wall spot hears ~3.5 dB here (deaf at the desk, M1); source unidentified, isolator cleared"
+    },
+    {
+      "a": 345.2,
+      "b": 345.8,
+      "t": "~650 kHz pulsed hump, sparse ~200 us pulses, seen 2026-10-30 16:57-17:07"
+    },
+    {
+      "a": 350,
+      "b": 350,
+      "t": "XTR VHF/UHF input switch: fixed ~10 dB step (2.7 dB terminated); never read a level across it. Not on the v5",
+      "k": "bad"
+    },
+    {
+      "a": 360,
+      "b": 380,
+      "t": "MUOS downlink - no plateau seen on this antenna"
+    },
+    {
+      "a": 380,
+      "b": 400,
+      "t": "private land mobile (trunked) - fingerprint only, never IQ"
+    },
+    {
+      "a": 385.03,
+      "b": 385.03,
+      "t": "trunked control channel, reference carrier; hops to 385.76 at times"
+    },
+    {
       "a": 1090,
       "b": 1090,
       "t": "ADS-B transponders (use the v5; 1095 is the XTR's gap edge)"
@@ -212,7 +275,7 @@
     {
       "a": 1185,
       "b": 1232,
-      "t": "broadband pedestal seen on the v5 2026-10-16, ~8 dB, steady; suspected front-end compression",
+      "t": "broadband pedestal seen on the v5 2026-10-16, ~8 dB, steady; gone terminated. That chain decoded no ADS-B, so it was not receiving; FM overload ruled out as the cause 2026-10-18 (P6). Reason unidentified",
       "k": "bad"
     },
     {
@@ -284,7 +347,7 @@
     {
       "a": 1626.5,
       "b": 1660.5,
-      "t": "MSS uplink - 1633.47 found here at 39% occupancy, unexplained"
+      "t": "MSS uplink - 1633.47: narrow (<2 kHz) fading tone, not made in our chain (pad test H2), louder on the whips than the UWB; likely a device in the building"
     },
     {
       "a": 1755,
@@ -392,15 +455,16 @@
     }
   ],
   "chain_off_by_receiver": {
-    "xtr": [],
+    "xtr": [
+      "iso"
+    ],
     "v5": [
-      "notch",
       "lna"
     ]
   },
   "enclosure_default": {
     "xtr": "in cage",
-    "v5": "open bench"
+    "v5": "in aluminium cage, 3D-printed wall slide-in mount"
   },
   "_chain_modules": "The physical rig, in signal order, for the scan builder. The source and the SDR are always present; the rest can be unchecked.",
   "defaults": {
@@ -409,7 +473,7 @@
     "lna": "NO",
     "filter": "yes",
     "chain_order": "antenna (dipole with the long telescopic whips fully collapsed, 230 mm each, in a straight vertical line, suction-mounted on its outlined spot on the inside face of the right window glass) > resistive 2-way SMA power divider (DC-5 GHz, 6 dB per output; RFout1 > 6 in coax jumper (no DC block) > Flamingo+ FM notch > 3 ft coax > v5 recorder; RFout2 to the XTR) > 6 in coax jumper > Flamingo+ FM notch (the XTR's unit) > SMA adapter > LaNA (powered by the XTR's bias-tee through the coax) > 3 ft RG316 coax > SMA bulkhead (at XTR cage) > SMA jumper (6 in, S-bend, no ferrite) > XTR (in aluminium cage, resting on stacked foam at its future wall-mount position) > USB bulkhead (at cage) > USB cable (1 ft M:M) > USB cable (16 ft) > PC (no isolator)",
-    "chain_used_at": "2026-10-30T13:12:38"
+    "chain_used_at": "2026-10-30T21:43:43"
   },
   "recorder": {
     "pool_gb": 30,
