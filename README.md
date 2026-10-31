@@ -54,11 +54,12 @@ build it with `packaging/rtl_power_gainfix/build.cmd` (see `BUILD.md` there) and
 and warns once per run; on an E4000 dongle that costs nothing measurable.
 
 **Windows, no Python:** download the `marsad` folder from the releases page, put it anywhere,
-and double-click `marsad.exe`. It starts the web app on http://127.0.0.1:8731/, opens it in
-your browser, and keeps a console window open that says so; close that window to stop. If the
-app is already running (one copy per address, always), the double-click just opens the browser
-on it. `Start marsad.cmd` beside the exe does the same and keeps the window open if anything
-goes wrong, so an error can be read. For the commands, open a terminal in that folder.
+and double-click `marsad.exe`. It starts the web app on http://127.0.0.1:8731/ in the
+background, with no window, and opens it in your browser; it stays up between scans, and
+`marsad web stop` stops it (`marsad web status` says whether it is up). If the app is already
+running (one copy per address, always), the double-click just opens the browser on it.
+`Start marsad.cmd` beside the exe keeps a window open if anything goes wrong, so an error can
+be read. For the commands, open a terminal in that folder.
 
 **From source (any OS):**
 
@@ -106,6 +107,13 @@ true of every RTL-SDR. Edit it:
 
 Keys starting with `_` are notes to yourself and are ignored.
 
+**`station.local.json`**, beside it, is laid over `station.json` when marsad loads (dicts merged
+key by key) and is for what should not be shared: today your **location**,
+`{"location": {"lat": 51.48, "lon": -0.01}}` in decimal degrees, which lets every run record the
+outdoor weather (Open-Meteo, no key) and the sun's elevation beside your typed conditions. The
+repository's `.gitignore` keeps it out of git, and nothing marsad writes ever copies it into
+`station.json`.
+
 ## How a survey is kept comparable
 
 Every run writes `surveys/<name>.json` beside the CSV with the full command, the gain, bin
@@ -136,6 +144,27 @@ Things the tools learned the hard way, now built in:
   saturating and peak levels are lower bounds.
 - Retuning costs tens of milliseconds per hop, so a short integration on a wide span
   spends most of its time not listening. The dry run shows the split.
+- Every report has an **Events** section (and `events.csv`): broadband steps and one-sweep
+  lifts found in the per-sweep median of each 25 MHz block, with warm-up reported as warm-up.
+  `marsad events <tag>` runs it on any survey.
+
+## Recording what a survey finds
+
+`marsad watch` is a triggered recorder for two radios:
+
+```bash
+marsad watch survey milair 12h --chain "..." --conditions "..."   # one surveys, the other records
+marsad watch fixed --freq 1265.44M --receiver v5 --duration 1h      # one radio parked on a signal
+marsad watch list                                                   # the catalogue
+```
+
+Each event gets a fingerprint (a 20 ms x 1 kHz power spectrogram) and a row in
+`occupancy.db`; in open bands the first event of a signal also starts an IQ capture (SigMF),
+at most once per 30 min per signal, which `marsad characterise` measures (bandwidth, pulses,
+chirp, rotation, modulation family) into a recipe for the next one. **Private bands (cellular,
+pagers, DECT and cordless, private land-mobile, from a table in station.json) get the
+fingerprint only: their raw IQ never touches disk.** Storage has a pool and a daily cap, and
+nothing is ever deleted; the Captures tab can move a good capture into a verified zip archive.
 
 ## The web app
 
@@ -148,7 +177,13 @@ Things the tools learned the hard way, now built in:
   the dwell split, the signal chain and conditions, and the complete `marsad run` command to
   copy. It warns about the 2^31 ceiling, a PLL gap, a hop centre landing on your target,
   and a 50 ohm load run whose tag does not say so.
-- **Archive**: every CSV, and what `occupancy.db` holds.
+- **Archive**: every survey, and what `occupancy.db` holds.
+- **Captures**: the recorder's catalogue grouped by signal, each event's fingerprint, IQ
+  waterfall and envelope, exports for SDR++ (WAV) and Inspectrum / URH (.cf32 + SigMF), and
+  archiving; a "recorder running" bar shows on every tab while a watch runs.
+- **Chain**: the rig as a drawing; "Use for runs" makes it the default `--chain`.
+- **Probe**: near-field probe surveys of the room's devices by state, and a Hunt mode that
+  turns the strongest line into sound and a big meter while you move the probe.
 - **Roadmap**: `TOOL_ROADMAP.md` from the station folder.
 
 Starting a survey with `marsad run` reuses an open viewer; it follows the newest CSV.
@@ -157,17 +192,18 @@ Starting a survey with `marsad run` reuses an open viewer; it follows the newest
 
 ```
 station.json      your station (see above)
+station.local.json  your location (optional, kept out of git)
 rtl-sdr/          rtl_power.exe and friends (optional; PATH works too)
 surveys/          raw rtl_power CSVs and their .json sidecars - never delete these
 reports/          one folder per survey: report.md, scan_build.md, plots, peaks.csv, bins.csv
-recordings/       ADS-B captures
+recordings/       the recorder's captures (pool) and archive zips
 occupancy.db      the archive
 ```
 
 ## For developers
 
 ```bash
-.venv\Scripts\python.exe -m pytest           # regression suite
+.venv\Scripts\python.exe -m pytest           # regression suite, in parallel (pytest-xdist); -n 0 for serial
 .venv\Scripts\pyinstaller.exe --noconfirm packaging\marsad.spec   # dist\marsad\marsad.exe
 ```
 
