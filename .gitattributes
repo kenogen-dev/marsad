@@ -1,0 +1,18 @@
+# Line endings: git stores text files with LF and checks them out in the
+# platform's native form (CRLF on this Windows PC). An editor that saves a
+# file with the other kind then no longer shows every line as changed.
+* text=auto
+
+# Test fixtures are compared byte for byte (the .dat tailer test cuts reads
+# mid-line), so git must never convert them.
+tests/data/** -text
+
+# Binary files: never diff or convert.
+*.png binary
+*.jpg binary
+*.ico binary
+*.npz binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.wav binary
