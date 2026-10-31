@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlparse
 from . import chain, host, hunt, probe, room, rpf
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
-                       parse_freq_spec)
+                       build_label, csv_bin_khz, fingerprint, parse_freq_spec)
 
 WEB = Path(__file__).resolve().parent / "web"
 
@@ -722,6 +722,37 @@ def builder_config(station: Station) -> dict:
     }
 
 
+def builder_fingerprint(station: Station, q: dict) -> str:
+    """The Builder's fingerprint preview, made by marsad's own fingerprint function on
+    the sidecar `marsad run` would write for these settings, so the two cannot drift
+    apart (the page's own copy had no `| gainfix` and grouped thousands as "1,241.000").
+    q holds one value per key: engine, rx, lo, hi, gain, then bin, integ, crop, fir for
+    rtl_power or bins, rate, time, overlap, crop for rtl_power_fftw."""
+    def f(k, d=None):
+        v = q.get(k, d)
+        return float(v) if v not in (None, "") else d
+    rx = q.get("rx") or "xtr"
+    lo, hi, gain = f("lo"), f("hi"), f("gain")
+    gain = int(gain) if float(gain).is_integer() else gain
+    crop = f("crop", CROP)
+    if q.get("engine") == "rtl_power_fftw":
+        bins, rate = int(f("bins", rpf.DEFAULT_BINS)), int(f("rate", rpf.DEFAULT_RATE_HZ))
+        time_s = f("time", rpf.DEFAULT_TIME_S)
+        sc = {"engine": rpf.ENGINE, "receiver": rx, rpf.ENGINE: {
+            "freq_low_mhz": round(lo, 6), "freq_high_mhz": round(hi, 6), "bins": bins,
+            "rate_hz": rate, "time_per_hop_s": int(time_s) if time_s.is_integer() else time_s,
+            "overlap_pct": f("overlap", 100.0 * crop), "crop": crop, "gain_db": gain}}
+        return fingerprint(sc, rate / bins / 1e3)
+    exe, _ = station.rtl_power()
+    tuner = station.tuner_of(rx)
+    sc = {"receiver": rx, "rtl_power": {
+        "freq_low_mhz": lo, "freq_high_mhz": hi,
+        "freq_high_mhz_effective": min(hi, RTL_POWER_MAX_MHZ), "bin_khz": f("bin"),
+        "gain_db": gain, "integration_s": int(f("integ")), "crop": crop,
+        "fir": int(f("fir", FIR)), "tuner": tuner, "build": build_label(exe) if exe else None}}
+    return fingerprint(sc, csv_bin_khz(lo, hi, f("bin"), crop))
+
+
 def archive_summary(station: Station) -> dict:
     """What occupancy.db holds, for the Archive tab. Empty when there is no db."""
     if not station.db.exists():
@@ -1147,6 +1178,12 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                                    "surveys": survey_list(station)}).encode()
             elif u.path == "/config":
                 body = json.dumps(cfg).encode()
+            elif u.path == "/builder/fingerprint":
+                try:
+                    body = json.dumps({"fingerprint": builder_fingerprint(
+                        station, {k: v[0] for k, v in q.items()})}).encode()
+                except (TypeError, ValueError, KeyError, ZeroDivisionError) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/archive":
                 try:
                     body = json.dumps(archive_summary(station)).encode()

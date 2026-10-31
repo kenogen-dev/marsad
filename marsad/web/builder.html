@@ -288,10 +288,10 @@ footer { margin-top: 22px; color: var(--dim); font-size: 12.5px; border-top: 1px
     <div class="ph" style="margin-top:16px;padding-top:13px;border-top:1px solid var(--line)"><h2>Analysis</h2></div>
     <label class="chk"><input type="checkbox" id="analyze">
       <span>Analyse when recording finishes
-      <small>report.md, the three plots, combined.png, peaks.csv, bins.csv</small></span></label>
+      <small>report.md (with an Events section: broadband steps and one-sweep transients), the three plots, combined.png, peaks.csv, bins.csv, events.csv</small></span></label>
     <label class="chk"><input type="checkbox" id="useskip">
       <span>Discard warm-up sweeps
-      <small>The floor settles over roughly the first 16 minutes</small></span></label>
+      <small>The XTR settles over roughly the first 16 minutes; the v5 in its aluminium cage takes about 65 (V1-1b, 2026-10-27: -1.93 dB). Transients are still looked for in the discarded sweeps.</small></span></label>
     <div class="row" style="margin-top:6px">
       <div class="f"><label for="skipmin">Warm-up min</label><input type="number" id="skipmin" min="0" step="1"></div>
       <div class="f"><label for="thresh">Threshold dB</label><input type="number" id="thresh" step="0.5"></div>
@@ -419,7 +419,7 @@ let CANON = {};
 function freshChain(rx) {
   return CHAIN_BASE.map(m => {
     const c = { ...m, on: (CHAIN_OFF[rx] || []).includes(m.id) ? false : m.on };
-    if (m.id === "marsad") { c.base = SDR_BASE[rx]; c.enc = ENC_DEFAULT[rx]; c.name = `${c.base} (${c.enc})`; }
+    if (isSdr(m)) { c.base = SDR_BASE[rx]; c.enc = ENC_DEFAULT[rx]; c.name = `${c.base} (${c.enc})`; }
     return c;
   });
 }
@@ -428,7 +428,11 @@ let SRC_ANT = "Antenna", SRC_LOAD = "50 ohm load";
 // tests - so it rides on the SDR module and lands in --chain, where survey.py compares
 // it as a station change rather than a settings mismatch.
 const ENCLOSURES = ["open bench", "in cage", "in cage, seam taped"];
-const sdrMod = () => chain.find(m => m.id === "marsad");
+// The SDR's module id is "sdr" in station.json. The packaging rename (sdr -> marsad,
+// 2026-10-20) turned these lookups into "marsad", so the SDR never got its name and
+// --chain carried an empty "> >" segment. Both ids are accepted, for saved chains.
+const isSdr = m => m && (m.id === "sdr" || m.id === "marsad");
+const sdrMod = () => chain.find(isSdr);
 function setEnclosure(e) {
   const m = sdrMod();
   if (!m) return;
@@ -459,11 +463,11 @@ function normaliseEnc(list, rx) {
       if (idx >= 0) { at = idx + 1; break; }
     }
     const add = { ...base, on: false };
-    if (base.id === "marsad") { add.on = true; add.base = SDR_BASE[rx]; add.enc = ENC_DEFAULT[rx]; }
+    if (isSdr(base)) { add.on = true; add.base = SDR_BASE[rx]; add.enc = ENC_DEFAULT[rx]; }
     list.splice(at, 0, add);
     have.add(base.id);
   }
-  const m = list.find(x => x.id === "marsad");
+  const m = list.find(isSdr);
   if (m) {
     if (!m.enc) m.enc = /cage/i.test(m.name || "") ? "in cage" : (ENC_DEFAULT[rx] || "open bench");
     m.base = SDR_BASE[rx] || m.base || "SDR";
@@ -781,7 +785,7 @@ function flags(g, s) {
   if (s.clamped && !g.engine)
     out.push(["warn", "Ceiling", `rtl_power stops at ${CEIL} MHz, a signed 32-bit limit. The top is silently clamped from ${num(s.hiReq, 3)}. A range entirely above it writes no file and still exits 0.`]);
   if (g.engine && s.hiReq > CEIL)
-    out.push(["ok", "Ceiling", `Above rtl_power's ${CEIL} MHz limit: fine for rtl_power_fftw (64-bit frequencies). Measured 2026-10-22 on the XTR: the E4000's PLL ceiling descends as the dongle warms, from above 2187 MHz cold to about 2172 MHz after 45 minutes; hops it refuses are dropped and named in the .log, and the Scan page hatches them.`]);
+    out.push(["ok", "Ceiling", `Above rtl_power's ${CEIL} MHz limit: fine for rtl_power_fftw (64-bit frequencies). The XTR's whole PLL range slides down as it warms (Block H3, 2026-10-23): rtl_test -t gave a top of 2186 MHz cold and 2170 after an hour of streaming, so 2172-2187 MHz is cold-start only, the top hops dropping out one at a time over the first ~5-45 minutes. Hops it refuses are dropped and named in the .log, and the Scan page hatches them.`]);
   if (g.engine && s.fbins % 2)
     out.push(["bad", "Bins", "rtl_power_fftw wants an even number of FFT bins."]);
   if (g.engine && g.hops > 1 && s.crop > 0 && (s.fover ?? 100 * s.crop) < 100 * s.crop - 1e-9)
@@ -789,10 +793,26 @@ function flags(g, s) {
   if (g.engine && g.listening < 0.5)
     out.push(["warn", "Dwell", `Only ${num(g.listening * 100, 0)}% of the time is spent listening: ${num(g.overhead * 1000, 0)} ms of overhead per hop against ${num(g.listen, 2)} s of listening. More seconds per hop fixes it.`]);
   if (g.engine && s.rx === "xtr" && s.hiReq > 2187)
-    out.push(["warn", "Tuner", "The XTR's top is 2187 MHz at best (rtl_test -t, 2026-10-13) and lower when warm."]);
+    out.push(["warn", "Tuner", "The XTR's top is 2186-2187 MHz at best, cold (rtl_test -t, 2026-10-13 and 2026-10-23), and 2170 when warm."]);
+  else if (g.engine && s.rx === "xtr" && s.hiReq > 2170)
+    out.push(["warn", "Warm-up", `Above 2170 MHz is cold-start only on the XTR (Block H3): start cold, keep it short, and do not discard the warm-up, because the warm-up is when those hops exist.`]);
   for (const [a, b] of GAPS[s.rx])
     if (s.lo < b && s.hiReq > a)
-      out.push(["warn", "PLL gap", `${a}–${b} MHz is this unit's measured lock gap. Hops there record nothing useful; the analyser masks them.`]);
+      out.push(["warn", "PLL gap", `${a}–${b} MHz is this unit's measured lock gap, cold. It slides down as the XTR warms (1086–1230 after an hour, Block H3), so allow for it. Hops there record nothing useful; the analyser masks the cold gap.`]);
+  if (s.rx === "xtr" && s.lo <= 1090 && s.hiReq >= 1090)
+    out.push(["warn", "1090 MHz", "Warm, the XTR's PLL gap starts at 1086 MHz, so ADS-B at 1090 sits inside it, and rtl_adsb keeps running through 'PLL not locked' with no clear error. Use the v5 for 1090, or a cold XTR (the warm-XTR ADS-B test, H3, is still owed)."]);
+  if (s.rx === "xtr" && !g.engine && s.lo < 350 && s.hiReq > 350)
+    out.push(["warn", "350 MHz", "The E4000 has a fixed ~10 dB step at exactly 350.0 MHz (its VHF/UHF input switch) and a roll-off over 310-315 MHz; about 2.7 and 3.5 dB of each survive with no antenna. Never read a level across 350 or 312 MHz as a change in the sky."]);
+  if (s.rx === "xtr" && s.lo < 349 && s.hiReq > 316)
+    out.push(["ok", "316-349 MHz", "Corrected 2026-10-30: the XTR is not deaf here. Direct at the wall spot it reads ~3.5 dB over its terminated floor, which matches M1-T to 0.2 dB, so the terminated level is the receiver's own and the excess is received; on 2026-10-26 there was simply nothing to hear. Through the splitter it falls back onto the terminated floor."]);
+  if (s.rx === "xtr" && s.lo < 400 && s.hiReq > 225 && s.gain > 19 && !isLoad())
+    out.push(["warn", "Gain", `The XTR's milair surveys run at g19: g29 hit full scale in the M1 shakedown (2026-10-26), with the 270 MHz hump and the 385 MHz trunked carrier in the span.`]);
+  if (s.rx === "v5" && s.gain !== 29.7 && !g.engine)
+    out.push(["warn", "Gain", "The v5's standing gain is 29.7 (V1-1g, 2026-10-28): its floor rises nearly dB for dB with gain, so more buys little SNR, and a different gain is a different fingerprint."]);
+  if (s.rx === "v5" && !isLoad() && (!s.useskip || s.skipmin < 65))
+    out.push(["warn", "Warm-up", "For level comparisons the v5 needs --skip-warmup 65: in the aluminium cage it falls -1.93 dB over its first ~65 minutes, then holds to 0.016 dB (V1-1b). Run twins back to back, since an idle-powered dongle cools."]);
+  if (/split|divider/i.test(chainText()))
+    out.push(["warn", "Splitter", "The resistive 2-way divider costs the XTR arm 4-5 dB of floor below 400 MHz (and 7.6-8.8 dB at 250-300 on both arms, unexplained), and the LaNA cannot be powered through it, so it sits after it. Fine for trigger-and-record; two antennas for independent surveys."]);
   if (g.engine) { /* no retune floor: the program waits for each hop */ }
   else if (s.integ < g.retune * 1.2)
     out.push(["bad", "Dwell", `-i ${s.integ} is under the ${num(g.retune, 1)} s retune floor for ${g.hops} hops. rtl_power misbehaves when a sweep outlasts the interval.`]);
@@ -844,7 +864,7 @@ function flags(g, s) {
       out.push(["ok", "Baseline", "700-1700 MHz sits inside both tuners and holds 35 harmonics of 28.8 MHz, so the same test runs on either radio and spur_stats can pair them. Levels never compare across receivers - the family statistic is relative to each run's own median, which does."]);
   }
   if (s.rx === "v5" && !isLoad() && !/notch|flamingo|fm filter/i.test(chainText()))
-    out.push(["bad", "FM overload", "The v5 has no FM notch in this chain. Measured 2026-10-16: broadcast FM drove it to +3.8 dB, essentially ADC full scale, and it decoded zero ADS-B frames at any gain while the XTR pulled 1856/min. A v5 run without a notch measures the chain, not the band."]);
+    out.push(["warn", "FM overload", "The v5 has no FM notch in this chain. Broadcast FM drives its front end hard here (FM median ~20 dB over the terminated floor; the second notch took it down 10.5 dB, 2026-10-19). It still decodes ADS-B without one (P6 refuted, 2026-10-18), so the notch is an optimisation, not a fix, but levels near strong FM are lower bounds."]);
   if (isLoad())
     out.push(["ok", "Terminated", "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with marsad adsb-check for the sensitivity half, or the characterisation is incomplete."]);
   if (isLoad() && !/term/i.test(s.tag))
@@ -893,9 +913,13 @@ function command(g, s) {
   const line = parts.join(" ");
   const after = [];
   if (!isLoad())
-    after.push("marsad adsb-check --seconds 600 --gain 40.2 --device " + (s.device || 0) + " --label " + q(s.tag || "run"));
+    after.push("marsad adsb-check --seconds 600 --gain " + (s.rx === "v5" ? "40.2" : "29") + " --device " + (s.device || 0) + " --label " + q(s.tag || "run")
+      + (s.rx === "xtr" ? "   # cold XTR only: warm, 1090 MHz is inside its PLL gap" : ""));
   after.push("# archived and flagged " + (isLoad() ? "--terminated" : "--antenna") + " automatically from the chain above");
   after.push("# compare: marsad compare-runs <before-tag> <after-tag>");
+  after.push("# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events " + (s.tag || "<tag>"));
+  if (chainText() && conditionsText(s) && !s.nonint)
+    after.push("# --chain and --conditions together skip the station-notes questions; the 'Start anyway?' device prompt still asks");
   return (s.dryfirst ? line + " --dry-run\n" : "") + line + "\n" + after.join("\n");
 }
 
@@ -942,6 +966,29 @@ function syncSliders(s) {
   $("dsel").style.width = Math.max(0, f(s.hiReq) - f(s.lo)) + "%";
 }
 
+// The fingerprint comes from the server, made by marsad's own fingerprint function on
+// the sidecar `marsad run` would write (so it carries "| gainfix" on v5 rtl_power runs
+// and rtl_power's own integer bin width). The local line is only a fallback when the
+// server cannot answer, and says so.
+let fpSeq = 0, fpTimer = null;
+function showFingerprint(s, g, fftw) {
+  const local = fftw
+    ? `${s.lo.toFixed(3)}-${s.hiReq.toFixed(3)} MHz | ${g.binKhz.toFixed(4)} kHz | g${s.gain} | t${s.ftime} | N${s.fbins} | r${s.frate / 1e6}M | o${s.fover ?? 100 * s.crop} | c${s.crop} | rtl_power_fftw | ${s.rx}`
+    : `${s.lo.toFixed(3)}-${s.hi.toFixed(3)} MHz | ${g.binKhz.toFixed(4)} kHz | g${s.gain} | i${s.integ} | c${s.crop} | F${s.fir} | ${s.rx}`;
+  const q = new URLSearchParams(fftw
+    ? { engine: "rtl_power_fftw", rx: s.rx, lo: s.lo, hi: s.hiReq, gain: s.gain, bins: s.fbins,
+        rate: s.frate, time: s.ftime, overlap: s.fover ?? 100 * s.crop, crop: s.crop }
+    : { engine: "rtl_power", rx: s.rx, lo: s.lo, hi: s.hiReq, gain: s.gain, bin: s.bin,
+        integ: s.integ, crop: s.crop, fir: s.fir });
+  const seq = ++fpSeq;
+  clearTimeout(fpTimer);
+  fpTimer = setTimeout(async () => {
+    let fp = null;
+    try { fp = (await (await fetch("/builder/fingerprint?" + q)).json()).fingerprint; } catch (e) {}
+    if (seq === fpSeq) $("fp").textContent = fp || local + "   (server did not answer: local estimate)";
+  }, 120);
+}
+
 function update() {
   const s = read();
   const fftw = s.engine === "rtl_power_fftw";
@@ -956,10 +1003,7 @@ function update() {
   tradeoff(s); drawChain();
   $("whatH").textContent = fftw ? "What rtl_power_fftw will do" : "What rtl_power will do";
   $("sweepsIn").value = g.sweeps;
-  $("fp").textContent = fftw
-    ? `${s.lo.toFixed(3)}-${s.hiReq.toFixed(3)} MHz | ${g.binKhz.toFixed(4)} kHz | g${s.gain} | t${s.ftime} | N${s.fbins} | r${s.frate / 1e6}M | o${s.fover ?? 100 * s.crop} | c${s.crop} | rtl_power_fftw | ${s.rx}`
-    : `${num(s.lo, 3)}-${num(s.hi, 3)} MHz | ${num(g.binKhz, 4)} kHz | ` +
-    `g${s.gain} | i${s.integ} | c${s.crop} | F${s.fir} | ${s.rx}`;
+  showFingerprint(s, g, fftw);
   $("condline").textContent = conditionsText(s) || "(nothing recorded)";
   $("cmd").textContent = command(g, s);
   try { localStorage.setItem("scanbuild2", JSON.stringify({ s, chains })); } catch (e) {}

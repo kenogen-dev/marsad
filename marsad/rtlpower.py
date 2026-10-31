@@ -156,6 +156,29 @@ def scan_geometry(lo_mhz, hi_mhz, bin_khz, integration_s, duration_s, crop=CROP,
     }
 
 
+def csv_bin_khz(lo_mhz: float, hi_mhz: float, bin_khz: float, crop: float = CROP) -> float:
+    """The bin width rtl_power will write in its CSV (column 5), in kHz to 4 places, as
+    the sidecar's bin_khz_actual and the fingerprint carry it.
+
+    scan_geometry works in floating point and can differ from it in the 4th decimal
+    (LS: 43.7155 against the CSV's 43.7154), because rtl_power does this in integers:
+    the span divided by the hop count with integer division, the rate truncated to an
+    int, a top above the ceiling taken as 2^31 - 1, and the step printed to 0.01 Hz.
+    Checked against all 17 distinct rtl_power ranges archived by 2026-10-30: 17 of 17.
+    """
+    lower = int(round(lo_mhz * 1e6))
+    upper = min(int(round(hi_mhz * 1e6)), 2 ** 31 - 1)
+    bw_used = 0
+    for hops in range(1, 1500):
+        bw_used = int(((upper - lower) // hops) / (1.0 - crop))
+        if bw_used <= RTL_MAX_SAMPLE_HZ:
+            break
+    e = 0
+    while bw_used / (1 << e) > bin_khz * 1e3:
+        e += 1
+    return round(round(bw_used / (1 << e), 2) / 1e3, 4)
+
+
 def actual_bin_width_khz(csv_path) -> float | None:
     """Read the real bin width rtl_power used, from column 5 of the CSV."""
     try:
