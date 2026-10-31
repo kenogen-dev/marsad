@@ -4,7 +4,7 @@ The guiding aim: **run the station without Claude in the loop.** Claude is for d
 experiments and arguing about results, not for routine operation. Anything you would otherwise
 have to ask it to compute belongs in a tool.
 
-*Updated 2026-10-30. marsad 0.5.0 is released on GitHub (kenogen-dev/marsad) with a Windows zip;
+*Updated 2026-10-31. marsad 0.5.1 is released on GitHub (kenogen-dev/marsad) with a Windows zip;
 everything below is in it.*
 
 ---
