@@ -34,7 +34,11 @@ from marsad import capture_archive as A
 from marsad import catalogue as C
 from marsad import watch as W
 
-from test_watch import V5, Launches, scene, station
+from conftest import copy_station
+from test_watch import station
+
+# the filled station (conftest.filled_template) is built once per worker: keep these on one
+pytestmark = pytest.mark.xdist_group("filled_station")
 
 
 def sha(p: Path) -> str:
@@ -42,16 +46,8 @@ def sha(p: Path) -> str:
 
 
 @pytest.fixture
-def filled(tmp_path):
-    st = station(tmp_path, {"capture_s": 4})
-    cfg = cap.settings(st)
-    rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "test chain", 29.7,
-                     Launches(scene(10.0, 0.4, 2.5, kind="fsk"), 433.92e6), quiet=True,
-                     inline_characterise=True)
-    W.fixed_watch(rec, 433.92e6, 9.0, width_hz=20e3)
-    rec2 = W.Recorder(st, cfg, V5, ["rtl_sdr"], "test chain", 29.7,
-                      Launches(scene(6.0, 0.6, 2.5), 880.5e6), quiet=True)
-    W.fixed_watch(rec2, 880.5e6, 6.0, width_hz=20e3)
+def filled(filled_template, tmp_path):
+    st = copy_station(filled_template, tmp_path / "st")
     con = cap.connect(st)
     ids = {k: [r["id"] for r in con.execute(f"SELECT id FROM captures WHERE {w} ORDER BY id")]
            for k, w in (("written", "iq_status = 'written'"), ("inside", "iq_status = 'inside an earlier capture'"),

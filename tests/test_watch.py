@@ -603,7 +603,7 @@ RADAR_RECIPE = {"store_rate_hz": 2.4e6, "rtl_rate_hz": 2.4e6, "signal_hz": 1265.
 
 
 @pytest.mark.parametrize("target", [None, 1265.44e6])
-def test_a_fresh_watch_uses_the_stored_recipe(tmp_path, target):
+def test_a_fresh_watch_uses_the_stored_recipe(tmp_path, target, monkeypatch):
     """2026-10-28: the morning's capture stored its recipe on a row whose measured centre was
     1265.497 MHz; the 11:35 watch on 1265.44 looked within 20 kHz, missed it and started from
     the defaults. A row from before target_hz existed (None) must match through its own
@@ -620,9 +620,11 @@ def test_a_fresh_watch_uses_the_stored_recipe(tmp_path, target):
     assert cap.recipe_for(con, 1265.44e6)["duration_s"] == 90.0
     assert cap.recipe_for(con, 1263.0e6) is None                 # a different signal
     assert W.capture_len(cfg, cap.recipe_for(con, 1265.44e6)) == 90.0
-    L = Launches(scene(3.0, 0.4, 2.5), 1265.44e6)
+    # what the capture characterises to is not the point here, and it is most of the run time
+    monkeypatch.setattr(W.characterise, "characterise", lambda meta: {"family": "test"})
+    L = Launches(scene(1.6, 0.4, 2.5), 1265.44e6)
     rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "c", 29.7, L, quiet=True)
-    tot = W.fixed_watch(rec, 1265.44e6, 2.0)
+    tot = W.fixed_watch(rec, 1265.44e6, 1.5)
     assert tot["plan"]["source"] == "recipe"
     assert float(L.cmds[0][L.cmds[0].index("-f") + 1]) == pytest.approx(1265.497e6 - 283e3, abs=1)
     new = rec.con.execute("SELECT target_hz FROM captures WHERE id > 1").fetchall()
@@ -726,9 +728,9 @@ def test_second_capture_of_a_run_uses_the_first_ones_recipe(tmp_path):
     st = station(tmp_path, {"capture_s": 4, "cooldown_min": 0.1})
     cfg = cap.settings(st)
     f_sig = 433.96e6
-    L = Launches(scene(60.0, 0.4, 2.5, kind="fsk"), f_sig)
+    L = Launches(scene(44.0, 0.4, 2.5, kind="fsk"), f_sig)
     rec = W.Recorder(st, cfg, V5, ["rtl_sdr"], "c", 29.7, L, quiet=True, inline_characterise=True)
-    W.fixed_watch(rec, 433.92e6, 50.0, width_hz=100e3)
+    W.fixed_watch(rec, 433.92e6, 42.0, width_hz=100e3)
     caps = rec.con.execute("SELECT * FROM captures WHERE iq_status = 'written' ORDER BY started_epoch").fetchall()
     assert len(caps) >= 2
     first = json.loads(caps[0]["recipe"])

@@ -84,16 +84,19 @@ def radar_result(tmp_path_factory):
     return C.characterise(p, rate=FS, freq=1265.44e6)
 
 
+@pytest.mark.xdist_group("radar_synth")      # one worker builds radar_result once
 def test_radar_rotation(radar_result):
     rot = radar_result["pulses"]["rotation"]
     assert rot["period_s"] == pytest.approx(0.5, abs=0.002)
     assert radar_result["repeat"]["period_s"] == pytest.approx(0.5, abs=0.02)
 
 
+@pytest.mark.xdist_group("radar_synth")      # one worker builds radar_result once
 def test_radar_pulse_width(radar_result):
     assert radar_result["pulses"]["width_s"] == pytest.approx(WIDTH, abs=1.5e-6)
 
 
+@pytest.mark.xdist_group("radar_synth")      # one worker builds radar_result once
 def test_radar_staggered_pris(radar_result):
     p = radar_result["pulses"]
     assert p["staggered"]
@@ -104,6 +107,7 @@ def test_radar_staggered_pris(radar_result):
     assert runs[1000] == 4 and runs[1200] == 4    # the pattern holds 4 intervals at each
 
 
+@pytest.mark.xdist_group("radar_synth")      # one worker builds radar_result once
 def test_radar_linear_chirp(radar_result):
     c = radar_result["pulses"]["chirp"]
     assert c["linear"]
@@ -113,6 +117,7 @@ def test_radar_linear_chirp(radar_result):
     assert radar_result["family"] == "pulsed, linear FM chirp (radar-like)"
 
 
+@pytest.mark.xdist_group("radar_synth")      # one worker builds radar_result once
 def test_radar_occupied_band_and_recipe(radar_result):
     o = radar_result["occupied"]
     # the 99 % band spills a little past the sweep (the pulse's own edges)
