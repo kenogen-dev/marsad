@@ -1,0 +1,32 @@
+# Your station: everything particular to you stays out of this repository.
+station.json
+station.local.json
+chain.json
+ROOM_RF.md
+TOOL_ROADMAP.md
+surveys/
+reports/
+recordings/
+occupancy.db
+
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build output from PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Third-party binaries: the RTL-SDR Blog Windows release. Download it from
+# https://github.com/rtlsdrblog/rtl-sdr-blog/releases and unzip into rtl-sdr/
+rtl-sdr/
+
+# Scratch output from rtl_test
+rtl_devices.txt
+rtl_err.txt
+
+# pip install -e . metadata
+*.egg-info/

@@ -1,0 +1,193 @@
+{
+  "_comment": [
+    "Station facts: everything particular to YOUR receivers, rig and measured limits.",
+    "Edit this file. Keys starting with an underscore are notes and are ignored.",
+    "The values shipped here are generic starting points: one R820T-class dongle (most RTL-SDRs) and one E4000.",
+    "Run `marsad config` to see what is loaded and from where."
+  ],
+
+  "rtl_sdr_dir": "rtl-sdr",
+  "_rtl_sdr_dir": "Folder holding rtl_power.exe etc., relative to this file. Searched before PATH.",
+  "_rtl_power_exe": "Optional. Which rtl_power to run: a name (\"rtl_power\" picks the stock build on purpose) or a path relative to this file. Unset, marsad runs rtl_power_gainfix when it is installed (packaging/rtl_power_gainfix/BUILD.md: it keeps the R820T/R860 gain and does not overflow on strong carriers) and the stock rtl_power with a warning when it is not.",
+  "_location": "Set once to record outdoor weather (Open-Meteo, no key) and the sun's elevation in every sidecar's auto_conditions, e.g. {\"location\": {\"lat\": 51.48, \"lon\": -0.01}} in decimal degrees, in station.local.json beside station.json (git ignores it, so your position stays off GitHub; it is laid over this file when marsad loads), west and south negative. Two decimals (~1 km) is plenty. Without it those parts record the reason instead.",
+
+  "retune_ms_per_hop": 47.0,
+  "_retune_ms_per_hop_fftw": "rtl_power_fftw overhead per hop: 59 ms (retune + first read) and 16 ms per extra 1.6 MB buffer read within a hop, built into marsad as a starting figure. Set retune_ms_per_hop_fftw and read_ms_per_buffer_fftw here to override.",
+  "_retune_ms_per_hop": "Time rtl_power loses retuning between hops. It depends on the USB stack: run `marsad calibrate-retune --save` to measure yours.",
+
+  "default_receiver": "r820t",
+  "_default_receiver": "The receiver a command means when none is named. Unset, the first one listed below.",
+  "receivers": {
+    "r820t": {
+      "label": "RTL-SDR with an R820T / R820T2 / R860 tuner (low-IF)",
+      "tuner": "r820t",
+      "range_mhz": [24, 1766],
+      "gaps_mhz": [],
+      "device": 0
+    },
+    "e4000": {
+      "label": "RTL-SDR with an Elonics E4000 tuner (zero-IF)",
+      "tuner": "e4000",
+      "range_mhz": [52, 2200],
+      "gaps_mhz": [[1105.0, 1268.0]],
+      "device": 0,
+      "_gaps_mhz": "Nominal E4000 PLL lock gap. It varies per unit and moves with temperature: measure yours with rtl_test -t."
+    }
+  },
+  "_receivers": "Name them what you like; the name goes in each survey's fingerprint. device = USB index as rtl_test lists them, which is not guaranteed across replugs. tuner picks the gain ladder.",
+
+  "spur_families_mhz": [
+    [28.8, "28.8 MHz SDR clock harmonic"],
+    [480.0, "USB 2.0 (480 Mb/s) harmonic"],
+    [24.0, "24 MHz crystal harmonic"],
+    [25.0, "25 MHz clock harmonic"],
+    [100.0, "100 MHz PCIe clock harmonic"]
+  ],
+  "_spur_families_mhz": "Harmonic families the analyser tags automatically. Order matters: tags are written in this order. Changing the list changes every peaks.csv, so do it between comparison sets, not inside one.",
+
+  "readout_families_mhz": [14.4, 28.8, 24, 25, 100],
+  "_readout_families_mhz": "Families the live view names when you hover a line. An RTL2832U's clock harmonics fall on 14.4 MHz multiples, odd ones included.",
+
+  "detection_floor_db": {"handled": 0.5, "untouched": 0.05},
+  "_detection_floor_db": "Smallest change compare-runs believes, by whether the hardware was touched between runs. Starting figures: repeat a run with nothing touched, and with the dongle moved, to measure your own.",
+
+  "presets": {
+    "fm": {"freq": "87M:108M:25k", "gain": 7.7, "integration": 10, "receiver": "r820t",
+           "note": "Broadcast FM: strong, always there, a quick check that the antenna works"},
+    "air": {"freq": "118M:137M:12.5k", "gain": 29.7, "integration": 10, "receiver": "r820t",
+            "note": "VHF airband"},
+    "adsb": {"freq": "1085M:1095M:12.5k", "gain": 40.2, "integration": 10, "receiver": "r820t",
+             "note": "ADS-B at 1090 MHz, also a positive control for the receive path"},
+    "L": {"freq": "1270M:1700M:25k", "gain": 33.8, "integration": 30, "receiver": "r820t",
+          "note": "L-band detail"},
+    "LS": {"freq": "1270M:2148M:50k", "gain": 29.0, "integration": 30, "receiver": "e4000",
+           "note": "E4000 only: nominal PLL gap to rtl_power's 2147.48 MHz ceiling"},
+    "milair": {"freq": "225M:400M:12.5k", "gain": 29.7, "integration": 30, "receiver": "r820t",
+               "note": "Military air UHF"},
+    "900": {"freq": "902M:935M:5k", "gain": 29.7, "integration": 5, "receiver": "r820t",
+            "note": "ISM + paging"},
+    "wide": {"freq": "52M:1660M:100k", "gain": 29.7, "integration": 60, "receiver": "r820t",
+             "note": "Overview (766 hops, 36 s retune floor)"},
+    "deep": {"freq": "1270M:1371M:25k", "gain": 29.7, "integration": 30, "receiver": "r820t",
+             "note": "100 MHz deep tile; --freq picks which"},
+    "custom": {"freq": "1270M:1700M:50k", "gain": 29.7, "integration": 120, "receiver": "r820t",
+               "note": "custom build; --freq sets the range"},
+    "top": {"engine": "rtl_power_fftw", "freq": "2147M:2187M", "bins": 128, "rate": 2400000, "time": 1,
+            "overlap": 25, "crop": 0.25, "gain": 29.0, "receiver": "e4000",
+            "note": "E4000 only: 2147-2187 MHz, above rtl_power's 2^31 ceiling; 22 hops of 2.4 MHz, 18.75 kHz bins"},
+    "h1": {"engine": "rtl_power_fftw", "freq": "1420.4058M", "bins": 2048, "rate": 2400000, "time": 60,
+           "overlap": 0, "crop": 0.25, "gain": 49.6, "receiver": "r820t",
+           "note": "hydrogen line, one hop centred on 1420.4058 MHz, 1.17 kHz bins, 60 s per spectrum; --baseline FILE for an off-source spectrum"}
+  },
+  "_presets": "Named ranges for `marsad run <preset> <duration>`. Keep `custom` so a hand-built range is recorded as custom rather than masquerading as a preset.",
+
+  "builder_profiles": {},
+  "_builder_profiles": "Extra named profiles the scan builder offers; they emit `custom` to the CLI. Example: {\"baseline\": {\"lo\": 700, \"hi\": 1700, \"bin\": 50, \"gain\": 29.7, \"integ\": 120, \"dur\": [1, \"h\"], \"fw\": 0, \"as\": \"custom\", \"note\": \"one settings profile for every step of a chain test\"}}.",
+
+  "known_mhz": [
+    {"a": 88, "b": 108, "t": "Broadcast FM"},
+    {"a": 118, "b": 137, "t": "VHF airband"},
+    {"a": 137, "b": 138, "t": "Weather satellites"},
+    {"a": 225, "b": 400, "t": "Military air UHF and satcom"},
+    {"a": 1090, "b": 1090, "t": "ADS-B transponders"},
+    {"a": 1176.45, "b": 1176.45, "t": "GPS L5"},
+    {"a": 1227.6, "b": 1227.6, "t": "GPS L2"},
+    {"a": 1240, "b": 1300, "t": "23 cm amateur, secondary to radiolocation"},
+    {"a": 1420.4, "b": 1420.4, "t": "hydrogen line (needs rtl_power_fftw)"},
+    {"a": 1525, "b": 1559, "t": "Inmarsat / MSS downlink"},
+    {"a": 1575.42, "b": 1575.42, "t": "GPS L1"},
+    {"a": 1626.5, "b": 1660.5, "t": "MSS uplink"},
+    {"a": 1755, "b": 1780, "t": "AWS-3 uplink"},
+    {"a": 1850, "b": 1910, "t": "PCS uplink"},
+    {"a": 1920, "b": 1930, "t": "DECT 6.0"},
+    {"a": 2147.484, "b": 2147.484, "t": "rtl_power's 2^31 Hz ceiling", "k": "bad"}
+  ],
+  "_known_mhz": "What is known to be in the band. Shown by the scan builder for whatever range is selected; add what you find. k = bad | spur | (plain).",
+
+  "builder_notes": [
+    {"when": {"tuner": "e4000", "engine": false, "includes": 350}, "level": "warn", "title": "350 MHz",
+     "text": "The E4000 switches between its VHF and UHF inputs at 350.0 MHz, which puts a step in the floor. Never read a level across it as a change in the sky."},
+    {"when": {"tuner": "e4000", "engine": true, "hi_above": 2147.484}, "level": "warn", "title": "Warm-up",
+     "text": "The E4000's whole PLL range slides down as it warms, by 10-20 MHz over an hour of streaming, so the top hops can lock cold and drop out one at a time. Compare rtl_test -t cold and warm on your unit."},
+    {"when": {"tuner": "e4000", "includes": 1090}, "level": "warn", "title": "1090 MHz",
+     "text": "A warm E4000's PLL gap can reach 1090 MHz, and rtl_adsb keeps running through 'PLL not locked' with no clear error. Compare rtl_test -t cold and warm on your unit."}
+  ],
+  "_builder_notes": "Warnings the scan builder shows when a scan matches. when (all must hold): rx, tuner, engine (true = rtl_power_fftw), span [lo, hi] overlaps the scan, includes MHz, hi_above, hi_at_most, gain_above, gain_not, not_load, skip_below (warm-up discard under N min), chain_has / chain_lacks (regex on the chain text), module_on (a chain module id), preset, rx_not, exact [lo, hi].",
+
+  "chain_modules": [
+    {"id": "src", "name": "Antenna", "on": true, "fixed": true},
+    {"id": "notch", "name": "FM notch", "on": false},
+    {"id": "lna", "name": "LNA", "on": false},
+    {"id": "coax", "name": "Coax", "on": true},
+    {"id": "sdr", "name": "", "on": true, "fixed": true},
+    {"id": "usb", "name": "USB cable", "on": true},
+    {"id": "pc", "name": "PC", "on": true, "fixed": true}
+  ],
+  "chain_off_by_receiver": {},
+  "enclosures": ["open bench", "in shielded box", "in shielded box, seam taped"],
+  "enclosure_default": {},
+  "_chain_modules": "The physical rig, in signal order, for the scan builder. The source and the SDR are always present; the rest can be unchecked. enclosures: the three choices the builder's buttons offer for the SDR; enclosure_default: which one each receiver starts on (default the first).",
+
+  "chain_labels": {},
+  "_chain_labels": "Standard names for parts in the Chain tab's palette, by part type, e.g. {\"lna\": \"Bias-tee LNA\"}.",
+
+  "probe": {},
+  "_probe": "Near-field Probe tab, all optional: targets (the devices offered), states, probes, durations_min, attenuators_db, chain_tail (the chain after the probe, by receiver). A probe straight onto a dongle whose bias-tee is on would short it; put a DC block in the chain.",
+
+  "recorder": {
+    "pool": "recordings/captures",
+    "pool_gb": 100,
+    "daily_gb": 20,
+    "serials": {},
+    "ppm": {},
+    "gain_db": {"r820t": 29.7, "e4000": 29.0},
+    "threshold_db": 12,
+    "passes": 2,
+    "ambush_db": 20,
+    "ambush_min": 10,
+    "cooldown_min": 30,
+    "capture_s": 30,
+    "capture_max_s": 120,
+    "keep_min_snr_db": 0,
+    "keep_check_s": 3.0,
+    "hold_s": 1.0,
+    "cw_max_khz": 3.0,
+    "reference_carriers_mhz": [],
+    "band_tiers": [
+      {"lo": 43.6, "hi": 50.0, "tier": "private", "band": "analog cordless phones", "min_bw_khz": 6},
+      {"lo": 150.8, "hi": 162.39, "tier": "private", "band": "VHF land-mobile, pagers, marine", "min_bw_khz": 6},
+      {"lo": 162.4, "hi": 162.55, "tier": "open", "band": "NOAA weather radio"},
+      {"lo": 162.56, "hi": 174.0, "tier": "private", "band": "VHF land-mobile", "min_bw_khz": 6},
+      {"lo": 380.0, "hi": 400.0, "tier": "private", "band": "trunked land-mobile", "min_bw_khz": 6},
+      {"lo": 406.1, "hi": 420.0, "tier": "private", "band": "federal land-mobile", "min_bw_khz": 6},
+      {"lo": 450.0, "hi": 512.0, "tier": "private", "band": "UHF land-mobile and T-band", "min_bw_khz": 6},
+      {"lo": 617.0, "hi": 652.0, "tier": "private", "band": "600 MHz cellular downlink", "min_bw_khz": 150},
+      {"lo": 663.0, "hi": 698.0, "tier": "private", "band": "600 MHz cellular uplink", "min_bw_khz": 150},
+      {"lo": 698.0, "hi": 769.0, "tier": "private", "band": "700 MHz cellular", "min_bw_khz": 150},
+      {"lo": 769.0, "hi": 775.0, "tier": "private", "band": "700 MHz public-safety land-mobile", "min_bw_khz": 6},
+      {"lo": 775.0, "hi": 799.0, "tier": "private", "band": "700 MHz cellular", "min_bw_khz": 150},
+      {"lo": 799.0, "hi": 824.0, "tier": "private", "band": "800 MHz public-safety / SMR land-mobile", "min_bw_khz": 6},
+      {"lo": 824.0, "hi": 849.0, "tier": "private", "band": "850 cellular uplink", "min_bw_khz": 150},
+      {"lo": 851.0, "hi": 869.0, "tier": "private", "band": "800 MHz land-mobile", "min_bw_khz": 6},
+      {"lo": 869.0, "hi": 894.0, "tier": "private", "band": "850 cellular downlink", "min_bw_khz": 150},
+      {"lo": 896.0, "hi": 902.0, "tier": "private", "band": "900 MHz land-mobile / narrowband PCS", "min_bw_khz": 6},
+      {"lo": 929.0, "hi": 932.0, "tier": "private", "band": "pagers", "min_bw_khz": 10},
+      {"lo": 935.0, "hi": 941.0, "tier": "private", "band": "900 MHz land-mobile / paging", "min_bw_khz": 6},
+      {"lo": 1710.0, "hi": 1780.0, "tier": "private", "band": "AWS cellular uplink", "min_bw_khz": 150},
+      {"lo": 1850.0, "hi": 1915.0, "tier": "private", "band": "PCS cellular uplink", "min_bw_khz": 150},
+      {"lo": 1920.0, "hi": 1930.0, "tier": "private", "band": "DECT 6.0 cordless phones", "min_bw_khz": 1000},
+      {"lo": 1930.0, "hi": 2000.0, "tier": "private", "band": "PCS cellular downlink", "min_bw_khz": 150},
+      {"lo": 2110.0, "hi": 2200.0, "tier": "private", "band": "AWS cellular downlink", "min_bw_khz": 150}
+    ]
+  },
+  "_recorder": "marsad watch. pool: folder for captures, relative to this file or absolute; pool_gb and daily_gb are soft caps, nothing is ever deleted - when full, events are still catalogued and fingerprinted but no IQ is written. roles: {\"surveyor\": name, \"recorder\": name}, which receiver does what in `watch survey` (default the first two receivers). serials: which dongle is which receiver, matched by serial number, e.g. {\"r820t\": \"00000001\"}; optional with one dongle, needed when two share a tuner type. ppm: each radio's measured frequency error by serial (reported minus true, per million), 0 until measured. band_tiers: first matching row wins; anything not listed is open. A private band NEVER has its raw IQ written to disk - only a 20 ms x 1 kHz power spectrogram, flagged PRIVATE: do not decode. The table shipped here follows North American allocations: if you are elsewhere, add your own cellular, paging, cordless and land-mobile bands before recording. reference_carriers_mhz: steady known carriers you choose, captured once a day, and never treated as clock artefacts.",
+
+  "defaults": {
+    "antenna_shape": "dipole",
+    "whip_length_mm": 0,
+    "lna": "none",
+    "filter": "none",
+    "chain_order": "antenna > coax > SDR > USB > PC"
+  },
+  "_defaults": "Last-used answers to the sidecar questions. `marsad run` rewrites this section after every run; everything else in this file is left alone."
+}

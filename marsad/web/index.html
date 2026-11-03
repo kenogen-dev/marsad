@@ -1,0 +1,2871 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR station</title>
+<style>
+:root{--bg:#0a0e13;--panel:#121a22;--line:#253442;--ink:#dde6ee;--dim:#8599a8;--accent:#4fd3e8;--amber:#e8b14f;--green:#4fcf96;--muted:#c58bff}
+#ot-spec,.ot-rec canvas{height:170px}#ot-fall{height:110px}
+.ot-h{font-size:12px;color:var(--ink);margin:2px 0 6px}.ot-h b{color:var(--accent);font-weight:600}
+.ot-sub{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}.ot-sub:first-of-type{border-top:0;margin-top:0;padding-top:0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px ui-sans-serif,system-ui,sans-serif}
+header{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:14px;margin:0;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.s{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+.s b{color:var(--accent);font-weight:600}
+main{padding:12px 16px}
+.wrap{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px;margin-bottom:12px}
+.lab{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+/* collapsible panels: the title line is the bar, a chevron button at its start */
+.lab.ptitle{cursor:pointer;user-select:none}
+.pcol{background:none;border:1px solid transparent;border-radius:3px;color:var(--dim);font:12px/1 ui-monospace,monospace;
+  width:20px;height:18px;padding:0;margin:0 6px 0 0;vertical-align:baseline;cursor:pointer}
+.pcol:hover,.pcol:focus-visible{border-color:var(--line);color:var(--ink)}
+.pcol::before{content:'\25BE';display:inline-block;transition:transform .12s}
+.wrap.collapsed .pcol::before{transform:rotate(-90deg)}
+.wrap.collapsed>:not(.ptitle){display:none!important}
+.wrap.collapsed>.ptitle{margin-bottom:0}
+.key{display:flex;flex-wrap:wrap;gap:6px 15px;margin:-2px 0 8px;font-size:11px;color:var(--dim)}
+.key span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.key i{display:inline-block;width:16px;height:2px;flex:none;border-radius:1px}
+.key i.dash{background:repeating-linear-gradient(90deg,rgba(133,153,168,.65) 0 3px,transparent 3px 7px)}
+.key i.vert{width:2px;height:11px}
+.key label{display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.key input{margin:0;accent-color:var(--accent)}
+.key i.tri{width:0;height:0;background:none;border-radius:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid}
+.key .pk{margin-left:auto;color:var(--dim)}
+canvas{display:block;width:100%;image-rendering:pixelated}
+#spec{height:300px}
+.key.under{margin:10px 0 0;gap:8px 34px;justify-content:space-between;font-size:11.5px}
+.key.under.marks{padding-top:8px;border-top:1px solid var(--line)}
+.key.under label{padding:2px 0}
+.key.under .pk{font-size:11.5px;color:var(--ink)}
+#fall{height:380px}
+#trend{height:110px}
+.ax{display:flex;justify-content:space-between;font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin-top:4px}
+.xs{position:relative;height:14px;margin-top:3px;font-family:ui-monospace,monospace;font-size:10px;color:var(--dim)}
+.ro{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);margin-top:6px;min-height:16px}
+/* fixed room for up to 4 lines (frequency, waterfall row, a peak that wraps once), so hovering
+   over signals never pushes the panels below up and down */
+#readout{line-height:1.4;height:calc(4 * 1.4em);overflow-y:auto}
+/* the same for the other Scan-tab lines that fill in or change length while you watch */
+#pk{display:inline-block;min-height:1.4em}
+#key-sel{min-height:1.4em}
+#vinfo{display:block;float:none!important;margin-top:3px}
+#vinfo .vstate{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.3em}
+#ly-int{line-height:1.4;min-height:calc(2 * 1.4em)}
+.ot-rec .ot-h{line-height:1.4;min-height:calc(2 * 1.4em)}
+.ro b{color:var(--accent);font-weight:600}
+canvas{cursor:crosshair}
+.tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;scrollbar-width:thin}
+.tab{flex:0 0 auto}
+.tab{padding:9px 16px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+     cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:5px 5px 0 0;user-select:none}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--accent);background:var(--bg);border-color:var(--line);margin-bottom:-1px}
+@media (max-width:700px){.tabs{padding:0 8px}.tab{padding:9px 10px}}
+/* phone width: long one-line texts wrap, and a
+   dropdown is never wider than the screen, whatever its longest option */
+@media (max-width:700px){#pk{white-space:normal}select{max-width:calc(100vw - 120px);min-width:0 !important}.frm input.wide{min-width:0 !important;max-width:calc(100vw - 110px)}label{max-width:100%;box-sizing:border-box}}
+.pane{display:none}
+.pane.on{display:block}
+.pick{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
+.pick select{width:auto;min-width:340px;max-width:100%}
+.pick .lv{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ok,#4fcf96)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:right;padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+td{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+tbody tr.go{cursor:pointer}
+tbody tr.go:hover{background:var(--bg)}
+pre.md{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;
+       line-height:1.6;color:var(--ink);padding:16px;margin:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px}
+.stale{background:#e8b14f}
+.key[hidden]{display:none}
+.fctl{clear:both;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:12px;color:var(--dim);margin:0 0 6px}
+.fctl .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.fctl label{display:inline-flex;align-items:center;gap:4px}
+.fctl input[type=number]{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:1px 4px;font:12px ui-monospace,Consolas,monospace}
+.fctl .btn{padding:2px 8px;font-size:12px}
+#builder{width:100%;height:calc(100vh - 84px);border:0;background:var(--bg);display:block}
+.note{font-size:12px;color:var(--dim);margin:0 0 8px}
+.term{color:#e8b14f}
+.lv{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4fcf96}
+/* Probe tab */
+.frm{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.frm label{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim)}
+.frm label[hidden]{display:none}
+.frm input,.frm select,.frm textarea{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font:13px ui-sans-serif,system-ui,sans-serif}
+.frm input[type=number]{width:90px;font-family:ui-monospace,Consolas,monospace}
+.frm input.wide{min-width:320px;flex:1}
+.frm select{min-width:200px}
+.btn{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:6px 14px;font:13px ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.on{border-color:var(--accent);color:var(--accent)}
+.btn.go{background:#1b4a3a;border-color:#4fcf96;color:#dff7ea;font-weight:600;padding:8px 22px}
+.btn.halt{background:#4a2d1b;border-color:#e8b14f;color:#fbe9c8;font-weight:600;padding:8px 22px}
+.btn:disabled{opacity:.4;cursor:default}
+pre.cmd{white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,Consolas,monospace;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;margin:8px 0}
+pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:var(--dim);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;margin:8px 0 0;max-height:220px;overflow:auto}
+.warn{color:#e8b14f;font-size:12.5px}
+.bad{color:#ff8a65;font-size:12.5px}
+.good{color:#4fcf96}
+.state{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.state b{color:var(--accent);font-weight:600}
+#pb-map table td{white-space:normal;text-align:left;font-size:12px}
+#pb-map table th{text-align:left}
+/* Hunt mode: a readout big enough to glance at from across the room */
+.hud{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
+.hud-l{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.hud-v{font:600 44px/1.1 ui-monospace,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+.hud-v.big{font-size:68px;color:var(--accent)}
+.hud-u{font-size:12px;color:var(--dim)}
+.bar{height:10px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden;margin-top:10px}
+.bar div{height:100%;width:0;background:linear-gradient(90deg,#4fcf96,#e8b14f 60%,#ff8a65);transition:width .3s}
+/* Hunt meter: history strip, mini spectrum, and the big arm's-length mode */
+.bar{position:relative}
+.bar i{position:absolute;top:-2px;bottom:-2px;width:3px;margin-left:-1px;background:var(--ink);display:none}
+#hu-meter{margin-top:10px}
+#hu-meter canvas{height:90px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
+#hu-meter canvas#hu-spec{height:110px}
+.hm-l{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin:8px 0 3px}
+.hm-big{display:none}
+#hu-meter.big{position:fixed;inset:10px;z-index:60;display:flex;flex-direction:column;padding:16px 20px;border:2px solid var(--line);
+  border-radius:10px;background:var(--hm-heat,var(--panel))}
+#hu-meter.big .hm-big{display:block}
+#hu-meter.big .hm-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.hm-what{font-size:clamp(14px,2.4vh,22px);color:var(--ink);opacity:.85}
+.hm-v{font:700 clamp(90px,24vh,260px)/1 ui-monospace,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums;margin:4px 0}
+.hm-sub{font:500 clamp(16px,3vh,30px)/1.2 ui-monospace,Consolas,monospace;color:var(--ink);opacity:.85}
+#hu-meter.big .bar{height:clamp(28px,6vh,60px);border-radius:8px;margin-top:14px}
+#hu-meter.big .bar i{width:6px;margin-left:-3px}
+#hu-meter.big canvas{flex:1;min-height:60px;height:auto}
+#hu-meter.big .hm-l{font-size:13px;color:var(--ink);opacity:.8}
+#hu-cands table td{font-size:12px;text-align:right;white-space:nowrap}
+#hu-cands table td.l,#hu-cands table th{text-align:left}
+#hu-cands tr.chosen{background:rgba(79,211,232,.12)}
+#rm-out table td,#rm-loud table td{font-size:12px;text-align:right;white-space:nowrap}
+#rm-out table td.l,#rm-out table th,#rm-loud table td.l,#rm-loud table th{text-align:left}
+.say{font-size:14px;margin:10px 0 4px}
+.say b{color:var(--accent)}
+/* Chain tab */
+.pal{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.pal .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-right:-6px}
+.chip{display:inline-block;padding:5px 10px;border:1px dashed var(--line);border-radius:5px;background:var(--bg);font-size:12.5px;cursor:grab;user-select:none}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.rail{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;padding:10px 4px;min-height:96px;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+.node{position:relative;min-width:120px;max-width:200px;padding:8px 10px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:grab;user-select:none;margin:4px 0}
+.node:hover{border-color:var(--accent)}
+.node.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.node.src{background:#1b4a3a}
+.node.rx{background:#2a2d4a}
+.node .t{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.node .n{font-size:13px;color:var(--ink);margin-top:2px;word-break:break-word}
+.node .d{font-size:11px;color:var(--dim);margin-top:2px;word-break:break-word;max-height:42px;overflow:hidden}
+.slot{width:26px;min-height:60px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:16px;flex:none;border-radius:4px;margin:4px 0}
+.slot.over{background:rgba(79,211,232,.25);color:var(--accent)}
+.slot.end{width:60px;border:1px dashed var(--line);font-size:11px;letter-spacing:.06em}
+.node.drag,.chip.drag{opacity:.45}
+.ed{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-start}
+.ed label{display:flex;flex-direction:column;gap:4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.ed input,.ed select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font:13px ui-sans-serif,system-ui,sans-serif;min-width:200px}
+.ed input.sm{min-width:90px}
+.cur{color:#4fcf96;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+/* Captures tab */
+.recbar{padding:6px 16px;border-bottom:1px solid var(--line);background:#10261f;color:#dff7ea;font-size:12.5px}
+.recbar b{color:#4fcf96;font-weight:600}
+.recbar .gone{color:#e8b14f}
+.cs-rec{font-size:12.5px;margin:8px 0 0;line-height:1.7}
+.cs-rec b{color:var(--accent);font-weight:600}
+.cs-rec .dim{color:var(--muted)}
+.cs-strip{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center}
+.cs-meter{min-width:240px;flex:1}
+.cs-meter .bar{margin-top:4px}
+.cs-meter .bar div{transition:none}
+.badge{display:inline-block;font:600 10px/1.5 ui-sans-serif,system-ui,sans-serif;letter-spacing:.06em;padding:0 6px;border-radius:3px;border:1px solid var(--line);margin-right:4px;white-space:nowrap}
+.badge.open{color:#4fcf96;border-color:#2c6b52}
+.badge.priv{color:#ffb4a0;border-color:#8a4a3a;background:#2c1813}
+.badge.anom{color:#fbe9c8;border-color:#e8b14f;background:#3a2c14}
+.badge.iq{color:var(--dim)}
+.badge.iq.w{color:var(--accent);border-color:#2d6a75}
+.badge.arch{color:#c9b8ff;border-color:#5a4a8a;background:#1d1830}
+.badge.g-strong{color:#0d1a14;background:#4fcf96;border-color:#4fcf96}
+.badge.g-medium{color:#c8f0dc;border-color:#2c6b52;background:#13281f}
+.badge.g-weak{color:#e8d9b0;border-color:#6b5a2c}
+.badge.g-empty{color:var(--muted);border-style:dashed}
+#cs-ar{margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:6px}
+#cs-ar .opt{display:block;margin:3px 0}
+#cs-ar-plan{margin-top:8px}
+#cs-ar-plan table{border-collapse:collapse;font-size:12px}
+#cs-ar-plan td{padding:1px 8px 1px 0}
+/* The list sits under the event viewer in its own scroll box, so clicking through events
+   keeps the viewer in sight. Shorter on a phone.
+   The viewer scrolls inside itself too: an event's page (fingerprint, facts, waterfall,
+   envelope, recipe, report) is far taller than a screen, and below it the list would be
+   out of reach again. Scrolled past the strip, viewer and list share one screen. */
+#cs-ev{max-height:50vh;overflow:auto}
+#cs-groups{max-height:min(32vh,460px);overflow:auto;border:1px solid var(--line);border-radius:6px;padding:0 6px;outline:none}
+#cs-groups:focus-visible{border-color:var(--accent)}
+@media (max-width:700px){#cs-ev{max-height:52vh}#cs-groups{max-height:28vh}}
+.cs-grp{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:var(--bg)}
+.cs-grp>.h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;padding:9px 12px;cursor:pointer}
+.cs-grp>.h:hover{background:var(--panel)}
+.cs-grp>.h b{font:600 15px ui-monospace,Consolas,monospace;color:var(--accent)}
+.cs-grp>.h .fam{color:var(--ink)}
+.cs-grp>.h .cnt{color:var(--dim);font-size:12.5px}
+.cs-grp .ev{display:none;padding:0 6px 6px}
+.cs-grp .ev thead th{position:sticky;top:0;z-index:1;background:var(--bg)}
+.cs-grp.open .ev{display:block}
+.cs-grp tr.sel{background:rgba(79,211,232,.12)}
+.cs-grp tr.picked td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+.cs-grp td.ck,.cs-grp th.ck{width:22px;padding-right:0}
+.cs-grp td.sz{text-align:right;font-family:ui-monospace,Consolas,monospace;white-space:nowrap}
+.cs-grp td.sz .in{color:var(--dim);font-family:ui-sans-serif,system-ui,sans-serif;font-size:11.5px}
+.cs-grp>.h .gck{margin:0 2px 0 0;align-self:center}
+.cs-grp>.h .gsz{font:600 12.5px ui-monospace,Consolas,monospace;color:var(--ink)}
+.cs-filt{gap:8px 16px}
+.cs-filt select{min-width:0}
+.cs-filt input[type=date],.cs-filt input[type=time]{font-family:ui-monospace,Consolas,monospace}
+.cs-selbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:4px 0 8px;font-size:12.5px}
+.cs-selbar #cs-seln b{color:var(--accent)}
+#cs-bk{margin:0 0 10px;padding:10px;border:1px solid var(--amber);border-radius:6px}
+#cs-bk .opt{display:block;margin:3px 0}
+#cs-bk-plan table{border-collapse:collapse;font-size:12px}
+#cs-bk-plan td,#cs-bk-plan th{padding:1px 10px 1px 0;text-align:left}
+#cs-bk-plan td.n{text-align:right;font-family:ui-monospace,Consolas,monospace}
+#cs-ev canvas{height:220px;background:var(--bg);border:1px solid var(--line);border-radius:4px;image-rendering:auto;cursor:default}
+#cs-ev canvas.env{height:120px}
+#cs-au{margin:2px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:6px}
+#cs-au-pos{accent-color:var(--accent)}
+#cs-ev .cs-plot{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+#cs-ev .cs-plot canvas{border:0;border-radius:0}
+#cs-ev canvas.cs-ov{position:absolute;left:0;top:0;width:100%;height:100%;background:transparent;cursor:crosshair;user-select:none;-webkit-user-select:none}
+#cs-wf-o{touch-action:none}#cs-env-o{touch-action:pan-y}
+#cs-au-sel{margin:4px 0 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#cs-au-sel[hidden]{display:none}
+#cs-au-sel b{color:var(--amber);font-weight:600}
+.cs-facts td{text-align:left;white-space:normal;font-size:12px}
+.cs-facts td:first-child{color:var(--dim);width:170px;font-family:ui-sans-serif,system-ui,sans-serif}
+.cs-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:12px}
+</style></head><body>
+<header>
+  <h1><span class="dot" id="dot"></span>SDR station</h1>
+  <div class="s" id="file">—</div>
+  <div class="s">sweeps <b id="n">0</b></div>
+  <div class="s">last <b id="last">—</b></div>
+  <div class="s">floor <b id="floor">—</b> dB</div>
+  <div class="s">peak <b id="peak">—</b> dB</div>
+  <div class="s" title="estimated from the clock: rtl_power walks the span once per interval">tuned <b id="cur">—</b></div>
+  <div class="s">left <b id="eta">—</b></div>
+  <div class="s" id="fin"></div>
+  <div class="s" id="meta">—</div>
+  <div class="s" id="engine" hidden style="color:#e8b14f" title=""></div>
+  <button class="btn halt" id="scan-stop" hidden title="Ask the recorder to finish the pass in progress and stop; the run is then analysed and archived as usual">Stop run</button>
+</header>
+<div class="tabs">
+  <div class="tab on" data-pane="scan">Scan</div>
+  <div class="tab" data-pane="builder">Builder</div>
+  <div class="tab" data-pane="archive">Archive</div>
+  <div class="tab" data-pane="captures">Captures</div>
+  <div class="tab" data-pane="probe">Probe</div>
+  <div class="tab" data-pane="chain">Chain</div>
+  <div class="tab" data-pane="roadmap">Roadmap</div>
+</div>
+<div class="recbar" id="rec-bar" hidden title="marsad watch reports here every 2 s. A fixed watch writes no survey file, so the Scan tab alone would look idle."></div>
+
+<div class="pane on" id="pane-scan">
+<div class="pick">
+  <label for="survey" style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">Survey</label>
+  <select id="survey"></select>
+  <span class="lv" id="islive"></span>
+</div>
+<main>
+  <div class="wrap"><div class="lab">Spectrum — latest sweep, with max-hold</div>
+    <canvas id="spec"></canvas><div class="xs" id="xs"></div>
+    <div class="ro" id="readout">&nbsp;</div>
+    <div class="key under">
+      <span><i style="background:#4fd3e8;height:3px"></i>latest complete sweep</span>
+      <span><i style="background:rgba(79,211,232,.45)"></i>sweep in progress</span>
+      <span><i style="background:rgba(232,177,79,.55)"></i>max-hold — highest seen at each frequency</span>
+      <span><i class="dash"></i>noise floor</span>
+      <span><i class="vert" style="background:#e8b14f"></i>where the tuner is now</span>
+    </div>
+    <div class="key under marks" title="Detections: max-hold at least the threshold above the latest sweep's floor, tagged the way the analyser tags them. The report is the authority; this is its preview.">
+      <label><input type="checkbox" id="mk-sig"><i class="tri" style="border-bottom-color:#4fcf96"></i>untagged detection — possible signal</label>
+      <label><input type="checkbox" id="mk-spur"><i class="tri" style="border-bottom-color:#e8b14f"></i>known spur family</label>
+      <label><input type="checkbox" id="mk-art"><i class="tri" style="border-bottom-color:#8599a8"></i>hop-centre DC spike / hop-wide impulse</label>
+      <label><input type="checkbox" id="mk-grid"><i class="vert" style="background:rgba(232,177,79,.6);height:7px"></i>spur family grid (ticks at the top)</label>
+      <label><input type="checkbox" id="mk-hop"><i class="vert" style="background:rgba(133,153,168,.7);height:5px"></i>hop centres (ticks at the bottom)</label>
+      <span id="key-refused" hidden><i style="background:repeating-linear-gradient(135deg,rgba(232,120,120,.55) 0 2px,transparent 2px 5px);height:10px;width:18px;border:1px solid rgba(232,120,120,.6)"></i>hop the tuner refused (PLL would not lock): no data there</span>
+    </div>
+    <div class="key under" id="key-sel" style="visibility:hidden"><span><i style="background:#c58bff;height:3px"></i><span id="key-sel-t">selected sweep</span></span>
+      <a href="#" id="sel-clear" style="color:var(--accent)">clear</a></div>
+    <div class="key under"><span class="pk" id="pk" style="margin-left:0"></span></div></div>
+  <div class="wrap" id="ot"><div class="lab">Second radio — whatever else is recording right now</div>
+    <div class="note" id="ot-none" style="margin:0">Second radio: checking…</div>
+    <div class="ot-sub" id="ot-run" hidden>
+      <div class="ot-h" id="ot-run-h"></div>
+      <canvas id="ot-spec"></canvas><div class="xs" id="ot-xs"></div>
+      <canvas id="ot-fall" style="margin-top:6px"></canvas>
+      <div class="key under">
+        <span><i style="background:var(--accent);height:3px"></i>latest complete sweep</span>
+        <span><i style="background:var(--muted)"></i>median of the sweeps held here</span>
+        <span><i style="background:var(--amber);opacity:.6"></i>max-hold</span>
+        <span>waterfall: newest at the top, last 120 sweeps</span>
+      </div>
+    </div>
+    <div id="ot-recs"></div>
+  </div>
+  <div class="wrap"><div class="lab">Waterfall — newest at the top, # = sweep number and its start time<span id="vinfo" style="float:right;font-weight:normal;opacity:.75"></span></div>
+    <div class="fctl">
+      <span class="grp">sweep height</span><span id="fh-btns"></span>
+      <span class="grp" style="margin-left:14px">layers</span>
+      <label title="The floor of each sweep on its own: a running median over about 2 MHz of that sweep, so it follows the floor moving in time"><input type="checkbox" id="ly-noise" checked>noise</label>
+      <label title="Power above that sweep's floor, where it is at least the threshold over it"><input type="checkbox" id="ly-signal" checked>signal ≥ floor +<input type="number" id="ly-thr" value="6" min="0" max="40" step="1" style="width:46px"> dB</label>
+      <label title="The receiver's own lines (14.4 MHz clock family, hop-centre DC spikes) and, when one matches, a terminated run's floor"><input type="checkbox" id="ly-internal" checked>internal</label>
+      <span class="note" id="ly-note" style="margin:0"></span>
+    </div>
+    <canvas id="fall"></canvas><div class="xs" id="xf"></div>
+    <div class="note" id="ly-int" style="margin:4px 0 0"></div></div>
+  <div class="wrap"><div class="lab">Whole-sweep median, per sweep</div>
+    <canvas id="trend"></canvas>
+    <div class="ax"><span id="t0">—</span><span id="t1">—</span></div></div>
+</main>
+</div>
+
+<div class="pane" id="pane-builder">
+  <iframe id="builder" title="Scan builder"></iframe>
+</div>
+
+<div class="pane" id="pane-archive">
+  <main>
+    <div class="wrap">
+      <div class="lab">Every survey in surveys/ — click a row to open it on the Scan tab</div>
+      <div style="overflow-x:auto"><table id="arch"><tbody></tbody></table></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">occupancy.db — archived surveys with their comparability fingerprint</div>
+      <p class="note" id="dbnote">loading…</p>
+      <div style="overflow-x:auto"><table id="dbsurveys"><tbody></tbody></table></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Frequencies seen in at least two antenna surveys — the persistent set</div>
+      <div style="overflow-x:auto"><table id="dbseen"><tbody></tbody></table></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-captures">
+  <main>
+    <div class="wrap">
+      <div class="lab">Recorder pool and today's budget — nothing here is ever deleted automatically</div>
+      <div class="cs-strip">
+        <div class="cs-meter"><div class="s" id="cs-pool">pool —</div><div class="bar"><div id="cs-poolbar"></div></div></div>
+        <div class="cs-meter"><div class="s" id="cs-day">today —</div><div class="bar"><div id="cs-daybar"></div></div></div>
+      </div>
+      <div class="cs-rec" id="cs-arch">archive: —</div>
+      <div class="cs-rec" id="cs-status">recorder: —</div>
+    </div>
+    <div class="wrap" id="cs-ev" hidden>
+      <div class="lab"><span id="cs-ev-t">Event</span></div>
+      <div id="cs-ev-badges" style="margin-bottom:8px"></div>
+      <div class="cs-two">
+        <div>
+          <div class="hm-l">Fingerprint: power at 20 ms x ~1 kHz, dB over the floor (time runs down)</div>
+          <canvas id="cs-fp"></canvas>
+          <div class="ax"><span id="cs-fp-l">—</span><span id="cs-fp-r">—</span></div>
+        </div>
+        <div><table class="cs-facts"><tbody id="cs-facts"></tbody></table></div>
+      </div>
+      <div id="cs-priv" class="say" hidden><b>PRIVATE: do not decode.</b> This band carries private communications, so the recorder kept
+        only the power fingerprint above. No IQ was ever written for it, and there is nothing to play or export.</div>
+      <div id="cs-iqbox" hidden>
+        <div id="cs-au">
+          <div class="hm-l">Listen to the capture — demodulated on the station, streamed, never saved</div>
+          <div class="frm">
+            <label>Mode <select id="cs-au-mode">
+              <option value="am">AM</option><option value="nfm">narrow FM</option>
+              <option value="envelope">pulse / envelope (rhythm)</option></select></label>
+            <label title="where in the capture's band to listen, from its centre">Offset <input type="number" id="cs-au-off" step="0.5" value="0" style="width:84px"> kHz</label>
+            <button class="btn" id="cs-au-play">▶ Play</button>
+            <button class="btn" id="cs-au-stop">■ Stop</button>
+            <label>Volume <input type="range" id="cs-au-vol" min="0" max="1" step="0.05" value="0.8"></label>
+          </div>
+          <div class="frm" style="margin-top:4px">
+            <input type="range" id="cs-au-pos" min="0" max="1" step="0.1" value="0" style="flex:1;min-width:160px">
+            <span class="note" id="cs-au-t" style="margin:0">0.0 s</span>
+          </div>
+          <div class="note" id="cs-au-msg" style="margin:2px 0 0"></div>
+          <div class="note" id="cs-au-sel" hidden><span id="cs-au-sel-t"></span><button class="btn" id="cs-au-clr" title="Esc does this too">✕ Clear selection</button></div>
+          <div class="note" id="cs-au-dem" style="margin:2px 0 0"></div>
+          <div class="note" style="margin:2px 0 0">Click either plot to play from there. Drag on the envelope for a time range, or a box on the waterfall to hear only that signal.</div>
+          <audio id="cs-au-el" preload="none"></audio>
+        </div>
+        <div class="hm-l" id="cs-wf-t">IQ waterfall</div>
+        <div class="cs-plot"><canvas id="cs-wf"></canvas><canvas id="cs-wf-o" class="cs-ov"></canvas></div>
+        <div class="ax"><span id="cs-wf-l">—</span><span id="cs-wf-c">—</span><span id="cs-wf-r">—</span></div>
+        <div class="hm-l">Envelope over time: peak (bright) and mean power, dBFS</div>
+        <div class="cs-plot"><canvas id="cs-env" class="env"></canvas><canvas id="cs-env-o" class="cs-ov"></canvas></div>
+        <div class="ax"><span>0 s</span><span id="cs-env-r">—</span></div>
+        <div class="frm" style="margin-top:10px">
+          <button class="btn" id="cs-x-wav" title="16-bit stereo I/Q WAV named baseband_&lt;Hz&gt;Hz_..., which SDR++'s File source opens and tunes from the name">Export WAV for SDR++</button>
+          <button class="btn" id="cs-x-cf32" title="complex float32 .cf32 plus a SigMF .sigmf-meta, for Inspectrum, URH and GNU Radio">Export .cf32 + SigMF</button>
+          <span class="note" id="cs-x-out" style="margin:0"></span>
+        </div>
+      </div>
+      <div id="cs-ar">
+        <div id="cs-ar-arch" hidden></div>
+        <div id="cs-ar-new">
+          <button class="btn" id="cs-ar-open" title="zip chosen files into the archive folder, check the zip, then take them out of the pool">Archive…</button>
+          <span class="note" style="margin:0">keep this for good without it counting against the pool</span>
+          <div id="cs-ar-dlg" hidden style="margin-top:8px">
+            <div class="hm-l">What to archive</div>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="event" checked> this event only <span class="note" style="margin:0">(if it owns a capture, the events inside that capture come too)</span></label>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="capture"> this capture and every event inside it</label>
+            <label class="opt"><input type="radio" name="cs-ar-scope" value="group"> the whole signal group</label>
+            <div class="hm-l" style="margin-top:6px">Files</div>
+            <label class="opt"><input type="checkbox" checked disabled> SigMF data + meta and the characterise report (always, for events with IQ)</label>
+            <label class="opt"><input type="checkbox" id="cs-ar-fp" checked> fingerprints: also leave a copy in the pool (small; they stay quick to view). Untick to move them into the zip too.</label>
+            <label class="opt"><input type="checkbox" id="cs-ar-ex"> exports (WAV / cf32). Off by default: they can be made again from the SigMF. Left out, they stay in the pool.</label>
+            <div class="frm" style="margin-top:6px">
+              <label>Label <input id="cs-ar-label" placeholder="e.g. keeper" maxlength="40"></label>
+              <label style="flex:1">Note <input id="cs-ar-note" style="width:100%" placeholder="why this one is worth keeping"></label>
+            </div>
+            <div class="frm"><button class="btn" id="cs-ar-preview">Show what would move</button>
+              <button class="btn" id="cs-ar-cancel">Cancel</button></div>
+            <div id="cs-ar-plan"></div>
+          </div>
+        </div>
+        <div class="note" id="cs-ar-out" style="margin:6px 0 0"></div>
+      </div>
+      <div id="cs-more" class="cs-two" style="margin-top:12px"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Every event the recorder catalogued, grouped by signal — click a signal to open its events, an event to see it above (↑ ↓ move through the open events)</div>
+      <div class="frm cs-filt" style="margin-bottom:8px">
+        <label>Dates <input type="date" id="cs-d0"> to <input type="date" id="cs-d1"></label>
+        <label title="local time; a range like 22:00 to 05:00 runs past midnight">Time of day <input type="time" id="cs-t0"> to <input type="time" id="cs-t1"></label>
+        <label>MHz <input type="number" id="cs-lo" step="0.001" placeholder="from"> to <input type="number" id="cs-hi" step="0.001" placeholder="to"></label>
+        <label title="What the recorder itself measured: the characteriser's SNR, else the recorder's event peak. Strong 20 dB or more, medium 12-20, weak 6-12, empty under 6 or nothing the characteriser could use.">Strength <select id="cs-grade">
+          <option value="">any</option><option value="strong">strong (20 dB+)</option><option value="strong,medium">strong or medium</option>
+          <option value="medium">medium (12-20)</option><option value="weak">weak (6-12)</option><option value="weak,empty">weak or empty</option>
+          <option value="empty">empty (&lt;6)</option><option value="ungraded">not graded</option></select></label>
+        <label>Family <select id="cs-family"><option value="">any</option><option value="none">not characterised</option></select></label>
+        <label>Content <select id="cs-content"><option value="">any</option><option value="iq">has IQ</option><option value="fp">fingerprint only</option></select></label>
+        <label title="what the event itself takes in the pool; an event inside a capture counts its fingerprint only">Size ≥ <input type="number" id="cs-min_mb" min="0" step="10" placeholder="MB" style="width:70px"> MB</label>
+        <label>Band <select id="cs-tier"><option value="">any</option><option value="open">OPEN</option><option value="private">PRIVATE</option></select></label>
+        <label><input type="checkbox" id="cs-anomaly"> ANOMALY only</label>
+        <label>Archived <select id="cs-archived"><option value="">any</option><option value="no">not archived</option><option value="yes">archived</option></select></label>
+        <label>Watch <select id="cs-watch"><option value="">any</option><option value="fixed">fixed watches</option></select></label>
+        <label>Sort <select id="cs-sort"><option value="time">newest first</option><option value="size">largest first</option></select></label>
+        <button class="btn" id="cs-go">Refresh</button>
+        <button class="btn" id="cs-reset" title="show everything again">Clear filters</button>
+      </div>
+      <p class="note" id="cs-note">loading…</p>
+      <div class="cs-selbar">
+        <label><input type="checkbox" id="cs-all"> select all shown</label>
+        <span id="cs-seln">nothing selected</span>
+        <button class="btn" id="cs-bk-open" disabled title="zip the selected events into the archive folder, check each zip, then take them out of the pool">Archive selected…</button>
+        <button class="btn" id="cs-sel-clear" disabled>Clear selection</button>
+      </div>
+      <div id="cs-bk" hidden>
+        <div class="hm-l">Archive the selection</div>
+        <label class="opt"><input type="radio" name="cs-bk-zip" value="group" checked> one zip per signal group</label>
+        <label class="opt"><input type="radio" name="cs-bk-zip" value="all"> one zip for the whole selection</label>
+        <div class="note" style="margin:2px 0 6px">An event inside a capture brings that capture and every event inside it: the IQ is one file.
+          Private-band events go as fingerprints and rows only.</div>
+        <label class="opt"><input type="checkbox" id="cs-bk-fp" checked> fingerprints: also leave a copy in the pool (small; they stay quick to view). Untick to move them into the zip too.</label>
+        <label class="opt"><input type="checkbox" id="cs-bk-ex"> exports (WAV / cf32). Off by default: they can be made again from the SigMF. Left out, they stay in the pool.</label>
+        <div class="frm" style="margin-top:6px">
+          <label>Label <input id="cs-bk-label" placeholder="e.g. keeper" maxlength="40"></label>
+          <label style="flex:1">Note <input id="cs-bk-note" style="width:100%" placeholder="why these are worth keeping"></label>
+        </div>
+        <p class="note" style="margin:8px 0">Archiving frees room in the <b>pool</b> (pool_gb). It does <b>not</b> give back today's budget:
+          the daily cap counts everything written today, archived or not, so a recorder that has reached the daily cap stays
+          fingerprint-only until midnight. If the archive folder is on the same drive, the drive gains no free space either.</p>
+        <div class="frm"><button class="btn" id="cs-bk-preview">Show what would move</button>
+          <button class="btn" id="cs-bk-cancel">Cancel</button></div>
+        <div id="cs-bk-plan"></div>
+      </div>
+      <div class="note" id="cs-bk-out" style="margin:0 0 8px"></div>
+      <div id="cs-groups" tabindex="0"></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-probe">
+  <main>
+    <div class="wrap">
+      <div class="lab">What is under the probe</div>
+      <p class="note">A probe run is an ordinary <code>marsad run</code>: this page only composes the tag, the chain and the
+        conditions. If your dongle's bias-tee is on, put a DC block in the chain: a loop straight onto its SMA would short the supply.</p>
+      <div class="frm">
+        <label>Target <select id="pb-target"></select></label>
+        <label id="pb-other-l" hidden>Other <input id="pb-target-other" placeholder="e.g. desk lamp" size="22"></label>
+        <label title="What the target was doing. Survey one device in several states with the probe fixed in place; the catalogue below differences each state against the unplugged one.">State <select id="pb-devstate" style="min-width:150px"></select></label>
+        <label id="pb-devstate-other-l" hidden>State <input id="pb-devstate-other" placeholder="e.g. printing" size="16"></label>
+        <label>Probe <select id="pb-probe"></select></label>
+        <label style="flex:1">Held <input id="pb-where" class="wide" placeholder="required: e.g. against the PSU fan grille (background runs default to 'in open air')"></label>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Scan</div>
+      <div class="frm">
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--dim)">Duration
+          <span id="pb-durs"></span>
+          <input id="pb-min" type="number" min="0.5" step="0.5" value="5"> min</span>
+        <label>Range <select id="pb-range"></select></label>
+        <label id="pb-centre-l" hidden>Centre <input id="pb-centre" type="number" step="0.01" placeholder="MHz"> MHz</label>
+        <label>Receiver <select id="pb-receiver"></select></label>
+        <label title="rtl_power's device index for that receiver. Found by asking each plugged-in dongle what it is; the number changes when a dongle is unplugged.">device <input id="pb-device" type="number" min="0" max="9" value="0" style="width:55px"></label>
+        <button class="btn" id="pb-detect" title="Opens each dongle for a second and reads its name">Find receivers</button>
+        <label id="pb-att-l" title="From the attenuator kit, fitted between the notch's output and the LNA's input">Pad ahead of the LNA <select id="pb-attenuator" style="min-width:90px"></select></label>
+        <span class="note" id="pb-attnote" style="margin:0" hidden></span>
+        <span class="note" id="pb-rxnote" style="margin:0"></span>
+        <label style="flex:1 1 100%">Notes <input id="pb-notes" class="wide" placeholder="what is switched on in the room, anything unusual"></label>
+        <label style="flex:1 1 100%;align-items:flex-start">Chain after the probe <textarea id="pb-chain" rows="3" style="flex:1;font-size:12px"></textarea></label>
+        <span class="note" id="pb-chainnote" style="flex:1 1 100%;margin:-4px 0 0"></span>
+      </div>
+      <div class="note" id="pb-geom" style="margin-top:10px"></div>
+      <pre class="cmd" id="pb-cmd">…</pre>
+      <div id="pb-warn"></div>
+      <div class="frm" style="margin-top:10px">
+        <button class="btn go" id="pb-start">Start</button>
+        <button class="btn halt" id="pb-stop" disabled>Stop</button>
+        <span class="state" id="pb-state">idle</span>
+      </div>
+    </div>
+    <div class="wrap" id="pb-hunt">
+      <div class="lab">Hunt — what a device adds, then one line followed by ear</div>
+      <p class="note"><b>1. Find candidates.</b> Two <b>wide</b> runs from the form above with the same probe and pad: one with the target
+        <i>background (probe in open air)</i>, one with the probe at the device. Their bins are subtracted (device minus background,
+        median over sweeps so a one-sweep click drops out) and pooled into blocks, ranked by the bin that rose most. Whatever both runs
+        share — the SDR's clock harmonics, the DC spikes, the room's broadcasters — cancels.
+        <b>2. Track.</b> An ordinary run on a tile around the chosen block; the strongest line in the tile (or the centre frequency) becomes
+        a tone, <b>one octave per 10 dB</b> over the tile's floor, so the probe can be moved without looking. Target, probe, held, receiver,
+        pad, notes and chain are taken from the form above; the tag becomes <code>hunt-&lt;target&gt;-&lt;probe&gt;</code>.
+        <b>3. Narrow.</b> When the line is strong, one click stops the tile and restarts a 5 MHz hunt tile centred on it.
+        <b>Live</b> is the fast follower: one 2.4 MHz hop on rtl_power_fftw, about six spectra a second, for moving the probe by ear.
+        Before any hunt run starts, the page shows the target and held text it will record; edit them or confirm.
+        <b>Follow</b>: <i>strongest line</i> stays on a line until another is 6 dB stronger for 3 updates in a row (🔒 Lock keeps it there
+        regardless); <i>floor level</i> turns the whole span's median into the tone, which is what a broadband emitter raises.</p>
+      <div class="frm">
+        <label>Background <select id="hu-bg" style="min-width:320px"></select></label>
+        <label>At the device <select id="hu-dev" style="min-width:320px"></select></label>
+        <label>Blocks <select id="hu-block" style="min-width:80px"></select></label>
+        <button class="btn" id="hu-rank">Rank the bands</button>
+        <button class="btn" id="hu-reload" title="re-read reports/">↻</button>
+      </div>
+      <div id="hu-cands" style="margin-top:8px"></div>
+      <div class="frm" style="margin-top:12px">
+        <label>Centre <input id="hu-centre" type="number" step="0.001" placeholder="MHz"> MHz</label>
+        <label>Follow <select id="hu-follow" style="min-width:190px"><option value="strongest">strongest line in the tile</option><option value="typed">the centre frequency</option><option value="floor">floor level (broadband sources)</option></select></label>
+        <button class="btn" id="hu-lock" disabled title="stay on the line being followed, whatever else appears">🔒 Lock line</button>
+        <button class="btn go" id="hu-tile" title="101 MHz, 25 kHz bins, g29, -i 3: 49 hops, 2.3 s retune floor">Start 100 MHz tile</button>
+        <button class="btn go" id="hu-5" title="5 MHz, 5 kHz bins, g42, -i 1: 3 hops">Start 5 MHz hunt</button>
+        <button class="btn go" id="hu-live" title="one 2.4 MHz hop on rtl_power_fftw, 512 bins (4.7 kHz), g29, -t 0.1: about 6 spectra a second">Start live (fast)</button>
+        <button class="btn halt" id="hu-stop" disabled>Stop</button>
+        <button class="btn" id="hu-narrow" disabled title="stop the tile and restart a 5 MHz hunt tile centred on the line being followed">Narrow to 5 MHz here</button>
+      </div>
+      <div class="frm" id="hu-confirm" hidden style="margin-top:8px;padding:8px;border:1px solid var(--accent);border-radius:6px">
+        <span class="note" style="margin:0;width:100%">This <b id="hu-c-range"></b> run will be recorded as:</span>
+        <label>Target <input id="hu-c-target" style="min-width:200px"></label>
+        <label>State <input id="hu-c-state" style="min-width:110px" placeholder="not recorded"></label>
+        <label style="flex:1">Held <input id="hu-c-held" class="wide" list="hu-c-heldlist"></label>
+        <datalist id="hu-c-heldlist"></datalist>
+        <span id="hu-c-chips" style="width:100%"></span>
+        <button class="btn go" id="hu-c-ok">Record this and start</button>
+        <button class="btn" id="hu-c-cancel">Cancel</button>
+      </div>
+      <div class="frm" style="margin-top:8px">
+        <button class="btn" id="hu-listen">🔊 Listen</button>
+        <label>Sound <select id="hu-mode" style="min-width:120px"><option value="tone">tone (pitch)</option><option value="clicks">clicks (Geiger)</option></select></label>
+        <label>Volume <input id="hu-vol" type="range" min="0" max="1" step="0.05" value="0.4" style="width:120px"></label>
+        <span class="note" id="hu-note" style="margin:0"></span>
+      </div>
+      <div class="hud" id="hu-hud">
+        <div><div class="hud-l">followed line</div><div class="hud-v" id="hu-f">—</div><div class="hud-u">MHz</div></div>
+        <div><div class="hud-l">level</div><div class="hud-v" id="hu-db">—</div><div class="hud-u">dB (relative)</div></div>
+        <div><div class="hud-l">line over the floor</div><div class="hud-v big" id="hu-over">—</div><div class="hud-u">dB · floor <span id="hu-floor">—</span> dB</div></div>
+        <div><div class="hud-l">floor level (median)</div><div class="hud-v big" id="hu-flv">—</div><div class="hud-u">dB · <span id="hu-rise">—</span> over the quietest this run</div></div>
+        <div><div class="hud-l">updates</div><div class="hud-v" id="hu-rate">—</div><div class="hud-u">per second · planned <span id="hu-plan">—</span></div></div>
+      </div>
+      <div class="bar"><div id="hu-bar"></div><i id="hu-barpk" title="best so far"></i></div>
+      <div class="note" id="hu-stat" style="margin-top:4px"></div>
+      <div class="frm" style="margin-top:8px">
+        <button class="btn" id="hu-bigbtn" title="fill the screen with the reading, readable at arm's length (Esc to leave)">⛶ Big meter</button>
+        <span class="state">best so far <b id="hu-best">—</b> <span id="hu-bestf"></span></span>
+        <button class="btn" id="hu-bestreset" title="forget the best reading and start a new sweep of the probe">Reset best</button>
+      </div>
+      <div id="hu-meter">
+        <div class="hm-big">
+          <div class="hm-top"><span class="hm-what" id="hu-m-what"></span>
+            <span><button class="btn" id="hu-m-listen">🔊 Listen</button> <button class="btn" id="hu-m-reset">Reset best</button> <button class="btn" id="hu-m-exit">✕ Exit (Esc)</button></span></div>
+          <div class="hm-v" id="hu-m-v">—</div>
+          <div class="hm-sub" id="hu-m-sub"></div>
+          <div class="bar"><div id="hu-m-fill"></div><i id="hu-m-pk"></i></div>
+        </div>
+        <div class="hm-l">history, last 45 s — <span id="hu-h-what">the value that drives the tone</span>; dashed line = best so far</div>
+        <canvas id="hu-hist"></canvas>
+        <div class="hm-l">spectrum of the latest sweep — marker = followed line (orange when locked), dashed = a stronger line waiting to take over, grey = DC spike, never followed</div>
+        <canvas id="hu-spec"></canvas>
+      </div>
+    </div>
+    <div class="wrap" id="rm">
+      <div class="lab">Room equipment catalogue — what each device adds, state by state</div>
+      <p class="note">Record one <b>wide</b> run per state of a device (unplugged, off, idle, active) with the probe fixed in place and the
+        <b>State</b> set in the form above. Each state is then subtracted from the background bin by bin (median over sweeps, as in Hunt),
+        by default the device's own <b>unplugged</b> run: whatever the device adds over its own absence. Only runs with the same fingerprint
+        are subtracted; any other pair is refused and says why.</p>
+      <div class="frm">
+        <label>Device <select id="rm-target" style="min-width:220px"></select></label>
+        <label>Background <select id="rm-bg" style="min-width:320px"></select></label>
+        <label>Blocks <select id="rm-block" style="min-width:80px"></select></label>
+        <button class="btn" id="rm-go">Compare its states</button>
+        <button class="btn" id="rm-reload" title="re-read reports/">↻</button>
+      </div>
+      <div id="rm-out" style="margin-top:8px"></div>
+      <div class="lab" style="margin-top:18px">Loudest devices in the room</div>
+      <p class="note">Each device's active state (anything but unplugged, off or idle) against its own unplugged run with the same fingerprint:
+        the block whose strongest bin rose most, and how many blocks rose 6 dB or more.</p>
+      <div class="frm"><button class="btn" id="rm-loudgo">Rank the devices</button></div>
+      <div id="rm-loud" style="margin-top:8px"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">This run <span style="float:right;font-weight:normal;opacity:.75"><a href="#" id="pb-toscan" style="color:var(--accent)">watch it on the Scan tab</a></span></div>
+      <div id="pb-run" class="note">Nothing has run yet.</div>
+      <pre class="log" id="pb-log"></pre>
+    </div>
+    <div class="wrap">
+      <div class="lab">Room RF map — <span id="pb-logfile" style="text-transform:none;letter-spacing:0">ROOM_RF.md</span></div>
+      <div id="pb-map" style="overflow-x:auto"><p class="note">No probe runs logged yet.</p></div>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-chain">
+  <main>
+    <div class="wrap">
+      <div class="lab">Chains — drawings of the rig, saved in <span id="ch-file" style="text-transform:none;letter-spacing:0">chain.json</span></div>
+      <p class="note">A chain is one line from the source to the PC. Drag a part from the palette onto the rail, drag parts along the rail to reorder,
+        click one to edit or remove it. The text at the bottom is exactly what a run records as its chain. "Use for runs" makes a chain the current one
+        and also writes it into station.json, so a plain <code>marsad run</code> records it too.</p>
+      <div class="frm">
+        <label>Chain <select id="ch-sel"></select></label>
+        <span class="cur" id="ch-cur"></span>
+        <button class="btn" id="ch-use">Use for runs</button>
+        <button class="btn" id="ch-new">New</button>
+        <button class="btn" id="ch-dup">Duplicate</button>
+        <button class="btn" id="ch-ren">Rename</button>
+        <button class="btn" id="ch-del">Delete</button>
+        <label title="Tick when this chain is not what you are working on: runs then use it without asking whether it changed"><input type="checkbox" id="ch-static" style="accent-color:var(--accent)"> static — no changes expected</label>
+        <span class="note" id="ch-stamp" style="margin:0"></span>
+        <span class="note" id="ch-saved" style="margin:0 0 0 auto"></span>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Palette — click a part to add it at the left end (the chain is built outward from the PC), or drag it to an exact spot</div>
+      <div class="pal" id="ch-pal"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Rail — source on the left, PC on the right</div>
+      <div class="rail" id="ch-rail"></div>
+    </div>
+    <div class="wrap" id="ch-edwrap" hidden>
+      <div class="lab">Selected part</div>
+      <div class="ed" id="ch-ed"></div>
+    </div>
+    <div class="wrap">
+      <div class="lab">Chain text — what a run records</div>
+      <pre class="cmd" id="ch-text"></pre>
+      <button class="btn" id="ch-copy">Copy</button>
+    </div>
+  </main>
+</div>
+
+<div class="pane" id="pane-roadmap">
+  <main><div class="wrap"><div class="lab">Roadmap</div><pre class="md" id="road">loading…</pre></div></main>
+</div>
+
+<script>
+const COLS=1200;
+let rows=[], meds=[], lo=null, hi=null, total=0, have=0, lastBytes=0, stale=0;
+let partial=null, cursorPct=null, hoverPct=null;
+let liveFile=null, curFile=null, surveys=[];
+let stamps=[];                 // start time of each held sweep, parallel to rows
+let selSweep=null;             // sweep number clicked in the waterfall, drawn on the spectrum
+let hoverRow=null;             // sweep number under the mouse in the waterfall
+let stepK=null;                // bin width, kHz: the spur tolerance
+let FAMILIES=[14.4,28.8,24,25,100], THR=10;
+let peaks=[], hopC=[], refused=[], engine='rtl_power';
+let hatch=null;
+function hatchPattern(x){
+  if(hatch)return hatch;
+  const c=document.createElement('canvas');c.width=c.height=8;const g=c.getContext('2d');
+  g.strokeStyle='rgba(232,120,120,.55)';g.lineWidth=1.5;g.beginPath();g.moveTo(0,8);g.lineTo(8,0);g.moveTo(-2,2);g.lineTo(2,-2);g.moveTo(6,10);g.lineTo(10,6);g.stroke();
+  hatch=x.createPattern(c,'repeat');return hatch;}
+// Refused hops (rtl_power_fftw: "Unable to tune to", PLL would not lock) drawn as hatched
+// gaps, so a missing slice of the band reads as "no data" rather than as silence.
+function drawRefused(x,W,H){
+  if(!refused.length||lo===null)return;
+  x.save();x.fillStyle=hatchPattern(x);
+  for(const [a,b] of refused){const pa=fx((a-lo)/(hi-lo),W),pb=fx((b-lo)/(hi-lo),W);
+    if(pb<0||pa>W)continue;x.fillRect(Math.max(0,pa),0,Math.min(W,pb)-Math.max(0,pa),H);}
+  x.restore();}
+// Marker layers. Detections default on; the two reference grids default off because
+// at full span they are dense enough to read as texture rather than information.
+const marks={sig:true,spur:true,art:true,grid:false,hop:false};
+try{Object.assign(marks,JSON.parse(localStorage.getItem('sdr-marks')||'{}'));}catch(e){}
+fetch('/config').then(r=>r.json()).then(c=>{if(c.readout_families)FAMILIES=c.readout_families;
+  if(c.peak_threshold_db)THR=c.peak_threshold_db;}).catch(()=>{});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// View: a horizontal zoom shared by the spectrum and the waterfall so they stay aligned,
+// plus a history scroll for the waterfall. Frequencies are handled as fractions of the
+// full span (0..1); fx() maps a fraction to a pixel under the current view.
+let view={z:1,c:0.5,top:0,fit:true,ry:1};
+function vlo(){return Math.max(0,Math.min(1-1/view.z,view.c-0.5/view.z));}
+function vhi(){return vlo()+1/view.z;}
+function fLo(){return lo+vlo()*(hi-lo);}
+function fHi(){return lo+vhi()*(hi-lo);}
+function fx(frac,W){return (frac-vlo())/(vhi()-vlo())*W;}
+function fracAt(p){return vlo()+p*(vhi()-vlo());}
+function clampView(){
+  if(view.z<=1.0001){view.z=1;view.c=0.5;}
+  view.c=Math.max(0.5/view.z,Math.min(1-0.5/view.z,view.c));
+  if(view.top<0)view.top=0;
+  if(rows.length&&view.top>rows.length-1)view.top=rows.length-1;
+}
+function redrawView(){if(lastFloor===null)return;drawSpec(lastFloor,lastSpan);drawFall(lastFloor,lastSpan);readout();}
+
+// magma-ish ramp: dark blue -> magenta -> amber -> white
+const STOPS=[[0,[8,6,22]],[.25,[70,20,90]],[.5,[150,40,100]],[.72,[225,95,70]],[.88,[250,175,90]],[1,[255,245,220]]];
+function cmap(t){t=Math.max(0,Math.min(1,t));
+  for(let i=1;i<STOPS.length;i++){const [b,cb]=STOPS[i];const [a,ca]=STOPS[i-1];
+    if(t<=b){const u=(t-a)/(b-a);return [0,1,2].map(k=>Math.round(ca[k]+(cb[k]-ca[k])*u));}}
+  return STOPS[STOPS.length-1][1];}
+
+function pct(arr,p){const v=arr.filter(x=>x!==null).sort((a,b)=>a-b);
+  return v.length?v[Math.min(v.length-1,Math.floor(p*v.length))]:null;}
+
+function fit(c){const r=c.getBoundingClientRect();
+  if(c.width!==Math.round(r.width)||c.height!==Math.round(r.height)){
+    c.width=Math.round(r.width);c.height=Math.round(r.height);}return c.getContext('2d');}
+
+function ticks(lo,hi){
+  const span=hi-lo;
+  for(const step of [1,2,5,10,20,25,50,100,200,250,500,1000]){
+    if(span/step<=12){const out=[];
+      for(let v=Math.ceil(lo/step)*step;v<=hi;v+=step)out.push(v);
+      return {step,vals:out};}}
+  return {step:span,vals:[lo,hi]};
+}
+
+function grid(x,W,H,tk){
+  x.save();x.strokeStyle='rgba(133,153,168,.14)';x.lineWidth=1;
+  x.fillStyle='rgba(133,153,168,.75)';x.font='10px ui-monospace,Consolas,monospace';
+  for(const v of tk.vals){
+    const px=Math.round(fx((v-lo)/(hi-lo),W))+.5;
+    if(px<0||px>W)continue;
+    x.beginPath();x.moveTo(px,0);x.lineTo(px,H);x.stroke();
+  }
+  x.restore();
+}
+
+function labels(el,tk){
+  el.innerHTML=tk.vals.map(v=>{
+    const pct=fx((v-lo)/(hi-lo),100);
+    if(pct<-1||pct>101)return '';
+    return `<span style="position:absolute;left:${pct}%;transform:translateX(-50%)">${v}</span>`;
+  }).join('');
+}
+
+function drawSpec(floor,span){
+  const c=document.getElementById('spec'),x=fit(c),W=c.width,H=c.height;
+  x.clearRect(0,0,W,H);
+  const tk=ticks(fLo(),fHi());
+  grid(x,W,H,tk);
+  const bot=(chartBot===null?floor-1:chartBot);
+  const y=v=>H-4-((v-bot)/(span+(floor-bot)))*(H-10);
+  // dB gridlines every 10 dB above the floor
+  x.save();x.strokeStyle='rgba(133,153,168,.10)';
+  for(let d=0;d<=span;d+=10){x.beginPath();x.moveTo(0,y(floor+d));x.lineTo(W,y(floor+d));x.stroke();
+    x.fillStyle='rgba(133,153,168,.6)';x.font='10px ui-monospace,monospace';
+    x.fillText((floor+d).toFixed(0),3,y(floor+d)-2);}
+  if(engine==='rtl_power_fftw'){x.fillStyle='rgba(232,177,79,.85)';x.font='10px ui-monospace,monospace';
+    x.fillText('dB on rtl_power_fftw\'s own scale (PSD) — not rtl_power\'s',3,11);}
+  x.restore();
+  drawRefused(x,W,H);
+  for(const [arr,col,w] of [[mh,'rgba(232,177,79,.55)',1],[rows[rows.length-1],'#4fd3e8',1.3]]){
+    if(!arr)continue;
+    x.beginPath();x.lineWidth=w;x.strokeStyle=col;let on=false;
+    for(let i=0;i<COLS;i++){const v=arr[i];if(v===null||v===undefined){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();}
+  const sel=selRow();
+  if(sel){x.beginPath();x.lineWidth=1.4;x.strokeStyle='#c58bff';let on=false;
+    for(let i=0;i<COLS;i++){const v=sel[i];if(v===null||v===undefined){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();
+    x.save();x.font='11px ui-monospace,Consolas,monospace';x.fillStyle='#c58bff';x.textAlign='right';
+    x.fillText(`sweep #${selSweep}  ${stampOf(selSweep)||''}`,W-6,13);x.restore();}
+  if(partial){x.beginPath();x.lineWidth=1;x.strokeStyle='rgba(79,211,232,.45)';let on=false;
+    for(let i=0;i<COLS;i++){const v=partial[i];if(v===null){on=false;continue;}
+      const px=fx(i/(COLS-1),W),py=y(v);if(px<-2||px>W+2){on=false;continue;}
+      if(!on){x.moveTo(px,py);on=true;}else x.lineTo(px,py);}
+    x.stroke();}
+  x.strokeStyle='rgba(133,153,168,.35)';x.setLineDash([3,4]);x.beginPath();
+  x.moveTo(0,y(floor));x.lineTo(W,y(floor));x.stroke();x.setLineDash([]);
+  drawMarks(x,W,H,y);
+  if(cursorPct!==null){const cx=fx(cursorPct,W);
+    x.strokeStyle='#e8b14f';x.lineWidth=1.5;x.beginPath();x.moveTo(cx,0);x.lineTo(cx,H);x.stroke();
+    x.fillStyle='#e8b14f';x.beginPath();x.moveTo(cx,0);x.lineTo(cx-5,8);x.lineTo(cx+5,8);x.fill();}
+  if(hoverPct!==null){const hx=hoverPct*W;
+    x.strokeStyle='rgba(221,230,238,.6)';x.lineWidth=1;x.beginPath();x.moveTo(hx,0);x.lineTo(hx,H);x.stroke();}
+  labels(document.getElementById('xs'),tk);
+}
+
+const MARK_COL={signal:'#4fcf96',spur:'#e8b14f',artefact:'#8599a8'};
+const MARK_KEY={signal:'sig',spur:'spur',artefact:'art'};
+const GRID_COL=['#e8b14f','#c58bff','#4fd3e8','#ff8a65','#9bd36b'];
+function drawMarks(x,W,H,y){
+  if(lo===null)return;
+  const pxPerMHz=W/(fHi()-fLo());
+  const px=f=>fx((f-lo)/(hi-lo),W);
+  if(marks.grid){
+    // One tick per harmonic of each hover family. A family whose ticks would sit
+    // closer than 12 px is skipped until the view is zoomed in enough to resolve it;
+    // 28.8 is skipped when 14.4 is listed, because its lines are every second 14.4.
+    let ci=0;
+    x.save();x.lineWidth=1;x.font='9px ui-monospace,monospace';x.textAlign='center';
+    for(const base of FAMILIES){
+      if(base===28.8&&FAMILIES.includes(14.4))continue;
+      const col=GRID_COL[ci++%GRID_COL.length];
+      if(base*pxPerMHz<12)continue;
+      const lab=base*pxPerMHz>70;
+      x.strokeStyle=col;x.fillStyle=col;
+      for(let n=Math.ceil(fLo()/base);n*base<=fHi();n++){
+        const p=Math.round(px(n*base))+.5;
+        x.globalAlpha=.6;x.beginPath();x.moveTo(p,0);x.lineTo(p,9);x.stroke();
+        if(lab){x.globalAlpha=.85;x.fillText(base+'×'+n,p,19);}
+      }
+    }
+    x.restore();
+  }
+  if(marks.hop&&hopC.length){
+    x.save();x.strokeStyle='rgba(133,153,168,.7)';x.lineWidth=1;
+    for(const h of hopC){if(h<fLo()||h>fHi())continue;const p=Math.round(px(h))+.5;
+      x.beginPath();x.moveTo(p,H-1);x.lineTo(p,H-7);x.stroke();}
+    x.restore();
+  }
+  for(const p of peaks){
+    if(!marks[MARK_KEY[p.kind]]||p.f<fLo()||p.f>fHi())continue;
+    const cx=px(p.f),cy=Math.max(10,y(p.db)-4);
+    x.fillStyle=MARK_COL[p.kind];x.beginPath();x.moveTo(cx,cy);x.lineTo(cx-4,cy-7);x.lineTo(cx+4,cy-7);x.fill();
+  }
+}
+function nearestPeak(hp){
+  // the detection within 6 px of the hover, if any
+  if(lo===null||!peaks.length)return null;
+  const W=document.getElementById('spec').width,hx=hp*W;
+  let best=null;
+  for(const p of peaks){const d=Math.abs(fx((p.f-lo)/(hi-lo),W)-hx);
+    if(d<=6&&(best===null||d<best.d))best={p,d};}
+  return best?best.p:null;
+}
+// Sweep numbers, times and rows. Sweep #s (1-based, counted from the start of the
+// recording) is rows[rows.length-1-(total-s)] while it is still held.
+function rowOf(s){const i=rows.length-1-(total-s);return (s>=1&&i>=0&&i<rows.length)?i:null;}
+function selRow(){if(selSweep===null)return null;const i=rowOf(selSweep);return i===null?null:rows[i];}
+function stampOf(s,full){const i=rowOf(s);const t=i===null?null:stamps[i];if(!t)return null;
+  if(full)return t;
+  // the date only when the held sweeps cross midnight
+  const multi=stamps.length&&stamps[0]&&stamps[stamps.length-1]&&stamps[0].slice(0,10)!==stamps[stamps.length-1].slice(0,10);
+  return (multi?t.slice(5,10)+' ':'')+t.slice(11,16);}
+// Which sweep a waterfall pixel row shows: fit mode squeezes every sweep in memory
+// into the canvas; history mode is view.ry pixel rows per sweep, starting view.top
+// sweeps back from the newest.
+function fallN(FH){return Math.min(rows.length,FH);}
+function idxAtY(ry,FH){return view.fit?Math.floor(ry/FH*fallN(FH)):view.top+Math.floor(ry/view.ry);}
+function sweepAtY(ry,FH){if(ry<0||ry>=FH)return null;const idx=idxAtY(ry,FH);return (idx>=0&&idx<rows.length&&total-idx>=1)?total-idx:null;}
+
+// ---- layers: noise / signal / internal
+// An estimate, composed in linear power so that all three together give back the
+// measured value exactly: per sweep and per column,
+//   floor N  = running median of that sweep (block medians a quarter of ~2 MHz wide,
+//              then the median of the five around each column: the live peaks' floor)
+//   base     = min(P, N);  excess E = P - base
+//   internal = min(terminated floor, base) when a terminated run matches, plus E on a
+//              column holding a 14.4 MHz harmonic or a hop centre
+//   signal   = E where P is at least the threshold over N (and not internal)
+//   noise    = the rest of base, plus E below the threshold
+const layers={noise:true,signal:true,internal:true};
+let sigThr=6, intData=null, layerVer=0;
+const layerCache=new WeakMap();
+function allLayers(){return layers.noise&&layers.signal&&layers.internal;}
+let spurMask=null;
+function buildMask(){
+  spurMask=new Uint8Array(COLS);
+  if(lo===null||hi<=lo)return;
+  const span=hi-lo, colM=span/(COLS-1), tol=Math.max((stepK||10)*1.5,10)/1e3;
+  const mark=f=>{const a=Math.round((f-tol-lo)/colM),b=Math.round((f+tol-lo)/colM);
+    for(let c=Math.max(0,a);c<=Math.min(COLS-1,b);c++)spurMask[c]=1;};
+  for(const base of (intData&&intData.families_mhz)||[14.4])
+    for(let n=Math.ceil(lo/base);n*base<=hi;n++)mark(n*base);
+  // hop centres only where a column is fine enough to hold one without its hop:
+  // on the 52-1660 MHz overview a column is wider than half a hop
+  const hopW=hopC.length>1?(hopC[hopC.length-1]-hopC[0])/(hopC.length-1):0;
+  if(hopW&&colM<hopW/4)for(const h of hopC)mark(h);
+}
+function sweepFloor(r){
+  const colM=(hi-lo)/(COLS-1);
+  const w=Math.max(8,Math.round(2/colM)), b=Math.max(1,Math.round(w/4));
+  const nb=Math.ceil(COLS/b), bm=new Array(nb).fill(null);
+  for(let k=0;k<nb;k++){const v=[];for(let c=k*b;c<Math.min(COLS,(k+1)*b);c++)if(r[c]!==null&&r[c]!==undefined)v.push(r[c]);
+    if(v.length){v.sort((a,b)=>a-b);bm[k]=v[v.length>>1];}}
+  const out=new Float32Array(COLS);
+  for(let k=0;k<nb;k++){const v=[];for(let j=k-2;j<=k+2;j++)if(j>=0&&j<nb&&bm[j]!==null)v.push(bm[j]);
+    v.sort((a,b)=>a-b);const fl=v.length?v[v.length>>1]:NaN;
+    for(let c=k*b;c<Math.min(COLS,(k+1)*b);c++)out[c]=fl;}
+  return out;
+}
+// The row as it is drawn under the current layer choice, in dB (NaN = nothing there).
+function layerRow(r){
+  const key=(layers.noise?1:0)|(layers.signal?2:0)|(layers.internal?4:0);
+  const tag=key+'|'+sigThr+'|'+layerVer;
+  const hit=layerCache.get(r);if(hit&&hit.tag===tag)return hit.v;
+  if(!spurMask)buildMask();
+  const fl=sweepFloor(r), term=intData&&intData.found?intData.floor:null;
+  const out=new Float32Array(COLS);
+  for(let c=0;c<COLS;c++){
+    const v=r[c];if(v===null||v===undefined||isNaN(fl[c])){out[c]=NaN;continue;}
+    const P=Math.pow(10,v/10), N=Math.pow(10,fl[c]/10);
+    const base=Math.min(P,N), E=P-base;
+    const T=(term&&term[c]!==null)?Math.min(Math.pow(10,term[c]/10),base):0;
+    let noise=base-T, internal=T, signal=0;
+    if(spurMask[c])internal+=E;else if(v-fl[c]>=sigThr)signal=E;else noise+=E;
+    const sum=(layers.noise?noise:0)+(layers.signal?signal:0)+(layers.internal?internal:0);
+    out[c]=sum>0?10*Math.log10(sum):NaN;}
+  layerCache.set(r,{tag,v:out});
+  return out;
+}
+
+let fallImg=null;
+function drawFall(floor,span){
+  const f=document.getElementById('fall'),g=fit(f),FW=f.width,FH=f.height;
+  const img=g.createImageData(FW,FH);
+  const vl=vlo(),vw=vhi()-vl;
+  const raw=allLayers();               // all three on is the measurement itself, untouched
+  let lastIdx=-1,src=null;
+  for(let ry=0;ry<FH;ry++){
+    const idx=idxAtY(ry,FH);
+    if(idx!==lastIdx){lastIdx=idx;const r=idx<rows.length?rows[rows.length-1-idx]:null;
+      src=r?(raw?r:layerRow(r)):null;}
+    for(let px=0;px<FW;px++){
+      const v=src?src[Math.min(COLS-1,Math.floor((vl+px/FW*vw)*COLS))]:null;
+      const o=(ry*FW+px)*4;
+      const rgb=(v===null||v===undefined||v!==v)?[18,26,34]:cmap((v-floor)/span);
+      img.data[o]=rgb[0];img.data[o+1]=rgb[1];img.data[o+2]=rgb[2];img.data[o+3]=255;}}
+  fallImg=img;
+  overlayFall();
+}
+
+function overlayFall(){
+  const f=document.getElementById('fall'),g=f.getContext('2d'),FW=f.width,FH=f.height;
+  drawRefused(g,FW,FH);
+  if(!fallImg)return;
+  g.putImageData(fallImg,0,0);
+  const tk=ticks(fLo(),fHi());
+  g.save();g.strokeStyle='rgba(221,230,238,.13)';g.lineWidth=1;
+  for(const v of tk.vals){const px=Math.round(fx((v-lo)/(hi-lo),FW))+.5;
+    if(px<0||px>FW)continue;
+    g.beginPath();g.moveTo(px,0);g.lineTo(px,FH);g.stroke();}
+  g.restore();
+  const n=view.fit?Math.min(rows.length,FH):Math.max(0,Math.min(Math.ceil(FH/view.ry),rows.length-view.top));
+  const yOf=k=>view.fit?k/n*FH:k*view.ry;
+  // Sweep boundaries. One line per sweep is readable at 15 sweeps and a solid block at
+  // 180, so thin them to at most ~16 lines and label a subset of those.
+  if(n>1){
+    const step=Math.max(1,Math.ceil(n/16));
+    const labelEvery=step*(n/step>9?2:1);
+    g.save();
+    g.font='9px ui-monospace,Consolas,monospace';
+    g.textBaseline='top';
+    for(let k=0;k<=n;k+=step){
+      const y=Math.round(yOf(k))+.5;
+      g.strokeStyle='rgba(221,230,238,.18)';g.lineWidth=1;
+      g.beginPath();g.moveTo(0,y);g.lineTo(FW,y);g.stroke();
+      const sweep=total-(view.fit?0:view.top)-k;
+      if(sweep<1||k%labelEvery)continue;
+      const t=stampOf(sweep);
+      const txt='#'+sweep+(t?' '+t:'');
+      const w=g.measureText(txt).width;
+      g.fillStyle='rgba(10,14,19,.72)';
+      g.fillRect(2,y+1,w+6,11);
+      g.fillStyle='rgba(221,230,238,.78)';
+      g.fillText(txt,5,y+2);
+    }
+    g.restore();
+  }
+  // the selected sweep, outlined
+  if(selSweep!==null&&rowOf(selSweep)!==null){
+    const idx=total-selSweep;
+    let y0=null,y1=null;
+    if(view.fit){y0=idx/n*FH;y1=(idx+1)/n*FH;}else if(idx>=view.top){y0=(idx-view.top)*view.ry;y1=y0+view.ry;}
+    if(y0!==null&&y0<FH){g.save();g.strokeStyle='#c58bff';g.lineWidth=1;
+      g.strokeRect(.5,Math.round(y0)-.5,FW-1,Math.max(1,Math.round(y1-y0))+1);g.restore();}}
+  if(cursorPct!==null&&(view.fit||view.top===0)){const cx=fx(cursorPct,FW);
+    g.strokeStyle='rgba(232,177,79,.85)';g.lineWidth=1.5;
+    g.beginPath();g.moveTo(cx,0);g.lineTo(cx,Math.max(1,yOf(1)));g.stroke();}
+  if(hoverPct!==null){const hx=hoverPct*FW;
+    g.strokeStyle='rgba(221,230,238,.55)';g.lineWidth=1;
+    g.beginPath();g.moveTo(hx,0);g.lineTo(hx,FH);g.stroke();}
+  labels(document.getElementById('xf'),ticks(fLo(),fHi()));
+  const vi=document.getElementById('vinfo');
+  if(vi)vi.innerHTML='<span class="vstate">'+(view.z>1?`zoom ${view.z.toFixed(1)}×  ${fLo().toFixed(1)}–${fHi().toFixed(1)} MHz  ·  `:'')
+    +(view.fit?`all ${rows.length} sweeps`:`sweeps #${Math.max(1,total-view.top-n+1)}–#${total-view.top} of ${total}, ${view.ry} px per sweep`)
+    +'</span>wheel: zoom · drag: pan · shift+wheel: history · ctrl+wheel: sweep height · click: that sweep on the spectrum · double-click: reset';
+  document.querySelectorAll('#fh-btns .btn').forEach(b=>b.classList.toggle('on',b.dataset.ry==='fit'?view.fit:(!view.fit&&+b.dataset.ry===view.ry)));
+}
+
+let mh=[];
+function draw(){
+  if(!rows.length||lo===null)return;
+  // a hidden pane's canvases are zero-sized; showPane redraws when Scan comes back
+  if(!document.getElementById('pane-scan').classList.contains('on'))return;
+  const flat=[].concat(...rows.slice(-40));
+  const floor=pct(flat,.2), top=pct(flat,.999);
+  if(floor===null)return;
+  mh=new Array(COLS).fill(null);
+  for(const r of rows)for(let i=0;i<COLS;i++)if(r[i]!==null&&(mh[i]===null||r[i]>mh[i]))mh[i]=r[i];
+  let mhTop=-Infinity;for(const v of mh)if(v!==null&&v>mhTop)mhTop=v;
+  // The chart's bottom edge must sit under the lowest point actually drawn, or the
+  // per-hop roll-off dips (1-2 dB under the 20th-percentile floor) run off the canvas
+  // and look like gaps in the trace.
+  let lowest=Infinity;for(const v of rows[rows.length-1])if(v!==null&&v<lowest)lowest=v;
+  if(partial)for(const v of partial)if(v!==null&&v<lowest)lowest=v;
+  chartBot=Math.min(floor-1,(isFinite(lowest)?lowest:floor)-0.5);
+  const span=Math.max(6,Math.max(top,mhTop)+2-floor);
+  document.getElementById('floor').textContent=floor.toFixed(2);
+  document.getElementById('peak').textContent=(isFinite(mhTop)?mhTop:top).toFixed(2);
+  lastFloor=floor;lastSpan=span;
+  // a collapsed panel skips its drawing; expanding it redraws at once (panelsInit)
+  if(panelOpen('spec'))drawSpec(floor,span);
+  if(panelOpen('fall'))drawFall(floor,span);
+  if(panelOpen('trend'))trend();
+  readout();
+}
+
+let lastFloor=null,lastSpan=null,chartBot=null;
+function redrawLight(){
+  if(lastFloor===null)return;
+  if(panelOpen('spec'))drawSpec(lastFloor,lastSpan);
+  if(panelOpen('fall'))overlayFall();
+  readout();
+}
+
+function i2col(hf){return Math.round(hf*(COLS-1));}
+function readout(){
+  const el=document.getElementById('readout');
+  if(hoverPct===null||!rows.length){el.innerHTML='&nbsp;';return;}
+  const hf=fracAt(hoverPct);
+  const f=lo+hf*(hi-lo);
+  const i=Math.round(hf*(COLS-1));
+  const cur=rows[rows.length-1][i], hold=mh[i];
+  const near=FAMILIES.map(k=>({k,n:Math.round(f/k),d:Math.abs(f-Math.round(f/k)*k)}))
+    .filter(o=>o.d<0.12&&o.n>0).sort((a,b)=>a.d-b.d)[0];
+  el.innerHTML=`<b>${f.toFixed(3)} MHz</b>`
+    +(cur!==null?`  latest <b>${cur.toFixed(1)}</b> dB`:'')
+    +(hold!==null?`  max-hold <b>${hold.toFixed(1)}</b> dB`:'')
+    +(cur!==null&&lastFloor!==null?`  over floor <b>${(cur-lastFloor).toFixed(1)}</b> dB`:'')
+    +(near?`  <span style="color:#e8b14f">≈ ${near.k} MHz × ${near.n}</span>`:'');
+  if(hoverRow!==null){const i=rowOf(hoverRow);const v=i===null?null:rows[i][i2col(hf)];
+    el.innerHTML+=`<br><span style="color:var(--dim)">waterfall row: <b style="color:var(--ink)">sweep #${hoverRow}</b>`
+      +`  started ${esc(stampOf(hoverRow,true)||'?')}${v!==null&&v!==undefined?`  ·  <b style="color:var(--ink)">${v.toFixed(1)}</b> dB here`:''}</span>`;}
+  const pk=nearestPeak(hoverPct);
+  if(pk)el.innerHTML+=`<br><span style="color:${MARK_COL[pk.kind]}">▲ ${pk.f.toFixed(4)} MHz  `
+    +`${pk.snr.toFixed(1)} dB over floor  ${pk.w} kHz wide  —  ${esc(pk.tags||'untagged: possible signal')}</span>`;
+}
+
+function hook(id){
+  const c=document.getElementById(id);
+  let drag=null;
+  c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
+    const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    hoverRow=id==='fall'?sweepAtY((e.clientY-r.top)*c.height/r.height,c.height):null;
+    if(drag!==null&&view.z>1){view.c-=(p-drag)/view.z;drag=p;clampView();hoverPct=p;redrawView();return;}
+    hoverPct=p;redrawLight();});
+  c.addEventListener('mouseleave',()=>{hoverPct=null;hoverRow=null;drag=null;redrawLight();});
+  let down=null;
+  c.addEventListener('mousedown',e=>{if(e.button!==0)return;const r=c.getBoundingClientRect();
+    drag=(e.clientX-r.left)/r.width;down=[e.clientX,e.clientY];e.preventDefault();});
+  // a click (not a drag) on the waterfall picks that sweep; clicking it again clears it
+  if(id==='fall')c.addEventListener('click',e=>{
+    if(!down||Math.abs(e.clientX-down[0])>3||Math.abs(e.clientY-down[1])>3)return;
+    const r=c.getBoundingClientRect();
+    const s=sweepAtY((e.clientY-r.top)*c.height/r.height,c.height);
+    selectSweep(s===selSweep?null:s);});
+  addEventListener('mouseup',()=>{drag=null;});
+  c.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const r=c.getBoundingClientRect(),p=(e.clientX-r.left)/r.width;
+    const dy=e.deltaY||e.deltaX;            // Chrome turns shift+wheel into deltaX
+    if(e.ctrlKey){                           // taller or shorter sweeps
+      if(!rows.length)return;
+      view.fit=false;
+      view.ry=dy<0?Math.min(16,view.ry*2):Math.max(1,view.ry/2);
+    }else if(e.shiftKey){
+      if(!rows.length)return;
+      view.fit=false;
+      view.top+=(dy>0?1:-1)*Math.max(1,Math.round(Math.abs(dy)/25));
+    }else{
+      const f=fracAt(p);                    // keep the frequency under the mouse still
+      const nz=Math.max(1,Math.min(64,view.z*(dy<0?1.25:1/1.25)));
+      view.z=nz;view.c=f-(p-0.5)/nz;
+    }
+    clampView();redrawView();
+  },{passive:false});
+  c.addEventListener('dblclick',()=>{view={z:1,c:0.5,top:0,fit:true,ry:1};selectSweep(null);});
+}
+function selectSweep(s){
+  selSweep=s;
+  document.getElementById('key-sel').style.visibility=s===null?'hidden':'visible';
+  if(s!==null)document.getElementById('key-sel-t').textContent=`sweep #${s}, started ${stampOf(s,true)||'?'} (clicked in the waterfall)`;
+  redrawView();
+}
+
+function trend(){
+  if(meds.length<2)return;
+  const c=document.getElementById('trend'),x=fit(c),W=c.width,H=c.height;
+  x.clearRect(0,0,W,H);
+  const lo=Math.min(...meds),hi=Math.max(...meds);
+  // Always show at least a 0.5 dB window, or run-to-run noise looks like a trend.
+  const mid=(lo+hi)/2,half=Math.max(0.25,(hi-lo)/2*1.25);
+  const y=v=>H-6-((v-(mid-half))/(2*half))*(H-12);
+  x.strokeStyle='rgba(133,153,168,.2)';x.lineWidth=1;
+  for(const f of [0,.5,1]){const py=6+f*(H-12);x.beginPath();x.moveTo(0,py);x.lineTo(W,py);x.stroke();}
+  x.beginPath();x.lineWidth=1.6;x.strokeStyle='#4fd3e8';
+  meds.forEach((v,i)=>{const px=meds.length<2?0:i/(meds.length-1)*W;
+    i?x.lineTo(px,y(v)):x.moveTo(px,y(v));});
+  x.stroke();
+  const last=meds[meds.length-1];
+  x.fillStyle='#4fd3e8';x.beginPath();x.arc(W-2,y(last),3,0,7);x.fill();
+  document.getElementById('t0').textContent=(mid-half).toFixed(2)+' dB';
+  document.getElementById('t1').textContent='now '+last.toFixed(3)+' dB  ·  spread '+(hi-lo).toFixed(3)+' dB';
+}
+
+function fmt(s){if(s===null||s===undefined)return '—';
+  const m=Math.floor(s/60);return m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'m';}
+
+function resetView(){
+  view={z:1,c:0.5,top:0,fit:true,ry:1};
+  stamps=[];selSweep=null;hoverRow=null;intData=null;spurMask=null;layerVer++;stepK=null;
+  document.getElementById('key-sel').style.visibility='hidden';document.getElementById('ly-int').textContent='';
+  rows=[];meds=[];have=0;lo=null;hi=null;total=0;partial=null;cursorPct=null;
+  peaks=[];hopC=[];refused=[];engine='rtl_power';document.getElementById('pk').textContent='';
+  document.getElementById('engine').hidden=true;document.getElementById('key-refused').hidden=true;
+  document.getElementById('scan-stop').hidden=true;
+  fallImg=null;lastFloor=null;mh=[];
+  for(const id of ['n','last','floor','peak','cur','eta'])document.getElementById(id).textContent='—';
+}
+
+async function loadSurveys(){
+  try{
+    const d=await (await fetch('/surveys')).json();
+    liveFile=d.live;surveys=d.surveys;
+    if(!curFile)curFile=liveFile;
+    const sel=document.getElementById('survey');
+    sel.innerHTML=surveys.map(s=>{
+      const bits=[s.engine==='rtl_power_fftw'?'fftw':null,s.receiver?s.receiver.toUpperCase():null,s.gain!=null?('g'+s.gain):null,
+                  s.integ!=null?('i'+s.integ):null,s.tph!=null?('t'+s.tph):null,s.mb+' MB'].filter(Boolean).join(' · ');
+      return `<option value="${s.name}"${s.name===curFile?' selected':''}>${s.name} — ${bits}</option>`;
+    }).join('');
+    document.getElementById('arch').innerHTML=
+      '<thead><tr><th>Survey</th><th>Rx</th><th>Gain</th><th>Integ</th><th>Sweeps</th><th>Range MHz</th><th>MB</th></tr></thead><tbody>'
+      +surveys.map(s=>`<tr class="go" data-f="${esc(s.name)}"><td>${esc(s.name)}${s.name===liveFile?' <span class="lv">live</span>':''}</td>`
+        +`<td>${s.receiver?s.receiver.toUpperCase():'—'}${s.engine==='rtl_power_fftw'?' <span class="lv" style="color:#e8b14f">fftw</span>':''}</td><td>${s.gain??'—'}</td><td>${s.integ??(s.tph!=null?s.tph+' s/hop':'—')}</td>`
+        +`<td>${s.sweeps??'—'}</td><td>${s.lo!=null?s.lo+'–'+s.hi:'—'}</td><td>${s.mb}</td></tr>`).join('')
+      +'</tbody>';
+    document.querySelectorAll('#arch tr[data-f]').forEach(tr=>tr.onclick=()=>{
+      curFile=tr.dataset.f;document.getElementById('survey').value=curFile;
+      resetView();showPane('scan');});
+  }catch(e){}
+}
+
+async function loadArchive(){
+  try{
+    const d=await (await fetch('/archive')).json();
+    const note=document.getElementById('dbnote');
+    if(!d.db){note.textContent='No occupancy.db yet. It is created by `marsad archive add --all` or automatically after each `marsad run`.';}
+    else note.textContent=d.surveys.length+' archived survey(s) in '+d.db+(d.error?'  ('+d.error+')':'');
+    document.getElementById('dbsurveys').innerHTML=
+      '<thead><tr><th>Survey</th><th>Started</th><th>Sweeps</th><th>Signals</th><th>Floor dB</th><th>Fingerprint</th></tr></thead><tbody>'
+      +d.surveys.map(s=>`<tr><td>${esc(s.name)}${s.terminated?' <span class="term">terminated</span>':''}</td>`
+        +`<td>${esc((s.started||'').slice(0,16))}</td><td>${s.sweeps??'—'}</td><td>${s.n??'—'}</td>`
+        +`<td>${s.median_floor_db??'—'}</td><td style="text-align:left">${esc(s.fingerprint)}</td></tr>`).join('')
+      +'</tbody>';
+    document.getElementById('dbseen').innerHTML=
+      '<thead><tr><th>MHz</th><th>Runs</th><th>Avg SNR</th><th>Avg occ %</th><th>Tags</th></tr></thead><tbody>'
+      +d.seen.map(r=>`<tr><td>${Number(r.f).toFixed(2)}</td><td>${r.n}</td><td>${r.snr}</td><td>${r.occ}</td>`
+        +`<td style="text-align:left;white-space:normal">${esc(r.tags||'')}</td></tr>`).join('')
+      +'</tbody>';
+  }catch(e){}
+}
+
+// ---- collapsible panels: every .wrap's first .lab becomes its title bar, with a chevron
+// button (aria-expanded) at its start; a click on the title or the button toggles. Collapsed,
+// only the title stays. Open/closed is remembered per viewer in localStorage under
+// sdr-panel:<tab>:<panel>; without storage the page simply starts with everything open.
+const PANEL_PREFIX='sdr-panel:';
+function panelOpen(id){const el=document.getElementById(id),w=el&&el.closest('.wrap');
+  return !w||!w.classList.contains('collapsed');}
+function panelSlug(t){return t.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40)||'panel';}
+function panelRedraw(w){
+  // the canvases inside sized to zero while hidden: draw them now, not at the next poll
+  dispatchEvent(new Event('resize'));
+  if(w.id==='ot'){otDrawRun();otRecsLast.forEach(otDrawRec);}
+}
+function panelSet(w,open,save){
+  w.classList.toggle('collapsed',!open);
+  const b=w.querySelector(':scope>.ptitle>.pcol');
+  if(b){b.setAttribute('aria-expanded',open?'true':'false');
+    b.setAttribute('aria-label',(open?'Collapse':'Expand')+' panel: '+w.dataset.ptitle);
+    b.title=open?'collapse this panel':'expand this panel';}
+  if(save){try{localStorage.setItem(PANEL_PREFIX+w.dataset.pkey,open?'1':'0');}catch(e){}}
+  if(open&&save)requestAnimationFrame(()=>panelRedraw(w));
+}
+function panelsInit(){
+  const seen={};
+  document.querySelectorAll('.pane .wrap').forEach(w=>{
+    const lab=w.querySelector(':scope>.lab');if(!lab)return;
+    const tab=w.closest('.pane').id.replace(/^pane-/,'');
+    const title=(lab.firstChild&&lab.firstChild.nodeType===3?lab.firstChild.textContent:lab.textContent).trim();
+    let key=tab+':'+(w.id||panelSlug(title));
+    seen[key]=(seen[key]||0)+1;if(seen[key]>1)key+='-'+seen[key];
+    w.dataset.pkey=key;w.dataset.ptitle=title.split(/\s+[—-]\s+/)[0].replace(/\s*[—-]\s*$/,'')||title;
+    lab.classList.add('ptitle');
+    const b=document.createElement('button');b.type='button';b.className='pcol';
+    lab.insertBefore(b,lab.firstChild);
+    b.onclick=e=>{e.stopPropagation();panelSet(w,w.classList.contains('collapsed'),true);};
+    lab.addEventListener('click',e=>{
+      if(e.target.closest('a,input,select,textarea,label,button'))return;   // controls in the title keep their own job
+      panelSet(w,w.classList.contains('collapsed'),true);});
+    let open=true;try{open=localStorage.getItem(PANEL_PREFIX+key)!=='0';}catch(e){}
+    panelSet(w,open,false);
+  });
+}
+panelsInit();
+
+function showPane(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.pane===name));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='pane-'+name));
+  if(name==='scan')setTimeout(draw,0);        // canvases size to zero while hidden
+  if(name==='builder'){const f=document.getElementById('builder');if(!f.src)f.src='/builder';}
+  if(name==='archive')loadArchive();
+  if(name==='captures')capturesInit();
+  if(name==='probe'){probeInit();loadProbeMap();}
+  if(name==='chain')chainInit();
+  try{localStorage.setItem('sdr-pane',name);}catch(e){}
+}
+
+// ---------------------------------------------------------------- Captures tab
+// The recorder's catalogue. Read-only: there is no delete
+// control anywhere, and private events get no play or export controls (the server
+// refuses those exports too).
+let cs={ready:false,sel:null,open:new Set(),pick:new Map(),shown:[]};
+// ---- live recorder status: `marsad watch` rewrites recorder_status_<serial>.json every
+// 2 s; a file older than 15 s means the watch has gone. Shown as a bar under the tabs
+// (so the Scan tab never looks idle while a fixed watch runs) and in full on Captures.
+let recs=[], csCool=[];
+const hhmm=t=>t?new Date(t*1000).toLocaleTimeString():'—';
+function recLine(r){
+  const j=r.job,bits=[];
+  bits.push(`<b>${esc(r.mode)}</b> on the ${esc((r.receiver||'').toUpperCase())} SN ${esc(r.serial)}`);
+  if(j)bits.push(`${esc(j.kind)} ${Number(j.target_mhz).toFixed(4)} MHz (tuned ${Number(j.tuned_mhz).toFixed(4)}, `
+    +`${(j.rate/1e6).toFixed(3)} MS/s, g${j.gain_db})`+(j.tier==='private'?' PRIVATE: fingerprint only':''));
+  else if(r.mode&&r.mode.startsWith('survey'))bits.push('waiting for a trigger');
+  if(r.survey)bits.push(`survey pass ${r.passes||0}`);
+  bits.push(`${r.events} event${r.events===1?'':'s'}`+(r.last_event?`, last ${hhmm(r.last_event.at)} (${Number(r.last_event.mhz).toFixed(4)} MHz, ${Number(r.last_event.snr_db).toFixed(1)} dB)`:''));
+  if(r.capture)bits.push(`capturing ${esc(r.capture.file)} until ${hhmm(r.capture.ends_at)}`);
+  else if(j&&j.next_capture_at)bits.push(`next capture allowed ${hhmm(j.next_capture_at)}`);
+  else if(j&&j.tier!=='private')bits.push('next event may record');
+  if(r.ambush)bits.push(`ambush parked on ${Number(r.ambush.mhz).toFixed(4)} MHz until ${hhmm(r.ambush.until)}`);
+  if(r.queue)bits.push(`${r.queue} job${r.queue===1?'':'s'} waiting for the radio`);
+  if(r.ends_at)bits.push(`ends ${hhmm(r.ends_at)}`);
+  return bits.join('  ·  ');
+}
+function recSettings(t){
+  const b=[`threshold ${t.threshold_db} dB`];
+  if(t.passes!=null)b.push(`${t.passes} passes`);
+  if(t.ambush_db!=null)b.push(`ambush ${t.ambush_db} dB`);
+  b.push(`cooldown ${t.cooldown_min} min`);
+  b.push(t.capture_override_s?`capture ${t.capture_override_s} s`:`capture recipe / ${t.capture_s} s`);
+  b.push(Number(t.keep_min_snr_db)>0?`keep IQ at ${t.keep_min_snr_db} dB+`:'keep level off');
+  return 'settings: '+b.join(', ');
+}
+function recRender(){
+  const run=recs.filter(r=>r.running),bar=document.getElementById('rec-bar');
+  bar.hidden=!run.length;
+  bar.innerHTML=run.map(r=>'recorder running: '+recLine(r)).join('<br>');
+  const el=document.getElementById('cs-status');if(!el)return;
+  const lines=run.map(r=>'recorder running: '+recLine(r)
+    +(r.cooldowns&&r.cooldowns.length?'<br>recorded; next allowed at: '+r.cooldowns.map(c=>`${c.mhz.toFixed(4)} MHz ${hhmm(c.until)}`).join(', ')
+      +' <span class="dim">(signals already recorded, not a queue)</span>':'')
+    +(r.settings?'<br><span class="dim">'+recSettings(r.settings)+'</span>':''));
+  const gone=recs.filter(r=>!r.running).slice(0,2).map(r=>`<span class="warn">${esc((r.receiver||'').toUpperCase())} SN ${esc(r.serial)}: `
+    +(r.state==='stopped'?`last watch (${esc(r.mode)}) ended ${hhmm(r.stopped)}, ${r.events} events, ${r.captures} captures`:esc(r.note||'not running'))+'</span>');
+  if(!run.length)lines.push('recorder: not running'+(recs.length?'':' (no watch has reported yet)'));
+  if(csCool.length&&!run.length)lines.push('recorded; next allowed at (from the catalogue): '+csCool.map(c=>`${c.mhz.toFixed(4)} MHz ${hhmm(c.until)}`).join(', '));
+  el.innerHTML=lines.concat(gone).join('<br>');
+}
+async function recPoll(){
+  try{const d=await (await fetch('/captures/recorders')).json();recs=d.recorders||[];recRender();}catch(e){}
+}
+// ---- second-radio panel: the recording the main view is NOT showing, and any marsad watch
+const OT_KEEP=120;
+let ot={file:null,have:0,rows:[],stamps:[]};
+const cssv=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+function otTicks(lo,hi,el){
+  // the page's ticks() starts at 1 MHz steps; a watch's tuning is a few hundred kHz wide
+  let tk=null;
+  for(const step of [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5])
+    if((hi-lo)/step<=8){const vals=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)vals.push(+v.toFixed(4));tk={step,vals};break;}
+  if(!tk||tk.vals.length<2)tk=ticks(lo,hi);
+  el.innerHTML=tk.vals.map(v=>`<span style="position:absolute;left:${(v-lo)/(hi-lo)*100}%;transform:translateX(-50%)">${+v.toFixed(3)}</span>`).join('');
+  return tk;}
+function otAxes(x,W,H,lo,hi,tk,dlo,dhi){
+  x.fillStyle=cssv('--bg');x.fillRect(0,0,W,H);
+  x.strokeStyle=cssv('--line');x.lineWidth=1;
+  for(const v of tk.vals){const px=Math.round((v-lo)/(hi-lo)*W)+.5;x.beginPath();x.moveTo(px,0);x.lineTo(px,H);x.stroke();}
+  x.fillStyle=cssv('--dim');x.font='10px ui-monospace,Consolas,monospace';
+  x.fillText(dhi.toFixed(0)+' dB',4,11);x.fillText(dlo.toFixed(0)+' dB',4,H-4);}
+function otTrace(x,arr,W,H,dlo,dhi,col,lw){
+  x.save();x.strokeStyle=col;x.lineWidth=lw;x.beginPath();let pen=false;
+  const n=arr.length;
+  for(let i=0;i<n;i++){const v=arr[i];if(v==null)continue;    // an empty column (fewer bins than columns): bridge it
+    const px=i/Math.max(1,n-1)*W,py=H-(v-dlo)/(dhi-dlo)*H;
+    if(pen)x.lineTo(px,py);else{x.moveTo(px,py);pen=true;}}
+  x.stroke();x.restore();}
+function otIngest(o){
+  if(!o){ot={file:null,have:0,rows:[],stamps:[]};return;}
+  if(o.file!==ot.file)ot={file:o.file,have:0,rows:[],stamps:[]};
+  ot.rows.push(...o.rows);ot.stamps.push(...o.stamps);
+  ot.rows=ot.rows.slice(-OT_KEEP);ot.stamps=ot.stamps.slice(-OT_KEEP);
+  ot.have=o.total;ot.o=o;}
+function otDrawRun(){
+  const o=ot.o,box=document.getElementById('ot-run');
+  box.hidden=!ot.file;if(!ot.file||!o)return;
+  const m=o.meta||{},n=o.cols;
+  document.getElementById('ot-run-h').innerHTML=`<b>${esc((m.receiver||'?').toUpperCase())}</b> · ${esc(m.tag||m.preset||'')} · `
+    +`<span class="s">${esc(o.file)}</span> · pass <b>${o.total}</b>${o.expected?' of '+o.expected:''}`
+    +(m.engine==='rtl_power_fftw'?' <span style="color:var(--amber)">(rtl_power_fftw scale, not rtl_power\'s)</span>':'')
+    +(o.fingerprint?`<br><span class="s" style="color:var(--dim)">${esc(o.fingerprint)}</span>`:'');
+  if(o.lo==null||o.hi==null)return;
+  const latest=ot.rows.length?ot.rows[ot.rows.length-1]:o.partial;
+  const mx=new Array(n).fill(null),md=new Array(n).fill(null);
+  for(let c=0;c<n;c++){const v=[];for(const r of ot.rows)if(r[c]!=null)v.push(r[c]);
+    if(v.length){v.sort((a,b)=>a-b);md[c]=v[Math.floor(v.length/2)];mx[c]=v[v.length-1];}}
+  const all=[].concat(...ot.rows).filter(v=>v!=null);
+  if(o.partial)all.push(...o.partial.filter(v=>v!=null));
+  if(!all.length)return;
+  const dlo=Math.floor(pct(all,.02)-3),dhi=Math.ceil(Math.max(...all)+3);
+  const cv=document.getElementById('ot-spec'),x=fit(cv),W=cv.width,H=cv.height;
+  const tk=otTicks(o.lo,o.hi,document.getElementById('ot-xs'));
+  otAxes(x,W,H,o.lo,o.hi,tk,dlo,dhi);
+  otTrace(x,mx,W,H,dlo,dhi,cssv('--amber'),1);
+  otTrace(x,md,W,H,dlo,dhi,cssv('--muted'),1);
+  if(latest)otTrace(x,latest,W,H,dlo,dhi,cssv('--accent'),1.5);
+  // waterfall, newest at the top
+  const fv=document.getElementById('ot-fall'),fx2=fit(fv),FW=fv.width,FH=fv.height;
+  const img=fx2.createImageData(n,OT_KEEP),flo=pct(all,.05),fhi=pct(all,.995);
+  for(let r=0;r<ot.rows.length;r++){const row=ot.rows[ot.rows.length-1-r];
+    let prev=null;
+    for(let c=0;c<n;c++){const v=row[c]!=null?row[c]:prev,k=(r*n+c)*4;prev=v;
+      const [R,G,B]=v==null?[0,0,0]:cmap((v-flo)/Math.max(1e-6,fhi-flo));
+      img.data[k]=R;img.data[k+1]=G;img.data[k+2]=B;img.data[k+3]=255;}}
+  const tmp=document.createElement('canvas');tmp.width=n;tmp.height=OT_KEEP;tmp.getContext('2d').putImageData(img,0,0);
+  fx2.fillStyle=cssv('--bg');fx2.fillRect(0,0,FW,FH);fx2.imageSmoothingEnabled=false;
+  fx2.drawImage(tmp,0,0,n,Math.max(1,ot.rows.length),0,0,FW,FH);}   // fill the height with what there is
+function otRecHtml(r,i){
+  const j=r.job||{},sp=r.spectrum;
+  const head=`<b>${esc((r.receiver||'?').toUpperCase())}</b> SN ${esc(r.serial)} · ${esc(r.mode)}`
+    +(j.kind?` · ${esc(j.kind)} on <b>${Number(j.target_mhz).toFixed(4)}</b> MHz (tuned ${Number(j.tuned_mhz).toFixed(4)})`:'')
+    +(j.tier?` · ${j.tier==='private'?'<span class="badge priv">PRIVATE: do not decode</span>':esc(j.tier)}${j.band?' '+esc(j.band):''}`:'')
+    +` · ${r.events} event${r.events===1?'':'s'}`;
+  // the plot and its key are always there, so the panel keeps its height when the radio goes idle
+  const hold=sp?sp.hold_s:2,thr=sp&&sp.threshold_db!=null?sp.threshold_db:12;
+  return `<div class="ot-sub ot-rec"><div class="ot-h">${head}</div>`
+    +`<canvas id="ot-rc${i}"></canvas><div class="xs" id="ot-rx${i}">&nbsp;</div>
+      <div class="key under"><span><i style="background:var(--accent);height:3px"></i>average over the last ${hold} s</span>
+      <span><i style="background:var(--amber);opacity:.6"></i>max-hold, same ${hold} s</span>
+      <span><i class="dash"></i>floor in the watched window (shaded)</span>
+      <span><i style="background:var(--amber);height:2px"></i>trigger: floor + ${thr} dB, reached by a 20 ms sub-band average</span>
+      <span><i class="tri" style="border-bottom-color:var(--green)"></i>recent events (grey: private band)</span></div>`
+    +'</div>';}
+function otDrawRec(r,i){
+  const sp=r.spectrum,cv=document.getElementById('ot-rc'+i);if(!cv)return;
+  if(!sp){const x=fit(cv);x.fillStyle=cssv('--bg');x.fillRect(0,0,cv.width,cv.height);
+    x.fillStyle=cssv('--dim');x.font='12px ui-monospace,Consolas,monospace';x.textAlign='center';
+    x.fillText('no spectrum: '+(r.job?'the radio is just starting on this tuning':'the radio is idle, waiting for the survey to trigger it'),
+      cv.width/2,cv.height/2);x.textAlign='start';return;}
+  const x=fit(cv),W=cv.width,H=cv.height,lo=sp.lo_mhz,hi=sp.hi_mhz;
+  const vals=sp.mean_db.concat(sp.max_db);if(sp.trigger_db!=null)vals.push(sp.trigger_db);
+  const dlo=Math.floor(Math.min(...vals)-3),dhi=Math.ceil(Math.max(...vals)+3);
+  const tk=otTicks(lo,hi,document.getElementById('ot-rx'+i));
+  otAxes(x,W,H,lo,hi,tk,dlo,dhi);
+  const X=f=>(f-lo)/(hi-lo)*W,Y=v=>H-(v-dlo)/(dhi-dlo)*H;
+  const [wa,wb]=sp.watch_mhz;
+  x.fillStyle='rgba(79,211,232,.08)';x.fillRect(X(wa),0,Math.max(2,X(wb)-X(wa)),H);
+  otTrace(x,sp.max_db,W,H,dlo,dhi,cssv('--amber'),1);
+  otTrace(x,sp.mean_db,W,H,dlo,dhi,cssv('--accent'),1.5);
+  if(sp.floor_db!=null){x.save();x.strokeStyle=cssv('--dim');x.setLineDash([3,4]);x.beginPath();
+    x.moveTo(X(wa)-6,Y(sp.floor_db));x.lineTo(X(wb)+6,Y(sp.floor_db));x.stroke();
+    x.setLineDash([]);x.strokeStyle=cssv('--amber');x.lineWidth=2;x.beginPath();
+    x.moveTo(X(wa)-6,Y(sp.trigger_db));x.lineTo(X(wb)+6,Y(sp.trigger_db));x.stroke();x.restore();}
+  const tx=Math.round(X(sp.tuned_mhz))+.5;
+  x.save();x.strokeStyle=cssv('--dim');x.setLineDash([2,3]);x.beginPath();x.moveTo(tx,0);x.lineTo(tx,H);x.stroke();x.restore();
+  x.font='10px ui-monospace,Consolas,monospace';
+  const now=Date.now()/1000;
+  for(const e of (r.recent_events||[])){if(e.mhz<lo||e.mhz>hi)continue;
+    const px=X(e.mhz);x.fillStyle=e.private?cssv('--dim'):cssv('--green');
+    x.beginPath();x.moveTo(px-5,16);x.lineTo(px+5,16);x.lineTo(px,6);x.closePath();x.fill();
+    const ago=now-e.at;x.fillText(ago<120?Math.round(ago)+' s ago':Math.round(ago/60)+' min ago',px+7,27);}
+}
+let otBusy=false,otRecsLast=[];
+async function otPoll(){
+  if(otBusy||!document.getElementById('pane-scan').classList.contains('on'))return;
+  otBusy=true;
+  try{
+    const d=await (await fetch('/other?main='+encodeURIComponent(curFile||liveFile||'')+'&since='+ot.have
+      +(ot.file?'&file='+encodeURIComponent(ot.file):''))).json();
+    otIngest(d.other);
+    const rs=d.recorders||[],none=document.getElementById('ot-none');
+    none.hidden=!!(d.other||rs.length);
+    none.textContent='Second radio: nothing else is recording (no other marsad run being written, no marsad watch running).';
+    otRecsLast=rs;
+    document.getElementById('ot-recs').innerHTML=rs.map(otRecHtml).join('');
+    if(panelOpen('ot')){otDrawRun();rs.forEach(otDrawRec);}
+  }catch(e){}
+  otBusy=false;
+}
+const csEl=id=>document.getElementById('cs-'+id);
+const csMHz=f=>f==null?'—':(f/1e6).toFixed(4);
+const csGrade=(g,snr,src)=>g?`<span class="badge g-${g}" title="${snr!=null?Number(snr).toFixed(1)+' dB, ':''}${esc(src||'')}">${g.toUpperCase()}</span>`:'';
+function csBadges(r){
+  return csGrade(r.grade,r.grade_snr_db,r.grade_source)+(r.badges||[]).map(b=>b==='OPEN'?'<span class="badge open">OPEN</span>'
+    :b.startsWith('PRIVATE')?'<span class="badge priv">PRIVATE: do not decode</span>'
+    :b==='ARCHIVED'?'<span class="badge arch">ARCHIVED</span>'
+    :'<span class="badge anom">ANOMALY: review</span>').join('')
+    +(r.iq_status&&r.iq_status!=='archived'?`<span class="badge iq${r.iq_status==='written'?' w':''}">${esc(r.iq_status)}</span>`:'');}
+function csBar(id,used,cap){const p=cap>0?Math.min(100,100*used/cap):0;csEl(id).style.width=p+'%';}
+function capturesInit(){
+  if(!cs.ready){cs.ready=true;
+    csEl('go').onclick=capturesLoad;
+    for(const id of [...CS_FILTERS,'sort'])csEl(id).onchange=capturesLoad;
+    csEl('reset').onclick=()=>{for(const id of CS_FILTERS){const e=csEl(id);if(e.type==='checkbox')e.checked=false;else e.value='';}
+      csEl('sort').value='time';capturesLoad();};
+    csEl('all').onchange=()=>{const on=csEl('all').checked;
+      for(const r of cs.shown)if(on)csPick(r);else cs.pick.delete(r.id);csSelShow();};
+    csEl('sel-clear').onclick=()=>{cs.pick.clear();csSelShow();};
+    csEl('bk-open').onclick=()=>{csEl('bk').hidden=false;csEl('bk-plan').innerHTML='';csEl('bk-out').textContent='';};
+    csEl('bk-cancel').onclick=()=>{csEl('bk').hidden=true;csEl('bk-plan').innerHTML='';};
+    csEl('bk-preview').onclick=csBkPlan;
+    document.querySelectorAll('input[name=cs-bk-zip]').forEach(i=>i.onchange=()=>{csEl('bk-plan').innerHTML='';});
+    for(const id of ['bk-fp','bk-ex'])csEl(id).onchange=()=>{csEl('bk-plan').innerHTML='';};
+    // ticking a box picks the event (or the group) and never opens it
+    csEl('groups').addEventListener('click',ev=>{const t=ev.target;
+      if(t.matches('input[data-pick]')){ev.stopPropagation();const r=cs.byId.get(+t.dataset.pick);
+        if(t.checked)csPick(r);else cs.pick.delete(r.id);csSelShow();}
+      else if(t.matches('input.gck')){ev.stopPropagation();const g=cs.groups[+t.dataset.g];
+        for(const r of g.rows)if(!csLocked(r)){if(t.checked)csPick(r);else cs.pick.delete(r.id);}csSelShow();}},true);
+    csEl('x-wav').onclick=()=>csExport('wav');csEl('x-cf32').onclick=()=>csExport('cf32');
+    csAuWire();
+    csEl('ar-open').onclick=()=>{csEl('ar-dlg').hidden=false;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';};
+    csEl('ar-cancel').onclick=()=>{csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';};
+    csEl('ar-preview').onclick=csArPlan;
+    document.querySelectorAll('input[name=cs-ar-scope]').forEach(i=>i.onchange=()=>{csEl('ar-plan').innerHTML='';});
+    for(const id of ['ar-fp','ar-ex'])csEl(id).onchange=()=>{csEl('ar-plan').innerHTML='';};}
+  capturesLoad();
+}
+async function capturesLoad(){
+  const q=new URLSearchParams();
+  for(const k of CS_FILTERS){const e=csEl(k),v=e.type==='checkbox'?(e.checked?'1':''):e.value;if(v)q.set(CS_PARAM[k]||k,v);}
+  q.set('sort',csEl('sort').value);
+  const seq=cs.seq=(cs.seq||0)+1;      // filters changed quickly: only the newest answer is drawn
+  let d;
+  try{d=await (await fetch('/captures?'+q)).json();}catch(e){csEl('note').textContent='could not read the catalogue: '+e;return;}
+  if(seq!==cs.seq)return;
+  if(d.error){csEl('note').textContent=d.error;return;}
+  const s=d.storage;
+  csEl('pool').innerHTML=`pool <b>${s.used_gb.toFixed(2)}</b> of ${s.pool_gb} GB  ·  ${esc(s.pool)}`;
+  csEl('day').innerHTML=`today <b>${s.today_gb.toFixed(2)}</b> of ${s.daily_gb} GB`;
+  csBar('poolbar',s.used_gb,s.pool_gb);csBar('daybar',s.today_gb,s.daily_gb);
+  csEl('arch').innerHTML=`archive <b>${(s.archive_gb||0).toFixed(2)}</b> GB  ·  ${esc(s.archive||'')}  ·  not counted in the pool`;
+  csCool=(d.status&&d.status.cooldowns)||[];
+  recRender();
+  csOpts('family',[['','any'],['none','not characterised'],...(d.families||[]).map(f=>[f,f])]);
+  csOpts('watch',[['','any'],...(d.watches||[]).map(w=>w.survey?[w.survey,csWatchName(w.survey)+` (${w.events})`]
+    :['fixed',`fixed watches (${w.events})`])]);
+  if(d.dates&&d.dates.length){csEl('d0').min=csEl('d1').min=d.dates[d.dates.length-1];csEl('d0').max=csEl('d1').max=d.dates[0];}
+  cs.groups=d.groups;cs.byId=new Map();cs.shown=[];
+  for(const g of d.groups)for(const r of g.rows){cs.byId.set(r.id,r);if(!csLocked(r))cs.shown.push(r);}
+  // First visit: open the newest event, so the viewer above the list is never empty.
+  let newest=null;
+  if(cs.sel==null&&!cs.auto){for(const g of d.groups)for(const r of g.rows)
+    if(!newest||(r.started||'')>(newest.r.started||''))newest={r,k:g.f_mhz.toFixed(3)};
+    if(newest){cs.auto=true;cs.open.add(newest.k);}}
+  csEl('note').textContent=d.db?`${d.total} event(s) in ${d.groups.length} signal(s), ${csSize(d.bytes||0)} in the pool, from ${d.db}`
+    :'No captures yet. `marsad watch fixed` or `marsad watch survey` fill this list.';
+  csEl('groups').innerHTML=d.groups.map((g,gi)=>{
+    const key=g.f_mhz.toFixed(3);
+    return `<div class="cs-grp${cs.open.has(key)?' open':''}" data-k="${key}"><div class="h">`
+      +`<input type="checkbox" class="gck" data-g="${gi}" title="select every event of this signal"${g.rows.every(csLocked)?' disabled':''}>`
+      +`<b>${g.f_mhz.toFixed(4)} MHz</b><span class="gsz" title="what this signal's events take in the pool">${csSize(g.bytes||0)}</span><span class="fam">${esc(g.family||'not characterised')}</span>`
+      +(g.band?`<span class="cnt">${esc(g.band)}</span>`:'')
+      +`<span class="cnt">${g.events} event${g.events===1?'':'s'}, ${g.captures} capture${g.captures===1?'':'s'}${g.archived?`, ${g.archived} archived`:''}, peak ${g.peak_db.toFixed(1)} dB, last ${esc((g.last||'').slice(0,19).replace('T',' '))}</span>`
+      +(g.private?'<span class="badge priv">PRIVATE: do not decode</span>':'<span class="badge open">OPEN</span>')
+      +(g.anomaly?'<span class="badge anom">ANOMALY: review</span>':'')
+      +(g.grade?`<span title="best grade among its events; ${Object.entries(g.grades||{}).map(([k,n])=>n+' '+k).join(', ')}">${csGrade(g.grade)}</span>`:'')
+      +`</div><div class="ev"><table><thead><tr><th class="ck"></th><th>Time</th><th>MHz</th><th>SNR dB</th><th>bw kHz</th><th>dur s</th><th>mode</th><th title="on disk in the pool: the capture it owns, its fingerprint, characterise report and exports">size</th><th style="text-align:left">badges</th></tr></thead><tbody>`
+      +g.rows.map(r=>`<tr class="go${r.id===cs.sel?' sel':''}" data-id="${r.id}"><td class="ck"><input type="checkbox" data-pick="${r.id}"${csLocked(r)?' disabled title="already archived"':''}></td><td>${esc((r.started||'').slice(0,19).replace('T',' '))}</td>`
+        +`<td>${csMHz(r.freq_hz)}</td><td>${r.snr_peak_db!=null?r.snr_peak_db.toFixed(1):'—'}</td>`
+        +`<td>${r.bandwidth_hz!=null?(r.bandwidth_hz/1e3).toFixed(1):'—'}</td><td>${r.duration_s!=null?r.duration_s.toFixed(2):'—'}</td>`
+        +`<td>${esc(r.mode||'')}</td><td class="sz">${csSizeCell(r)}</td><td style="text-align:left">${csBadges(r)}</td></tr>`).join('')
+      +'</tbody></table></div></div>';}).join('');
+  document.querySelectorAll('#cs-groups .cs-grp>.h').forEach(h=>h.onclick=()=>{
+    const g=h.parentElement,k=g.dataset.k;g.classList.toggle('open');
+    if(g.classList.contains('open'))cs.open.add(k);else cs.open.delete(k);});
+  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>tr.onclick=ev=>{
+    if(ev.target.closest('td.ck'))return;csEvent(+tr.dataset.id);});
+  csSelShow();
+  if(newest)csEvent(newest.r.id);
+}
+// ---- selection and bulk archive (capture_archive.plan_many / archive_many)
+const CS_FILTERS=['d0','d1','t0','t1','lo','hi','grade','family','content','min_mb','tier','anomaly','archived','watch'];
+const CS_PARAM={d0:'date_from',d1:'date_to',t0:'tod_from',t1:'tod_to'};
+const csSize=b=>!b?'0 MB':b>=1e9?(b/1e9).toFixed(2)+' GB':b>=1e7?(b/1e6).toFixed(0)+' MB':(b/1e6).toFixed(b>=1e5?1:2)+' MB';
+const csLocked=r=>r.iq_status==='archived';
+const csWatchName=s=>{const m=/^survey_[^_]+_[^_]+_(.+)_\d{8}-\d{4}$/.exec(s||'');return m?m[1]:s;};
+function csOpts(id,list){const e=csEl(id),keep=e.value;
+  e.innerHTML=list.map(([v,t])=>`<option value="${esc(v)}">${esc(t)}</option>`).join('');
+  e.value=list.some(([v])=>v===keep)?keep:'';}
+function csSizeCell(r){
+  return csSize(r.bytes||0)+(r.inside_of?`<br><span class="in" title="the IQ is in capture #${r.inside_of} (${csSize(r.inside_of_bytes||0)}), counted on that event">inside capture #${r.inside_of}</span>`:'');}
+function csPick(r){if(r&&!csLocked(r))cs.pick.set(r.id,{bytes:r.bytes||0,inside_of:r.inside_of,inside_of_bytes:r.inside_of_bytes||0});}
+// What the selection takes in the pool: each event's own bytes, plus once for every
+// capture that an event inside it brings along (archiving one brings the whole capture).
+function csSelBytes(){let n=0;const extra=new Map();
+  for(const [id,p] of cs.pick){n+=p.bytes;if(p.inside_of&&!cs.pick.has(p.inside_of))extra.set(p.inside_of,p.inside_of_bytes);}
+  for(const b of extra.values())n+=b;return n;}
+function csSelShow(){
+  const n=cs.pick.size,hidden=[...cs.pick.keys()].filter(id=>!cs.byId||!cs.byId.has(id)).length;
+  csEl('seln').innerHTML=n?`<b>${n}</b> event${n===1?'':'s'} selected, about <b>${csSize(csSelBytes())}</b>`
+    +(hidden?` (${hidden} not shown by the filters)`:''):'nothing selected';
+  csEl('bk-open').disabled=csEl('sel-clear').disabled=!n;
+  if(!n){csEl('bk').hidden=true;}
+  csEl('bk-plan').innerHTML='';
+  document.querySelectorAll('#cs-groups input[data-pick]').forEach(i=>{const on=cs.pick.has(+i.dataset.pick);
+    i.checked=on;i.closest('tr').classList.toggle('picked',on);});
+  document.querySelectorAll('#cs-groups input.gck').forEach(i=>{const rs=(cs.groups[+i.dataset.g]||{rows:[]}).rows.filter(r=>!csLocked(r));
+    const k=rs.filter(r=>cs.pick.has(r.id)).length;i.checked=rs.length>0&&k===rs.length;i.indeterminate=k>0&&k<rs.length;});
+  const k=cs.shown.filter(r=>cs.pick.has(r.id)).length;
+  csEl('all').checked=cs.shown.length>0&&k===cs.shown.length;csEl('all').indeterminate=k>0&&k<cs.shown.length;
+}
+function csBkOpts(){return {ids:[...cs.pick.keys()],per_group:document.querySelector('input[name=cs-bk-zip]:checked').value==='group',
+  keep_fp:csEl('bk-fp').checked,exports:csEl('bk-ex').checked};}
+async function csBkPlan(){
+  csEl('bk-plan').innerHTML='<span class="note">working out what would move…</span>';
+  let p;try{p=await (await fetch('/captures/archive/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(csBkOpts())})).json();}catch(err){csEl('bk-plan').textContent=String(err);return;}
+  if(p.error){csEl('bk-plan').innerHTML=`<div class="say">${esc(p.error)}</div>`;return;}
+  const frow=f=>`<tr><td>${esc(f.kind)}</td><td>${esc(f.rel)}</td><td class="n">${csSize(f.bytes)}</td><td>${f.leaves_pool?'leaves the pool':'copy; stays in the pool'}</td></tr>`;
+  csEl('bk-plan').innerHTML=`<p class="note" style="margin:8px 0 6px">${p.events} event(s), ${p.captures} capture(s)`
+      +(p.private?`, ${p.private} on a private band (fingerprints and rows only)`:'')
+      +`. ${p.zips.length} zip${p.zips.length===1?'':'s'} in ${esc(p.archive_dir)}, ${csSize(p.bytes_in_zip)} in all.</p>`
+    +`<table><thead><tr><th>zip</th><th>MHz</th><th class="n">events</th><th class="n">captures</th><th class="n">files out</th><th class="n">leaves the pool</th></tr></thead><tbody>`
+    +p.zips.map((z,i)=>`<tr><td>${i+1}</td><td>${z.f_mhz.toFixed(4)}</td><td class="n">${z.events}</td><td class="n">${z.captures}</td>`
+      +`<td class="n">${z.files.filter(f=>f.leaves_pool).length}</td><td class="n">${csSize(z.bytes_leaving_pool)}</td></tr>`).join('')
+    +`</tbody></table>`
+    +`<details><summary>every file (${p.files})</summary>${p.zips.map((z,i)=>`<div class="hm-l" style="margin-top:4px">zip ${i+1}, ${z.f_mhz.toFixed(4)} MHz</div><table>${z.files.map(frow).join('')}</table>`).join('')}</details>`
+    +(p.skipped.length?`<div class="say">Left out, the rest goes on:</div><ul class="note">${p.skipped.map(s=>`<li>events ${s.rows.join(', ')}: ${esc(s.why)}</li>`).join('')}</ul>`:'')
+    +(()=>{const ns=[...p.notes,...p.zips.flatMap(z=>z.notes)];return ns.length?`<ul class="note">${ns.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:'';})()
+    +`<div class="frm" style="margin-top:6px"><button class="btn" id="cs-bk-go" style="border-color:var(--amber)">`
+    +`Archive: ${p.zips.length} zip${p.zips.length===1?'':'s'}, move ${p.files_leaving} file(s) out of the pool, freeing ${csSize(p.bytes_leaving_pool)}</button></div>`;
+  csEl('bk-go').onclick=()=>csBkGo(p);
+}
+async function csBkGo(p){
+  if(!confirm(`Write ${p.zips.length} zip(s), check every file in each, then take ${p.files_leaving} file(s) (${csSize(p.bytes_leaving_pool)}) out of the recorder pool?\n\n`
+    +`A zip that fails its check takes nothing out of the pool.\nToday's daily-cap budget does not come back: the cap counts what was written today.`))return;
+  csEl('bk-plan').innerHTML='';csEl('bk').hidden=true;
+  csEl('bk-out').textContent=`archiving ${csSize(p.bytes_in_zip)} in ${p.zips.length} zip(s): writing, then checking each…`;
+  try{const d=await (await fetch('/captures/archive',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...csBkOpts(),note:csEl('bk-note').value,label:csEl('bk-label').value,confirm:true})})).json();
+    if(d.error){csEl('bk-out').textContent=d.error;return;}
+    cs.pick.clear();await capturesLoad();
+    csEl('bk-out').innerHTML=`archived and checked: ${d.zips.length} zip(s), ${d.events} event(s), ${csSize(d.bytes_freed)} freed in the pool.`
+      +`<ul>${d.zips.map(z=>`<li>${esc(z.zip)} (${csSize(z.zip_bytes)})</li>`).join('')}</ul>`
+      +(d.failed.length?`<div class="say">Did not verify, nothing of these left the pool:</div><ul>${d.failed.map(f=>`<li>${f.f_mhz.toFixed(4)} MHz: ${esc(f.why)}</li>`).join('')}</ul>`:'')
+      +(d.skipped.length?`<div>Left out: ${d.skipped.map(s=>esc(s.why)).join('; ')}</div>`:'');
+    if(cs.sel!=null)csEvent(cs.sel);
+  }catch(err){csEl('bk-out').textContent='archive failed: '+err;}
+}
+// Keep a row in view inside the list's own box (never scrolls the page), below the
+// sticky column header of its table.
+function csRowInView(tr){
+  const box=csEl('groups'),b=box.getBoundingClientRect(),r=tr.getBoundingClientRect();
+  const hh=(tr.closest('table').querySelector('thead')||{}).offsetHeight||0;
+  if(r.top<b.top+hh)box.scrollTop-=b.top+hh-r.top+2;
+  else if(r.bottom>b.bottom)box.scrollTop+=r.bottom-b.bottom+2;
+}
+// Up / down move through the events of the open signals while the Captures tab shows.
+document.addEventListener('keydown',ev=>{
+  if(ev.key!=='ArrowDown'&&ev.key!=='ArrowUp')return;
+  if(!document.getElementById('pane-captures').classList.contains('on'))return;
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test((ev.target||{}).tagName||''))return;
+  const rows=[...document.querySelectorAll('#cs-groups .cs-grp.open tr[data-id]')];
+  if(!rows.length)return;
+  let i=rows.findIndex(r=>+r.dataset.id===cs.sel);
+  i=ev.key==='ArrowDown'?Math.min(rows.length-1,i+1):Math.max(0,i<0?0:i-1);
+  ev.preventDefault();
+  csEvent(+rows[i].dataset.id);
+});
+function csPaint(cv,d){
+  // uint8 rows x cols (dB over the floor, scale_db) painted with the Scan tab's colour map
+  const raw=atob(d.img),W=d.cols,H=d.rows;
+  cv.width=W;cv.height=H;const g=cv.getContext('2d'),im=g.createImageData(W,H);
+  for(let i=0;i<W*H;i++){const c=cmap(raw.charCodeAt(i)/255);im.data[4*i]=c[0];im.data[4*i+1]=c[1];im.data[4*i+2]=c[2];im.data[4*i+3]=255;}
+  g.putImageData(im,0,0);
+}
+function csEnv(cv,d){
+  const W=cv.clientWidth||900,H=cv.clientHeight||120;cv.width=W;cv.height=H;
+  const g=cv.getContext('2d');g.clearRect(0,0,W,H);
+  const pk=d.env_dbfs_peak,mn=d.env_dbfs_mean,n=pk.length;if(!n)return;
+  const lo=Math.min(...mn),hi=Math.max(...pk);
+  const y=v=>H-4-(v-lo)/(hi-lo||1)*(H-8);
+  const line=(arr,col,w)=>{g.beginPath();g.strokeStyle=col;g.lineWidth=w;
+    arr.forEach((v,i)=>{const x=i/(n-1||1)*W;i?g.lineTo(x,y(v)):g.moveTo(x,y(v));});g.stroke();};
+  line(mn,'rgba(133,153,168,.8)',1);line(pk,'#4fd3e8',1.2);
+  g.fillStyle='rgba(133,153,168,.9)';g.font='10px ui-monospace,monospace';
+  g.fillText(hi.toFixed(1)+' dBFS',4,11);g.fillText(lo.toFixed(1)+' dBFS',4,H-4);
+}
+function csFact(k,v){return v==null||v===''?'':`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;}
+// ---- listening: /captures/audio demodulates a slice of the capture on the station and
+// streams WAV into the <audio> element; nothing is saved. Open events with IQ only: the
+// control lives in the IQ box, which private events never show, and the server refuses
+// a private event with 403 whatever is asked.
+// The plots answer back: a marker shows where the audio is, a click plays from there, a
+// drag picks what plays. A selection is {t0,t1} in seconds and, for a box, {f0,f1} in kHz
+// from the capture's centre; the box's centre becomes the offset and its width the channel.
+const csAu={id:null,start:0,len:0,dragging:false,view:null,sel:null,off0:0,tok:0,raf:0,drag:null};
+function csAuStop(){const a=csEl('au-el');csAu.tok++;a.pause();a.removeAttribute('src');a.load();csAuDraw();}
+function csAuSetup(e,r){
+  csAu.view=null;csAu.sel=null;csAu.drag=null;
+  csAuStop();csAu.id=r.id;csAu.start=0;
+  csAu.len=e.capture?e.capture.seconds:0;
+  const fam=(r.family||'').toLowerCase();
+  csEl('au-mode').value=/puls|chirp|radar/.test(fam)?'envelope':/fm|fsk/.test(fam)?'nfm':'am';
+  const half=(r.store_rate_hz||0)/2e3;
+  csEl('au-off').value=0;csEl('au-off').min=-half;csEl('au-off').max=half;
+  csEl('au-off').title=half?`within ±${half.toFixed(1)} kHz of the capture's centre`:'';
+  const pos=csEl('au-pos');pos.max=Math.max(0.1,csAu.len);pos.value=0;
+  csEl('au-t').textContent=`0.0 of ${csAu.len.toFixed(1)} s`;csEl('au-msg').textContent='';csEl('au-dem').textContent='';
+  csAuSelShow();
+}
+const csAuBox=s=>s&&s.f0!=null;
+function csAuShowPos(t){csEl('au-pos').value=t;csEl('au-t').textContent=`${t.toFixed(1)} of ${csAu.len.toFixed(1)} s`;}
+function csAuSelShow(){
+  const s=csAu.sel,v=csAu.view;csEl('au-sel').hidden=!s;
+  if(s){let w=`<b>Selected</b> ${s.t0.toFixed(2)} to ${s.t1.toFixed(2)} s (${(s.t1-s.t0).toFixed(2)} s)`;
+    if(csAuBox(s)&&v)w+=`, ${(v.centre_mhz+s.f0/1e3).toFixed(4)} to ${(v.centre_mhz+s.f1/1e3).toFixed(4)} MHz (offset ${((s.f0+s.f1)/2).toFixed(1)} kHz, width ${(s.f1-s.f0).toFixed(1)} kHz)`;
+    csEl('au-sel-t').innerHTML=w;}
+  csAuDraw();
+}
+function csAuPlaying(){const a=csEl('au-el');return !a.paused&&!a.ended;}
+// A selection plays between its ends, from t if given. Nothing selected: from t or the bar.
+async function csAuPlay(t){
+  const a=csEl('au-el'),s=csAu.sel;let start=typeof t==='number'?t:s?s.t0:+csEl('au-pos').value||0;
+  if(!s&&start>=csAu.len-0.05)start=0;               // Play after the end starts again
+  const box=csAuBox(s),off=box?(s.f0+s.f1)/2:+csEl('au-off').value||0;
+  const q=new URLSearchParams({id:csAu.id,mode:csEl('au-mode').value,start:start.toFixed(3),offset_khz:off.toFixed(3)});
+  if(s)q.set('dur',Math.max(0,s.t1-start).toFixed(3));
+  if(box)q.set('bw_khz',(s.f1-s.f0).toFixed(3));
+  csAuStop();const tok=csAu.tok;csAu.start=start;csAuShowPos(start);csEl('au-msg').textContent='demodulating…';
+  // a refusal (403) or a bad offset comes back as JSON: ask first, so the message can be shown
+  // (set, not appended: the server reads the first dur, and a selection already sends one)
+  const pre=new URLSearchParams(q);pre.set('dur','0');
+  try{const h=await fetch('/captures/audio?'+pre);
+    if(tok!==csAu.tok)return;                        // another click got here first
+    if(!h.ok){const j=await h.json().catch(()=>({}));csEl('au-msg').textContent=j.error||('refused: '+h.status);return;}
+    csEl('au-dem').textContent='Playing: '+(h.headers.get('X-Marsad-Demod')||csEl('au-mode').value);}
+  catch(err){if(tok===csAu.tok)csEl('au-msg').textContent='could not reach the station: '+err;return;}
+  a.src='/captures/audio?'+q;a.volume=+csEl('au-vol').value;
+  try{await a.play();if(tok===csAu.tok)csEl('au-msg').textContent='';}
+  catch(err){if(tok===csAu.tok)csEl('au-msg').textContent='the browser would not play it: '+err;}
+}
+// Clearing while playing carries on from the same place with what was there before.
+function csAuClear(){
+  const s=csAu.sel,on=csAuPlaying(),t=+csEl('au-pos').value||0;if(!s)return;
+  if(csAuBox(s))csEl('au-off').value=csAu.off0;
+  csAu.sel=null;csAuSelShow();
+  if(on)csAuPlay(t);
+}
+// A jump inside the selection stays in it; a jump outside its time range leaves it.
+function csAuJump(t){const s=csAu.sel;if(s&&(t<s.t0||t>=s.t1))csAuClear();csAuPlay(t);}
+function csAuSelect(sel){
+  const was=csAu.sel;
+  if(csAuBox(sel)){
+    if(!csAuBox(was))csAu.off0=+csEl('au-off').value||0;
+    csEl('au-off').value=((sel.f0+sel.f1)/2).toFixed(1);
+  }else if(csAuBox(was))csEl('au-off').value=csAu.off0;
+  csAu.sel=sel;csAuSelShow();csAuPlay();
+}
+// Plot coordinates. Time runs across the envelope and down the waterfall. Each waterfall
+// column is centred half an FFT bin below the middle of its pixels, fftshift's bin k being
+// at exactly k x fs / nfft from the band's lower edge.
+const csAuSec=()=>csAu.view?csAu.view.seconds:0;
+const csAuBinKhz=v=>v.rate/v.nfft/1e3;
+function csAuXtoF(v,x,W){const f=v.f_lo_khz+x/W*(v.f_hi_khz-v.f_lo_khz)-csAuBinKhz(v)/2;return Math.max(v.f_lo_khz,Math.min(v.f_hi_khz,f));}
+function csAuFtoX(v,f,W){return (f+csAuBinKhz(v)/2-v.f_lo_khz)/(v.f_hi_khz-v.f_lo_khz)*W;}
+function csAuFit(cv){const W=cv.clientWidth,H=cv.clientHeight;if(!W||!H)return null;
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}return cv.getContext('2d');}
+function csAuDraw(){
+  const wf=csEl('wf-o'),env=csEl('env-o');if(!wf||!env)return;
+  const gw=csAuFit(wf),ge=csAuFit(env),v=csAu.view;
+  for(const[g,cv]of[[gw,wf],[ge,env]])if(g)g.clearRect(0,0,cv.width,cv.height);
+  if(!v)return;
+  const T=v.seconds||1,d=csAu.drag,s=d&&d.moved?d.sel:csAu.sel;
+  if(s){
+    if(gw){const W=wf.width,H=wf.height,y0=s.t0/T*H,y1=s.t1/T*H,box=csAuBox(s);
+      const x0=box?csAuFtoX(v,s.f0,W):0,x1=box?csAuFtoX(v,s.f1,W):W;
+      gw.fillStyle='rgba(232,177,79,.16)';gw.fillRect(x0,y0,x1-x0,y1-y0);
+      gw.strokeStyle='#e8b14f';gw.lineWidth=1.5;gw.strokeRect(x0+.5,y0+.5,x1-x0-1,y1-y0-1);}
+    if(ge){const W=env.width,H=env.height,x0=s.t0/T*W,x1=s.t1/T*W;
+      ge.fillStyle='rgba(232,177,79,.2)';ge.fillRect(x0,0,x1-x0,H);
+      ge.strokeStyle='#e8b14f';ge.lineWidth=1.5;ge.strokeRect(x0+.5,.5,x1-x0-1,H-1);}
+  }
+  const a=csEl('au-el'),on=csAuPlaying()&&a.getAttribute('src');
+  const t=on?Math.min(T,csAu.start+a.currentTime):+csEl('au-pos').value||0;
+  if(!on&&!t)return;                                 // nothing played yet: no marker to show
+  const mark=(g,x0,y0,x1,y1)=>{g.lineCap='butt';
+    g.strokeStyle='rgba(0,0,0,.75)';g.lineWidth=4;g.beginPath();g.moveTo(x0,y0);g.lineTo(x1,y1);g.stroke();
+    g.strokeStyle=on?'#fff':'rgba(255,255,255,.55)';g.lineWidth=2;g.beginPath();g.moveTo(x0,y0);g.lineTo(x1,y1);g.stroke();};
+  if(gw){const y=t/T*wf.height;mark(gw,0,y,wf.width,y);}
+  if(ge){const x=t/T*env.width;mark(ge,x,0,x,env.height);}
+}
+function csAuTick(){
+  const a=csEl('au-el');csAu.raf=0;
+  if(!csAuPlaying()||!a.getAttribute('src')){csAuDraw();return;}
+  if(!csAu.dragging)csAuShowPos(Math.min(csAu.len,csAu.start+a.currentTime));
+  csAuDraw();csAu.raf=requestAnimationFrame(csAuTick);
+}
+// One pointer handler for mouse and touch. Under 6 px of movement is a click.
+function csAuPointer(cv,isWf){
+  const at=ev=>{const r=cv.getBoundingClientRect();
+    return [Math.max(0,Math.min(r.width,ev.clientX-r.left)),Math.max(0,Math.min(r.height,ev.clientY-r.top)),r.width,r.height];};
+  cv.addEventListener('pointerdown',ev=>{
+    if(!csAu.view||ev.button)return;
+    const[x,y]=at(ev);csAu.drag={id:ev.pointerId,x,y,moved:false,sel:null};
+    try{cv.setPointerCapture(ev.pointerId);}catch(err){}
+  });
+  cv.addEventListener('pointermove',ev=>{
+    const d=csAu.drag,v=csAu.view;if(!d||d.id!==ev.pointerId||!v)return;
+    const[x,y,W,H]=at(ev),T=v.seconds,dx=Math.abs(x-d.x),dy=Math.abs(y-d.y);
+    if(!d.moved&&(isWf?Math.max(dx,dy):dx)<6)return;
+    d.moved=true;
+    if(!isWf){const a=Math.min(d.x,x)/W*T,b=Math.max(d.x,x)/W*T;d.sel={t0:a,t1:Math.max(b,a+0.02)};}
+    else{
+      // Down the page with no width: a time range. Across with no height: that frequency
+      // range for the whole capture. Otherwise the box.
+      const a=dy<6?0:Math.min(d.y,y)/H*T,b=dy<6?T:Math.max(d.y,y)/H*T;
+      d.sel={t0:a,t1:Math.max(b,a+0.02)};
+      if(dx>=6){d.sel.f0=csAuXtoF(v,Math.min(d.x,x),W);d.sel.f1=csAuXtoF(v,Math.max(d.x,x),W);}
+    }
+    d.sel.t1=Math.min(T,d.sel.t1);
+    csAuDraw();
+  });
+  const end=(ev,cancel)=>{
+    const d=csAu.drag,v=csAu.view;if(!d||d.id!==ev.pointerId)return;
+    csAu.drag=null;
+    if(cancel||!v){csAuDraw();return;}
+    if(d.moved)csAuSelect(d.sel);
+    else csAuJump((isWf?d.y/cv.getBoundingClientRect().height:d.x/cv.getBoundingClientRect().width)*v.seconds);
+  };
+  cv.addEventListener('pointerup',ev=>end(ev,false));
+  cv.addEventListener('pointercancel',ev=>end(ev,true));
+}
+function csAuWire(){
+  const a=csEl('au-el'),pos=csEl('au-pos');
+  csEl('au-play').onclick=()=>csAuPlay();csEl('au-stop').onclick=()=>{csAuStop();csEl('au-msg').textContent='stopped';};
+  csEl('au-vol').oninput=()=>{a.volume=+csEl('au-vol').value;};
+  csEl('au-mode').onchange=()=>{if(csAu.sel||csAuPlaying())csAuPlay();};
+  // Typing an offset is choosing a frequency by hand: a box's frequencies go, its times stay.
+  csEl('au-off').onchange=()=>{const s=csAu.sel;
+    if(csAuBox(s)){csAu.sel={t0:s.t0,t1:s.t1};csAuSelShow();}
+    if(csAu.sel||csAuPlaying())csAuPlay();};
+  csEl('au-clr').onclick=csAuClear;
+  pos.oninput=()=>{csAu.dragging=true;csEl('au-t').textContent=`${(+pos.value).toFixed(1)} of ${csAu.len.toFixed(1)} s`;csAuDraw();};
+  pos.onchange=()=>{csAu.dragging=false;
+    if(!a.paused||a.getAttribute('src'))csAuJump(+pos.value);
+    else{const s=csAu.sel;if(s&&(+pos.value<s.t0||+pos.value>=s.t1))csAuClear();csAuDraw();}};
+  a.ontimeupdate=()=>{if(csAu.dragging)return;csAuShowPos(Math.min(csAu.len,csAu.start+a.currentTime));csAuDraw();};
+  a.onplaying=()=>{if(!csAu.raf)csAu.raf=requestAnimationFrame(csAuTick);};
+  a.onended=()=>{csEl('au-msg').textContent=csAu.sel?'end of the selection':'end of the capture';csAuDraw();};
+  csAuPointer(csEl('wf-o'),true);csAuPointer(csEl('env-o'),false);
+  window.addEventListener('resize',csAuDraw);
+  document.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'&&csAu.sel&&document.getElementById('pane-captures').classList.contains('on'))csAuClear();});
+}
+async function csEvent(id){
+  if(csAu.id!==id&&csEl('au-el'))csAuStop();
+  cs.sel=id;
+  document.querySelectorAll('#cs-groups tr[data-id]').forEach(tr=>{
+    const on=+tr.dataset.id===id;tr.classList.toggle('sel',on);if(on)csRowInView(tr);});
+  const box=csEl('ev');box.hidden=false;
+  let e;try{e=await (await fetch('/captures/event?id='+id)).json();}catch(err){return;}
+  if(e.error){csEl('ev-t').textContent=e.error;return;}
+  const r=e.row;
+  csEl('ev-t').textContent=`Event ${r.id} — ${csMHz(r.freq_hz)} MHz, ${(r.started||'').replace('T',' ').slice(0,23)}`;
+  csEl('ev-badges').innerHTML=csBadges({...r,badges:e.badges});
+  const g=(e.meta||{}).global||{};
+  csEl('facts').innerHTML=[
+    csFact('asked for',r.target_hz?csMHz(r.target_hz)+' MHz':null),csFact('tuned',r.tuned_hz?csMHz(r.tuned_hz)+' MHz':null),
+    csFact('band',esc(r.band||'not in the tier table')),csFact('mode / trigger',esc((r.mode||'')+' · '+(r.trigger||''))),
+    csFact('survey',esc(r.survey||'')),
+    csFact('SNR peak / median',r.snr_peak_db!=null?`${r.snr_peak_db.toFixed(1)} / ${(r.snr_median_db??0).toFixed(1)} dB`:null),
+    csFact('occupied bandwidth',r.bandwidth_hz!=null?(r.bandwidth_hz/1e3).toFixed(1)+' kHz':null),
+    csFact('duration / duty',r.duration_s!=null?`${r.duration_s.toFixed(2)} s, ${(100*(r.duty||0)).toFixed(0)} % active`:null),
+    csFact('since previous',r.repeat_s!=null?r.repeat_s.toFixed(2)+' s':null),
+    csFact('strength',r.grade?`${esc(r.grade)}${r.grade_snr_db!=null?', '+Number(r.grade_snr_db).toFixed(1)+' dB':''} (${esc(r.grade_source||'')})`:null),
+    csFact('family',esc(r.family||'')),csFact('notes',esc(r.notes||'')),
+    csFact('watch settings',r.settings&&typeof r.settings==='object'?esc(recSettings(r.settings).replace('settings: ','')):null),
+    csFact('receiver',esc(`${(r.receiver||'').toUpperCase()} SN ${r.serial||'?'}, gain ${r.gain_db??'?'} dB, ppm ${r.ppm??0}`)),
+    csFact('radio / cut rate',r.rtl_rate_hz?`${(r.rtl_rate_hz/1e6).toFixed(3)} MS/s`+(r.store_rate_hz?` / ${(r.store_rate_hz/1e3).toFixed(1)} kS/s`:''):null),
+    csFact('IQ',esc(r.iq_status||'')+(e.capture?` — ${esc(e.capture.file)}, ${(e.capture.bytes/1e6).toFixed(0)} MB, ${e.capture.seconds.toFixed(1)} s`
+      +(e.capture.own?'':`, this event ${e.capture.offset_s.toFixed(1)} s in`):'')),
+    csFact('hardware',esc(g['core:hw']||'')),csFact('chain',esc(g['marsad:chain']||r.chain||'')),
+    csFact('start (UTC)',esc(((e.meta||{}).captures||[{}])[0]['core:datetime']||'')),
+    csFact('exports',e.exports&&e.exports.length?esc(e.exports.join(', ')):null),
+  ].join('');
+  csEl('priv').hidden=!e.private;
+  csEl('iqbox').hidden=true;csEl('x-out').textContent='';
+  csArShow(e);
+  const more=[];
+  if(e.recipe)more.push(`<div><div class="hm-l">Recipe for the next capture</div><pre class="cmd">${esc(JSON.stringify(e.recipe,null,1))}</pre></div>`);
+  if(e.report)more.push(`<div><div class="hm-l">Characterise report</div><pre class="md" style="padding:8px">${esc(e.report)}</pre></div>`);
+  csEl('more').innerHTML=more.join('');
+  try{const f=await (await fetch('/captures/fp?id='+id)).json();
+    if(f.error){csEl('fp-l').textContent=f.error;csEl('fp-r').textContent='';}
+    else{csPaint(csEl('fp'),f);csEl('fp-l').textContent=`${f.f_lo_khz.toFixed(0)} kHz`;
+      csEl('fp-r').textContent=`+${f.f_hi_khz.toFixed(0)} kHz around ${f.signal_mhz.toFixed(4)} MHz · ${f.seconds.toFixed(2)} s`;}}catch(err){}
+  if(e.private||!e.capture)return;        // no IQ: by design (private) or not written (cooldown, pool full)
+  csEl('iqbox').hidden=false;csAuSetup(e,r);csEl('wf-t').textContent='IQ waterfall: reading the capture…';
+  try{const v=await (await fetch('/captures/iq?id='+id)).json();
+    if(cs.sel!==id)return;
+    if(v.error){csEl('wf-t').textContent=v.error;return;}
+    csPaint(csEl('wf'),v);csEnv(csEl('env'),v);csAu.view=v;csAuDraw();
+    csEl('wf-t').textContent=`IQ waterfall of ${v.file}: max-hold per row (${v.seconds.toFixed(1)} s top to bottom, ${v.rows} rows), dB over each bin's median`;
+    csEl('wf-l').textContent=`${v.f_lo_khz.toFixed(0)} kHz`;csEl('wf-c').textContent=`${v.centre_mhz.toFixed(4)} MHz`;
+    csEl('wf-r').textContent=`+${v.f_hi_khz.toFixed(0)} kHz`;csEl('env-r').textContent=v.seconds.toFixed(1)+' s';
+  }catch(err){csEl('wf-t').textContent='could not read the capture: '+err;}
+}
+// ---- archive: zip, verify, then take out of the pool (capture_archive.py)
+const csMB=b=>(b/1e6).toFixed(b<1e7?1:0)+' MB';
+function csArOpts(){return {id:cs.sel,scope:document.querySelector('input[name=cs-ar-scope]:checked').value,
+  keep_fp:csEl('ar-fp').checked,exports:csEl('ar-ex').checked};}
+function csArShow(e){
+  const r=e.row,a=e.archive,arch=r.iq_status==='archived';
+  csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';
+  csEl('ar-new').hidden=arch;
+  const box=csEl('ar-arch');box.hidden=!a;
+  if(a)box.innerHTML=(a.error?`<b>Archive:</b> ${esc(a.file)} — ${esc(a.error)}`
+      :`<b>${arch?'Archived':'Also archived'}</b> in ${esc(a.file)} (${csMB(a.bytes)}, ${esc((a.created_utc||'').replace('T',' ').replace('+00:00',''))} UTC, `
+       +`${a.events} event(s), ${a.captures} capture(s))`+(a.note?` — “${esc(a.note)}”`:''))
+    +(arch&&!a.error?' <button class="btn" id="cs-ar-restore" title="unzip back into the pool, checking every file; the zip is kept">Restore to the pool</button>':'');
+  const rb=document.getElementById('cs-ar-restore');
+  if(rb)rb.onclick=async()=>{
+    if(!confirm(`Unzip ${a.file} back into the recorder pool?\n\nEvery file is checked against its hash. The zip stays in the archive folder as a second copy.`))return;
+    csEl('ar-out').textContent='restoring…';
+    try{const d=await (await fetch('/captures/restore',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:cs.sel})})).json();
+      if(d.error){csEl('ar-out').textContent=d.error;return;}
+      const id=cs.sel;await capturesLoad();await csEvent(id);
+      csEl('ar-out').textContent=`${d.note}: ${d.events} event(s), ${csMB(d.bytes_restored)} back in the pool.`;
+    }catch(err){csEl('ar-out').textContent='restore failed: '+err;}};
+}
+async function csArPlan(){
+  csEl('ar-plan').innerHTML='<span class="note">working out what would move…</span>';
+  let p;try{p=await (await fetch('/captures/archive/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(csArOpts())})).json();}catch(err){csEl('ar-plan').textContent=String(err);return;}
+  if(p.error){csEl('ar-plan').innerHTML=`<div class="say">${esc(p.error)}</div>`;return;}
+  const leave=p.files.filter(f=>f.leaves_pool),stay=p.files.filter(f=>!f.leaves_pool);
+  const row=f=>`<tr><td>${esc(f.kind)}</td><td>${esc(f.rel)}</td><td style="text-align:right">${csMB(f.bytes)}</td></tr>`;
+  const kinds=leave.reduce((m,f)=>(m[f.kind]=(m[f.kind]||0)+1,m),{});
+  csEl('ar-plan').innerHTML=`<p class="note" style="margin:0 0 6px">${p.events} event(s), ${p.captures} capture(s)`
+      +(p.private?`, ${p.private} on a private band (fingerprints and rows only)`:'')+`. One zip in ${esc(p.archive_dir)}, ${csMB(p.bytes_in_zip)}.</p>`
+    +(leave.length?`<div class="hm-l">Leaves the pool once the zip has been checked: ${leave.length} file(s), ${Object.entries(kinds).map(([k,n])=>n+' '+k).join(', ')}</div>`
+      +`<details><summary>list</summary><table>${leave.map(row).join('')}</table></details>`
+      :'<div class="hm-l">Nothing leaves the pool: the zip holds copies only.</div>')
+    +(stay.length?`<div class="hm-l" style="margin-top:4px">Copied into the zip and also kept in the pool: ${stay.length} file(s), ${csMB(stay.reduce((a,f)=>a+f.bytes,0))}</div>`:'')
+    +(p.notes.length?`<ul class="note">${p.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:'')
+    +`<div class="frm" style="margin-top:6px"><button class="btn" id="cs-ar-go" style="border-color:var(--amber)">`
+    +`Archive: move ${leave.length} file(s) out of the pool, freeing ${csMB(p.bytes_leaving_pool)}</button></div>`;
+  csEl('ar-go').onclick=()=>csArGo(p);
+}
+async function csArGo(p){
+  const n=p.files.filter(f=>f.leaves_pool).length;
+  if(!confirm(`Write the zip, check every file in it, then take ${n} file(s) (${csMB(p.bytes_leaving_pool)}) out of the recorder pool?\n\nIf the check fails, nothing leaves the pool.`))return;
+  csEl('ar-plan').innerHTML='';csEl('ar-dlg').hidden=true;
+  csEl('ar-out').textContent=`archiving ${csMB(p.bytes_in_zip)}: writing the zip, then checking it…`;
+  try{const d=await (await fetch('/captures/archive',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...csArOpts(),note:csEl('ar-note').value,label:csEl('ar-label').value,confirm:true})})).json();
+    if(d.error){csEl('ar-out').textContent=d.error;return;}
+    const id=cs.sel;await capturesLoad();await csEvent(id);
+    csEl('ar-out').textContent=`archived and checked: ${d.zip} (${csMB(d.zip_bytes)}), ${d.events} event(s); ${csMB(d.bytes_freed)} freed in the pool.`
+      +(d.notes&&d.notes.length?' '+d.notes.join('; '):'');
+  }catch(err){csEl('ar-out').textContent='archive failed: '+err;}
+}
+async function csExport(fmt){
+  if(cs.sel==null)return;
+  csEl('x-out').textContent='exporting… (a copy; the SigMF capture stays the master)';
+  try{const r=await fetch('/captures/export',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:cs.sel,format:fmt})});const d=await r.json();
+    csEl('x-out').textContent=d.error?d.error:`${d.note}: ${d.file} (${(d.bytes/1e6).toFixed(0)} MB)`+(d.notes&&d.notes.length?' — '+d.notes.join('; '):'');
+  }catch(err){csEl('x-out').textContent='export failed: '+err;}
+}
+
+// ---------------------------------------------------------------- Chain tab
+// The page owns the drawing; the server stores it, stamps 'updated' when a
+// chain's parts change, and renders the text a run records.
+let ch={data:null,sel:null,part:null,ready:false,timer:null,drag:null};
+const chEl=id=>document.getElementById('ch-'+id);
+function chCur(){return ch.data&&ch.sel?ch.data.chains[ch.sel]:null;}
+function chPartText(p){
+  let n=(p.name||ch.data.parts[p.type].label||'part').trim();
+  if(p.type==='attenuator'&&p.db)n=p.db+' dB SMA attenuator';
+  return p.detail?`${n} (${p.detail})`:n;
+}
+function chText(parts){return parts.map(chPartText).join(' > ');}
+function chStamp(s){return s?String(s).slice(5,16).replace('T',' '):'never';}
+async function chainInit(){
+  if(ch.ready){chRender();return;}ch.ready=true;
+  try{
+    ch.data=await (await fetch('/chain')).json();
+    if(ch.data.error){chEl('saved').innerHTML=`<span class="bad">${esc(ch.data.error)}</span>`;}
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">could not load /chain: ${esc(e)}</span>`;return;}
+  chEl('file').textContent=ch.data.file||'chain.json';
+  ch.sel=ch.data.current||Object.keys(ch.data.chains)[0]||null;
+  // palette, grouped
+  const groups={};for(const [t,d] of Object.entries(ch.data.parts))(groups[d.group]=groups[d.group]||[]).push([t,d]);
+  chEl('pal').innerHTML=Object.entries(groups).map(([g,items])=>`<span class="grp">${esc(g)}</span>`
+    +items.map(([t,d])=>`<span class="chip" draggable="true" data-type="${esc(t)}" title="${esc(d.note||'')}">${esc(d.label)}</span>`).join('')).join('');
+  chEl('pal').querySelectorAll('.chip').forEach(c=>{
+    c.addEventListener('dragstart',e=>{ch.drag={type:c.dataset.type};c.classList.add('drag');e.dataTransfer.effectAllowed='copy';e.dataTransfer.setData('text/plain',c.dataset.type);});
+    c.addEventListener('dragend',()=>{c.classList.remove('drag');ch.drag=null;});
+    c.onclick=()=>chAdd(c.dataset.type,null);
+  });
+  chEl('sel').onchange=()=>{ch.sel=chEl('sel').value;ch.part=null;chRender();};
+  chEl('use').onclick=chUse;
+  chEl('new').onclick=()=>{const n=prompt('Name for the new chain (letters, digits, dashes):');if(!n)return;
+    if(ch.data.chains[n]){alert('that name exists');return;}
+    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:[{type:'pc',name:'PC',detail:''}]};
+    ch.sel=n;ch.part=null;chChanged();};
+  chEl('dup').onclick=()=>{const c=chCur();if(!c)return;const n=prompt('Name for the copy:',ch.sel+'-copy');if(!n||ch.data.chains[n])return;
+    ch.data.chains[n]={static:false,updated:null,last_used:null,parts:JSON.parse(JSON.stringify(c.parts))};ch.sel=n;ch.part=null;chChanged();};
+  chEl('ren').onclick=()=>{const c=chCur();if(!c)return;const n=prompt('New name:',ch.sel);if(!n||n===ch.sel||ch.data.chains[n])return;
+    ch.data.chains[n]=c;delete ch.data.chains[ch.sel];if(ch.data.current===ch.sel)ch.data.current=n;ch.sel=n;chChanged();};
+  chEl('del').onclick=()=>{const c=chCur();if(!c)return;if(Object.keys(ch.data.chains).length<2){alert('keep at least one chain');return;}
+    if(!confirm(`Delete chain "${ch.sel}"? The drawing is lost; runs already recorded keep their text.`))return;
+    delete ch.data.chains[ch.sel];if(ch.data.current===ch.sel)ch.data.current=Object.keys(ch.data.chains)[0];ch.sel=ch.data.current;ch.part=null;chChanged();};
+  chEl('static').onchange=()=>{const c=chCur();if(c){c.static=chEl('static').checked;chChanged();}};
+  chEl('copy').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(chEl('text').textContent);chEl('saved').textContent='copied';};
+  chRender();
+}
+function chAdd(type,pos){
+  const c=chCur();if(!c)return;
+  const d=ch.data.parts[type];
+  const p={type,name:d.label,detail:''};
+  if(type==='antenna')p.name='antenna';if(type==='sdr'){const r0=(ch.data.receivers||[])[0]||'';p.name=r0;p.rx=r0;}
+  if(type==='attenuator'){p.db=10;}
+  // A chain is built outward from the PC, so a clicked part goes to the far left
+  // (the growing source end); a drop onto a slot goes exactly where dropped.
+  if(pos===null||pos===undefined)pos=(type==='pc')?c.parts.length:0;
+  c.parts.splice(pos,0,p);ch.part=pos;chChanged();
+}
+function chMove(from,to){
+  const c=chCur();if(!c||from===to||from+1===to)return;
+  const [p]=c.parts.splice(from,1);if(to>from)to--;c.parts.splice(to,0,p);ch.part=to;chChanged();
+}
+function chRender(){
+  if(!ch.data)return;
+  const names=Object.keys(ch.data.chains);
+  chEl('sel').innerHTML=names.map(n=>`<option value="${esc(n)}"${n===ch.sel?' selected':''}>${esc(n)}${n===ch.data.current?' (current)':''}</option>`).join('');
+  const c=chCur();
+  chEl('cur').textContent=c&&ch.sel===ch.data.current?'current — runs use this chain':'';
+  chEl('use').disabled=!c||ch.sel===ch.data.current;
+  chEl('static').checked=!!(c&&c.static);
+  chEl('stamp').textContent=c?`updated ${chStamp(c.updated)} · last used as drawn ${chStamp(c.last_used)}`
+    +(c.static?'':(c.last_used?' · unchanged since that run: the next run will ask':'')):'';
+  const rail=chEl('rail');
+  if(!c){rail.innerHTML='<span class="note">no chain</span>';return;}
+  let h='';
+  c.parts.forEach((p,i)=>{
+    const d=ch.data.parts[p.type]||{};
+    h+=`<div class="slot" data-pos="${i}">+</div>`;
+    h+=`<div class="node${i===ch.part?' sel':''}${d.source?' src':''}${p.type==='sdr'?' rx':''}" draggable="true" data-i="${i}">`
+      +`<div class="t">${esc(d.label||p.type)}</div><div class="n">${esc(p.type==='attenuator'&&p.db?p.db+' dB':p.name||d.label)}</div>`
+      +(p.detail?`<div class="d">${esc(p.detail)}</div>`:'')+`</div>`;
+  });
+  h+=`<div class="slot end" data-pos="${c.parts.length}">+ end</div>`;
+  rail.innerHTML=h;
+  rail.querySelectorAll('.node').forEach(n=>{
+    n.onclick=()=>{ch.part=+n.dataset.i;chRender();};
+    n.addEventListener('dragstart',e=>{ch.drag={index:+n.dataset.i};n.classList.add('drag');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','node');});
+    n.addEventListener('dragend',()=>{n.classList.remove('drag');ch.drag=null;chRender();});
+  });
+  rail.querySelectorAll('.slot').forEach(s=>{
+    s.addEventListener('dragover',e=>{e.preventDefault();s.classList.add('over');e.dataTransfer.dropEffect=ch.drag&&ch.drag.type?'copy':'move';});
+    s.addEventListener('dragleave',()=>s.classList.remove('over'));
+    s.addEventListener('drop',e=>{e.preventDefault();s.classList.remove('over');const pos=+s.dataset.pos;
+      if(!ch.drag)return;if(ch.drag.type)chAdd(ch.drag.type,pos);else chMove(ch.drag.index,pos);ch.drag=null;});
+  });
+  chEditor();
+  chEl('text').textContent=chText(c.parts);
+}
+function chEditor(){
+  const c=chCur();const wrap=chEl('edwrap');
+  if(!c||ch.part===null||ch.part>=c.parts.length){wrap.hidden=true;return;}
+  wrap.hidden=false;
+  const p=c.parts[ch.part],d=ch.data.parts[p.type]||{fields:[]};
+  const canonHint=(p.type!=='custom'&&p.type!=='attenuator'&&p.name&&p.name!==d.label&&['filter','lna','dcblock','adapter','isolator','pc'].includes(p.type))
+    ?`<span class="note" style="flex:1 1 100%">recorded text stays searchable with the standard name “${esc(d.label)}” — <a href="#" id="che-canon" style="color:var(--accent)">use it</a> (put “${esc(p.name)}” in the detail if it matters)</span>`:'';
+  let h=`<label>Type<select id="che-type">${Object.entries(ch.data.parts).map(([t,x])=>`<option value="${t}"${t===p.type?' selected':''}>${esc(x.label)}</option>`).join('')}</select></label>`
+    +(p.type==='attenuator'?'':`<label>Name (as the chain text says it)<input id="che-name" value="${esc(p.name||'')}" placeholder="${esc(d.label)}"></label>`)
+    +`<label>Detail (in brackets)<input id="che-detail" value="${esc(p.detail||'')}" style="min-width:340px"></label>`+canonHint;
+  if(d.fields.includes('length'))h+=`<label>Length<input id="che-length" class="sm" value="${esc(p.length||'')}" placeholder="e.g. 3 ft"></label>`;
+  if(d.fields.includes('db'))h+=`<label>dB<input id="che-db" class="sm" type="number" value="${esc(p.db||'')}"></label>`;
+  if(d.fields.includes('rx'))h+=`<label>Receiver<select id="che-rx">${(ch.data.receivers||[]).map(r=>`<option value="${esc(r)}"${p.rx===r?' selected':''}>${esc(r)}</option>`).join('')}</select></label>`;
+  h+=`<label>&nbsp;<span><button class="btn" id="che-left" title="move left">◀</button> <button class="btn" id="che-right" title="move right">▶</button> <button class="btn" id="che-rm">Remove</button></span></label>`;
+  if(d.note)h+=`<span class="note" style="flex:1 1 100%">${esc(d.note)}</span>`;
+  chEl('ed').innerHTML=h;
+  const g=id=>document.getElementById('che-'+id);
+  const canon=g('canon');if(canon)canon.onclick=e=>{e.preventDefault();p.name=d.label;chChanged();};
+  const upd=()=>{p.type=g('type').value;if(g('name'))p.name=g('name').value;p.detail=g('detail').value;
+    if(g('length'))p.length=g('length').value;if(g('db'))p.db=g('db').value?+g('db').value:'';if(g('rx'))p.rx=g('rx').value;
+    chChanged(false);};
+  g('type').onchange=()=>{p.type=g('type').value;const nd=ch.data.parts[p.type];if(!p.name||p.name===d.label)p.name=nd.label;chChanged();};
+  for(const id of ['name','detail','length','db','rx']){const el=g(id);if(el){el.oninput=upd;el.onchange=upd;}}
+  g('left').onclick=()=>{if(ch.part>0)chMove(ch.part,ch.part-1);};
+  g('right').onclick=()=>{if(ch.part<c.parts.length-1)chMove(ch.part,ch.part+2);};
+  g('rm').onclick=()=>{c.parts.splice(ch.part,1);ch.part=null;chChanged();};
+}
+function chChanged(render=true){
+  if(render)chRender();else{const c=chCur();chEl('text').textContent=chText(c.parts);
+    const n=chEl('rail').querySelector('.node.sel');if(n){const p=c.parts[ch.part];n.querySelector('.n').textContent=p.type==='attenuator'&&p.db?p.db+' dB':p.name||'';
+      let dd=n.querySelector('.d');if(p.detail){if(!dd){dd=document.createElement('div');dd.className='d';n.appendChild(dd);}dd.textContent=p.detail;}else if(dd)dd.remove();}}
+  chEl('saved').textContent='saving…';
+  clearTimeout(ch.timer);ch.timer=setTimeout(chSave,500);
+}
+async function chSave(){
+  try{
+    const body={schema:1,current:ch.data.current,chains:{}};
+    for(const [n,c] of Object.entries(ch.data.chains))body.chains[n]={static:c.static,updated:c.updated,last_used:c.last_used,parts:c.parts};
+    const r=await fetch('/chain/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.error){chEl('saved').innerHTML=`<span class="bad">not saved: ${esc(d.error)}</span>`;return;}
+    for(const [n,c] of Object.entries(d.chains)){if(ch.data.chains[n]){ch.data.chains[n].updated=c.updated;ch.data.chains[n].last_used=c.last_used;}}
+    chEl('saved').textContent='saved';
+    const c=chCur();if(c)chEl('stamp').textContent=`updated ${chStamp(c.updated)} · last used as drawn ${chStamp(c.last_used)}`;
+    pbChainRefresh();
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">not saved: ${esc(e)}</span>`;}
+}
+async function chUse(){
+  try{
+    await chSave();
+    const r=await fetch('/chain/use',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ch.sel})});
+    const d=await r.json();
+    if(d.error){chEl('saved').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
+    ch.data.current=d.current;chRender();chEl('saved').textContent='current chain set; station.json default updated';
+    pbChainRefresh();
+  }catch(e){chEl('saved').innerHTML=`<span class="bad">${esc(e)}</span>`;}
+}
+
+// ---------------------------------------------------------------- Probe tab
+// The form is sent to the server as-is; Python composes the tag, chain and
+// conditions and the command, so the page never holds a second copy of the rules.
+let pbReady=false, pbTimer=null, pbPolling=false, pbLastState=null, pbCfg=null, pbFound=[], pbChain=null;
+// Device index: only ever what detection found, or what was typed by hand since the
+// page opened. station.json's number and the last run's are not used: USB numbering
+// moves when a dongle is unplugged, and a remembered 1 sent runs to an empty index
+// pbDetErr holds why detection last failed, shown on the page.
+let pbDevTyped=false, pbDetErr=null;
+// The Chain tab's current drawing is the authority for the chain after the probe,
+// when its receiver matches the one picked here; otherwise the built-in text for
+// that receiver is used. Either way the box stays editable for a one-off change.
+async function pbChainRefresh(){
+  try{pbChain=await (await fetch('/chain')).json();}catch(e){pbChain=null;}
+  if(pbReady&&pbCfg)pbRxChanged(true);
+}
+function pbChainFor(id){
+  // a probe chain for this receiver: the current one if it qualifies, else the first that does
+  const all=pbChain?Object.entries(pbChain.chains||{}):[];
+  const ok=([n,c])=>c.source==='probe'&&c.receiver===id;
+  const hit=all.find(([n])=>n===pbChain.current&&ok([n,pbChain.chains[n]]))||all.find(ok);
+  if(hit){const [n,c]=hit;return {tail:c.tail,note:`from the Chain tab: "${n}"${n===pbChain.current?' (current)':''}${c.static?' (static)':''} — edit it there, or here for one run`};}
+  const r=(pbCfg.receivers||[]).find(x=>x.id===id);
+  return {tail:r?r.chain_tail:'',note:`no probe chain for the ${id.toUpperCase()} on the Chain tab, so the built-in probe chain is used`};
+}
+const PB_KEYS=['target','target-other','devstate','devstate-other','probe','where','min','range','centre','receiver','device','attenuator','notes','chain'];
+const pbEl=id=>document.getElementById('pb-'+id);
+function pbForm(){
+  return {target:pbEl('target').value, target_other:pbEl('target-other').value,
+          state:pbEl('devstate').value, state_other:pbEl('devstate-other').value,
+          probe:pbEl('probe').value, where:pbEl('where').value, minutes:pbEl('min').value,
+          range:pbEl('range').value, centre:pbEl('centre').value, receiver:pbEl('receiver').value,
+          device:pbEl('device').value, attenuator:pbEl('attenuator').value,
+          notes:pbEl('notes').value, chain_tail:pbEl('chain').value,
+          // Start on this form is pressed right beside the target and held fields, so it
+          // counts as confirming them; the Hunt panel sends its own after its own box.
+          confirmed:true};
+}
+// Receiver -> device index, from what detection found plugged in; null when it was
+// not found, so the box is left empty rather than holding a guess.
+function pbRxDefault(id){const f=pbFound.find(x=>x.receiver===id);return f?f.device:null;}
+function pbRxLabels(){
+  pbEl('receiver').innerHTML=(pbCfg.receivers||[]).map(r=>{
+    const f=pbFound.find(x=>x.receiver===r.id);
+    const tail=f?` — plugged in as device ${f.device} (${f.product})`:(pbFound.length?' — not found':'');
+    return `<option value="${esc(r.id)}">${esc(r.id.toUpperCase())}: ${esc(r.label)}${esc(tail)}</option>`;}).join('');
+}
+function pbRxChanged(resetChain){
+  const id=pbEl('receiver').value;
+  if(!pbDevTyped){const d=pbRxDefault(id);pbEl('device').value=d===null?'':d;}
+  const cf=pbChainFor(id);
+  if(resetChain){pbEl('chain').value=cf.tail;pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
+  pbEl('chainnote').textContent=cf.note;
+}
+async function pbDetect(){
+  pbEl('detect').disabled=true;pbEl('rxnote').textContent='asking each dongle what it is…';
+  try{
+    const d=await (await fetch('/probe/receivers')).json();
+    pbFound=d.found||[];pbDetErr=d.error||null;
+    const sel=pbEl('receiver').value;pbRxLabels();pbEl('receiver').value=sel;
+    const unk=pbFound.filter(f=>!f.receiver);
+    pbEl('rxnote').innerHTML=d.error?`<span class="warn">${esc(d.error)}</span>`
+      :`found ${pbFound.length}: `+pbFound.map(f=>`device ${f.device} = ${esc(f.product)} (${esc(f.tuner)})`).join(', ')
+       +(unk.length?` — <span class="warn">${unk.length} not matched to a station.json receiver</span>`:'');
+    if(!d.error){const mine=pbFound.find(f=>f.receiver===sel);
+      if(!mine&&pbFound.length&&pbFound[0].receiver){pbEl('receiver').value=pbFound[0].receiver;
+        pbEl('rxnote').innerHTML+=` — switched to the ${pbFound[0].receiver.toUpperCase()}, the only one plugged in`;pbRxChanged(true);}
+      else pbRxChanged(false);
+      if(!pbFound.find(f=>f.receiver===pbEl('receiver').value))
+        pbEl('rxnote').innerHTML+=` — <span class="bad">the ${esc(pbEl('receiver').value.toUpperCase())} is not plugged in</span>`;}
+    else pbRxChanged(false);
+    if(pbDevTyped)pbEl('rxnote').innerHTML+=` — device ${esc(pbEl('device').value)} was typed by hand and is kept`;
+    else if(pbEl('device').value==='')pbEl('rxnote').innerHTML+=` — <span class="bad">device number unknown; type it by hand to run anyway</span>`;
+    pbSave();pbPreview();
+  }catch(e){pbFound=[];pbDetErr=String(e);if(!pbDevTyped)pbEl('device').value='';
+    pbEl('rxnote').innerHTML=`<span class="bad">detection failed: ${esc(e)}; device number unknown, type it by hand to run anyway</span>`;}
+  pbEl('detect').disabled=false;
+}
+function pbSave(){try{const o={};for(const k of PB_KEYS)o[k]=pbEl(k).value;localStorage.setItem('sdr-probe',JSON.stringify(o));}catch(e){}}
+function pbRestore(){try{const o=JSON.parse(localStorage.getItem('sdr-probe')||'{}');
+  // never the device: a remembered index is exactly the stale number to avoid
+  for(const k of PB_KEYS)if(k!=='device'&&o[k]!==undefined&&o[k]!=='')pbEl(k).value=o[k];}catch(e){}}
+function pbShowFields(){
+  pbEl('other-l').hidden=pbEl('target').value!=='other';
+  pbEl('devstate-other-l').hidden=pbEl('devstate').value!=='other';
+  pbEl('centre-l').hidden=!['hunt','tile','live'].includes(pbEl('range').value);
+  // the pad sits ahead of an LNA, if the chain has one; and when the chain
+  // text already names one, the chain is the record and the picker steps aside
+  const chainText=pbEl('chain').value;
+  const inChain=chainText.match(/(\d+(?:\.\d+)?)\s*dB\s*(?:SMA\s*)?(?:attenuator|pad)/i);
+  pbEl('att-l').hidden=!!inChain||!/(^|>)\s*l\w?na\b/i.test(chainText);
+  pbEl('attnote').hidden=!inChain;
+  if(inChain){pbEl('attnote').textContent=`pad is in the chain: ${inChain[1]} dB`;pbEl('attenuator').value='0';}
+  document.querySelectorAll('#pb-durs .btn').forEach(b=>b.classList.toggle('on',b.dataset.m===pbEl('min').value));
+}
+async function probeInit(){
+  if(pbReady)return;pbReady=true;
+  try{
+    const c=await (await fetch('/probe/config')).json();pbCfg=c;
+    pbRxLabels();
+    pbEl('target').innerHTML=c.targets.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')
+      +'<option value="other">other…</option>';
+    pbEl('devstate').innerHTML='<option value="">not recorded</option>'
+      +(c.states||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')+'<option value="other">other…</option>';
+    pbEl('probe').innerHTML=c.probes.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} — ${esc(p.desc)}</option>`).join('');
+    pbEl('range').innerHTML=c.ranges.map(r=>`<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
+    pbEl('attenuator').innerHTML=c.attenuators_db.map(a=>`<option value="${a}">${a?a+' dB':'none'}</option>`).join('');
+    pbEl('durs').innerHTML=c.durations_min.map(m=>`<button class="btn" data-m="${m}">${m} min</button>`).join(' ');
+    pbEl('logfile').textContent=c.log_file;
+    document.querySelectorAll('#pb-durs .btn').forEach(b=>b.onclick=()=>{pbEl('min').value=b.dataset.m;pbChanged();});
+  }catch(e){pbEl('cmd').textContent='could not load /probe/config: '+e;return;}
+  pbRestore();
+  try{pbChain=await (await fetch('/chain')).json();}catch(e){pbChain=null;}
+  const curRx=pbChain&&pbChain.current?pbChain.chains[pbChain.current].receiver:null;
+  if(!pbEl('receiver').value)pbEl('receiver').value=curRx||(c.receivers[0]||{}).id||'';
+  pbRxChanged(true);
+  // registered first so the chain swaps before the generic handler previews it
+  pbEl('receiver').addEventListener('change',()=>pbRxChanged(true));
+  for(const k of PB_KEYS){const el=pbEl(k);el.addEventListener('input',pbChanged);el.addEventListener('change',pbChanged);}
+  pbEl('detect').onclick=pbDetect;
+  // only a person typing fires 'input'; the page setting the box does not
+  pbEl('device').addEventListener('input',()=>{pbDevTyped=pbEl('device').value!=='';});
+  pbEl('start').onclick=pbStart;
+  pbEl('stop').onclick=pbStop;
+  pbEl('toscan').onclick=e=>{e.preventDefault();curFile=null;resetView();showPane('scan');};
+  pbShowFields();
+  pbPreview();
+  huInit();
+  rmInit();
+  if(!pbPolling){pbPolling=true;pbPoll();}
+  pbDetect();          // a read-only look at what is plugged in; skipped by the server if the SDR is busy
+}
+function pbChanged(){pbShowFields();pbSave();clearTimeout(pbTimer);pbTimer=setTimeout(pbPreview,250);}
+async function pbPreview(){
+  try{
+    const r=await fetch('/probe/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pbForm())});
+    const d=await r.json();
+    if(d.error){pbEl('cmd').textContent='—';pbEl('geom').textContent='';
+      pbEl('warn').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
+    const g=d.geometry;
+    pbEl('cmd').textContent=d.command_line+'\n\n'+d.rtl_power_line;
+    pbEl('geom').innerHTML=`<b>${esc(d.tag)}</b> · ${esc(d.receiver.toUpperCase())} device ${d.device}, g${d.gain}${d.attenuator_db?', '+d.attenuator_db+' dB pad'+(d.attenuator_source==='chain'?' (in the chain)':''):''} · ${g.hops} hops × ${g.hop_mhz.toFixed(3)} MHz, ${g.bin_khz_predicted.toFixed(2)} kHz bins, `
+      +`${g.sweeps} sweep${g.sweeps===1?'':'s'} of ${d.integration} s, ${(g.listening_frac*100).toFixed(0)}% listening `
+      +`(${g.retune_s_per_sweep.toFixed(1)} s of every sweep retunes), ${g.listen_per_freq_s.toFixed(1)} s on each frequency, ~${g.csv_mb.toFixed(1)} MB`
+      +(d.hunt?`<br>hop centres at ${d.hunt.hop_centres_mhz.map(x=>x.toFixed(3)).join(', ')} MHz — the target sits ${(d.hunt.clearance_mhz*1000).toFixed(0)} kHz clear of the nearest DC spike`:'');
+    pbEl('warn').innerHTML=d.warnings.map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join('');
+  }catch(e){pbEl('warn').innerHTML=`<span class="bad">preview failed: ${esc(e)}</span>`;}
+}
+async function pbStart(){
+  pbEl('start').disabled=true;
+  // Look again at what is plugged in, so the run uses the index it has now.
+  await pbDetect();
+  if(pbEl('device').value===''){
+    pbEl('warn').innerHTML=`<div class="bad">Not started: the ${esc(pbEl('receiver').value.toUpperCase())} was not found plugged in`
+      +(pbDetErr?` (${esc(pbDetErr)})`:'')+`. Plug it in and press Start again, or type the device number by hand.</div>`;
+    pbEl('start').disabled=false;return;}
+  // "Still built like this?" - asked when the current chain has not been touched
+  // since its last run, unless it is marked static.
+  try{
+    const d=await (await fetch('/chain')).json();
+    const c=d&&d.current?d.chains[d.current]:null;
+    if(c&&c.needs_confirm&&c.source==='probe'&&c.receiver===pbEl('receiver').value){
+      const ok=confirm(`The chain "${d.current}" has not been changed since it was last used (${String(c.last_used).slice(5,16).replace('T',' ')}).\n\nIs the rig still built exactly as drawn?\n\nOK = start the run.  Cancel = go to the Chain tab first.\n(Tick "static" on the Chain tab to stop this question.)`);
+      if(!ok){pbEl('start').disabled=false;showPane('chain');return;}
+    }
+  }catch(e){}
+  try{
+    const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pbForm())});
+    const d=await r.json();
+    if(d.error){pbEl('warn').innerHTML=`<div class="bad">${esc(d.error)}</div>`;pbEl('start').disabled=false;return;}
+    pbRender(d);
+  }catch(e){pbEl('warn').innerHTML=`<div class="bad">start failed: ${esc(e)}</div>`;pbEl('start').disabled=false;}
+}
+async function pbStop(){
+  pbEl('stop').disabled=true;
+  try{
+    const r=await fetch('/probe/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(d.error)pbEl('warn').innerHTML=`<div class="bad">${esc(d.error)}</div>`;else pbRender(d);
+  }catch(e){pbEl('warn').innerHTML=`<div class="bad">stop failed: ${esc(e)}</div>`;}
+}
+const PB_STATE={idle:'idle',starting:'starting — checking the receiver',recording:'recording',stopping:'stopping — asking rtl_power to finish',
+  analysing:'analysing',done:'done',failed:'ended without a report'};
+function pbRender(d){
+  const busy=['starting','recording','stopping','analysing'].includes(d.state);
+  pbEl('start').disabled=busy;
+  pbEl('stop').disabled=d.state!=='recording';
+  let s=`<b>${esc(PB_STATE[d.state]||d.state)}</b>`;
+  if(d.state==='recording')s+=`  ${d.elapsed} elapsed, ${d.remaining} left`;
+  pbEl('state').innerHTML=s;
+  if(d.state==='idle')return;
+  let h=`<b>${esc(d.tag)}</b> — ${esc(d.target)}${d.device_state?' ('+esc(d.device_state)+')':''}, ${esc(d.probe)} held ${esc(d.held)}, ${esc(d.range_label)}, started ${esc(String(d.started_local).slice(11,16))}`;
+  if(d.csv)h+=`<br>CSV: surveys/${esc(d.csv)}`;
+  if(d.state==='done'){
+    const su=d.summary||{};const st=su.strongest;
+    h+=`<br><span class="good">Report: <a href="${esc(d.report_url)}" target="_blank" style="color:var(--accent)">reports/${esc(d.stem)}/report.md</a></span>`
+      +` · <a href="/reports/${esc(d.stem)}/combined.png" target="_blank" style="color:var(--accent)">combined.png</a>`
+      +`<br>${su.detections??'?'} detections (${su.untagged??'?'} untagged)`
+      +(st?`, strongest ${st.f.toFixed(4)} MHz at ${st.max_db} dB (${st.snr} dB SNR, ${st.occ}% on)${st.tags?' ['+esc(st.tags)+']':''}`:', none')
+      +(su.families&&Object.keys(su.families).length?`<br>tagged families: ${esc(Object.entries(su.families).map(([k,v])=>k+' ×'+v).join('; '))}`:'')
+      +(d.row?`<br><span class="good">row appended to ROOM_RF.md</span>`:'')
+      +(d.log_error?`<br><span class="bad">${esc(d.log_error)}</span>`:'');
+  }
+  if(d.state==='failed')h+=`<br><span class="bad">${esc(d.message||'')}</span>`;
+  pbEl('run').innerHTML=h;
+  pbEl('log').textContent=d.log_tail||'';
+  if(d.state==='done'&&pbLastState!=='done'){loadProbeMap();rmLoad();}
+  // a run has just let go of the SDR: look again, so the next run's index is current
+  const was=['starting','recording','stopping','analysing'].includes(pbLastState);
+  if(was&&!busy)pbDetect();
+  pbLastState=d.state;
+  huStatus(d);
+}
+
+// ---------------------------------------------------------------- Hunt mode
+// Step 1 asks the server to subtract two finished reports (/hunt/candidates).
+// Step 2 starts an ordinary probe run on a tile and reads its sweeps from /data,
+// the same feed the Scan tab draws: the latest complete sweep's 1200 columns and
+// its whole-sweep median are enough to find the strongest line, its level and how
+// far it stands over the floor. The sound is made here with the Web Audio API.
+const huEl=id=>document.getElementById('hu-'+id);
+const hu={reports:[],csv:null,have:0,lo:null,hi:null,cols:null,hopC:[],stepK:null,range:null,
+          state:'idle',lastSweep:0,sweeps:0,over:null,f:null,narrowTo:null,lock:null,pending:null,who:null,reset:false,hist:[],best:null,bestF:null,spec:null,last:null,big:false,
+          audio:null,osc:null,toneG:null,clickOsc:null,clickG:null,on:false,clickAt:0,clickTimer:null};
+function huVol(){return parseFloat(huEl('vol').value)||0;}
+function huWhen(i){return i.started?String(i.started).slice(5,16).replace('T',' '):'?';}
+function huLabel(i){return `${huWhen(i)} · ${i.target||i.tag||i.name} · ${i.preset||''}`;}
+async function huLoadReports(){
+  try{
+    const d=await (await fetch('/hunt/reports')).json();
+    hu.reports=d.reports||[];
+    const opt=i=>`<option value="${esc(i.name)}" title="${esc(i.fingerprint||'')}">${esc(huLabel(i))}</option>`;
+    const bgSel=huEl('bg').value, devSel=huEl('dev').value;
+    huEl('bg').innerHTML=hu.reports.map(opt).join('');
+    huEl('dev').innerHTML=hu.reports.map(opt).join('');
+    if(!huEl('block').options.length)huEl('block').innerHTML=(d.block_choices_mhz||[10]).map(b=>`<option value="${b}"${b===d.block_mhz?' selected':''}>${b} MHz</option>`).join('');
+    // defaults: the newest open-air probe run against the newest probe run at a device
+    const bg=hu.reports.find(i=>i.name===bgSel)||hu.reports.find(i=>i.background);
+    const same=i=>bg&&i.name!==bg.name&&i.fingerprint===bg.fingerprint;
+    const dev=hu.reports.find(i=>i.name===devSel)||hu.reports.find(i=>i.probe_run&&!i.background&&same(i))||hu.reports.find(same);
+    if(bg)huEl('bg').value=bg.name;
+    if(dev)huEl('dev').value=dev.name;
+    huFingerNote();
+  }catch(e){huEl('cands').innerHTML=`<span class="bad">could not list reports: ${esc(e)}</span>`;}
+}
+function huFingerNote(){
+  const a=hu.reports.find(i=>i.name===huEl('bg').value), b=hu.reports.find(i=>i.name===huEl('dev').value);
+  if(a&&b&&a.fingerprint&&b.fingerprint&&a.fingerprint!==b.fingerprint)
+    huEl('cands').innerHTML=`<span class="warn">⚠ different fingerprints — these two cannot be subtracted:<br>${esc(a.fingerprint)}<br>${esc(b.fingerprint)}</span>`;
+  else if(!huEl('cands').querySelector('table'))huEl('cands').innerHTML='';
+}
+async function huRank(){
+  huEl('rank').disabled=true;huEl('cands').innerHTML='<span class="note">subtracting…</span>';
+  try{
+    const q=`bg=${encodeURIComponent(huEl('bg').value)}&dev=${encodeURIComponent(huEl('dev').value)}&block=${huEl('block').value}`;
+    const d=await (await fetch('/hunt/candidates?'+q)).json();
+    if(d.error){huEl('cands').innerHTML=`<div class="bad">${esc(d.error).replace(/\n/g,'<br>')}</div>`;return;}
+    const c=d.candidates||[];
+    if(!c.length){huEl('cands').innerHTML='<span class="note">no blocks in common</span>';return;}
+    huEl('cands').innerHTML=`<div class="note">${d.n_bins_common} bins in common at ${d.step_khz} kHz, ${d.blocks} blocks of ${d.block_mhz} MHz; `
+      +`device run <b>${esc(d.device.target||d.device.name)}</b> minus background <b>${esc(d.background.target||d.background.name)}</b>. `
+      +`Peak rise is the single bin that rose most (median over sweeps); floor rise is the block's median rise, which a broadband emitter lifts and a single line does not.</div>`
+      +'<table><thead><tr><th>#</th><th>Block</th><th>Peak at</th><th>Peak rise</th><th>Floor rise</th><th>Device level</th><th>Tag</th><th></th></tr></thead><tbody>'
+      +c.map(x=>`<tr data-f="${x.peak_mhz}"><td class="l">${x.rank}</td><td class="l">${x.lo_mhz}–${x.hi_mhz} MHz</td><td>${x.peak_mhz.toFixed(4)}</td>`
+        +`<td><b>${x.peak_rise_db>0?'+':''}${x.peak_rise_db.toFixed(1)}</b> dB</td><td>${x.floor_rise_db>0?'+':''}${x.floor_rise_db.toFixed(1)} dB</td>`
+        +`<td>${x.device_db.toFixed(1)} dB</td><td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}</td>`
+        +`<td><button class="btn" data-f="${x.peak_mhz}">Track</button></td></tr>`).join('')+'</tbody></table>';
+    huEl('cands').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>huPick(parseFloat(b.dataset.f)));
+  }catch(e){huEl('cands').innerHTML=`<span class="bad">ranking failed: ${esc(e)}</span>`;}
+  finally{huEl('rank').disabled=false;}
+}
+function huPick(f){
+  huEl('centre').value=f.toFixed(3);
+  huEl('cands').querySelectorAll('tr[data-f]').forEach(tr=>tr.classList.toggle("chosen",parseFloat(tr.dataset.f)===f));
+  huEl('note').textContent=`centre set to ${f.toFixed(3)} MHz — start the 100 MHz tile, then narrow once the line is found`;
+  try{localStorage.setItem('sdr-hunt-centre',String(f));}catch(e){}
+}
+const HU_RANGE={tile:'100 MHz tile',hunt:'5 MHz hunt',live:'live (fast)'};
+// Every hunt run goes through this box first: it shows the target, state and held text
+// the run will carry and lets them be changed, because the form above is for the
+// catalogue and a hunt is usually a hand-held walk.
+function huStart(range){
+  const centre=huEl('centre').value;
+  if(!centre){huEl('note').innerHTML='<span class="bad">type a centre frequency, or click Track on a candidate</span>';return;}
+  const f=pbForm();
+  const target=f.target==='other'?f.target_other:f.target;
+  const state=f.state==='other'?f.state_other:f.state;
+  hu.pending=range;
+  huEl('c-range').textContent=`${HU_RANGE[range]||range} on ${parseFloat(centre).toFixed(3)} MHz`;
+  if(!hu.who){huEl('c-target').value=target;huEl('c-state').value=state;huEl('c-held').value=(pbCfg&&pbCfg.hunt_held_default)||'hand-held, moved around';}
+  const ch=(pbCfg&&pbCfg.hunt_held_choices)||['hand-held, moved around','hand-held on a wand, moved around'];
+  huEl('c-heldlist').innerHTML=ch.map(x=>`<option value="${esc(x)}">`).join('');
+  huEl('c-chips').innerHTML='quick: '+ch.map(x=>`<button class="btn" data-held="${esc(x)}" style="padding:3px 9px;font-size:12px">${esc(x)}</button>`).join(' ');
+  huEl('c-chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{huEl('c-held').value=b.dataset.held;});
+  huEl('confirm').hidden=false;huEl('c-target').focus();
+}
+function huButtons(off){huEl('tile').disabled=huEl('5').disabled=huEl('live').disabled=off;}
+async function huGo(range,who){
+  const centre=huEl('centre').value;
+  huButtons(true);
+  await pbDetect();          // the index the receiver has now, as for Start
+  const form={...pbForm(),range,centre,target:who.target,target_other:'',state:who.state,state_other:'',where:who.held,confirmed:true};
+  try{
+    const r=await fetch('/probe/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+    const d=await r.json();
+    if(d.error){huEl('note').innerHTML=`<span class="bad">${esc(d.error)}</span>`;huButtons(false);return;}
+    hu.csv=null;hu.have=0;hu.sweeps=0;hu.over=null;hu.f=null;hu.lock=null;hu.reset=true;hu.plan=null;huLockBtn();huBestReset();
+    huEl('note').textContent=`started ${d.tag} — recorded as ${who.target}${who.state?' ('+who.state+')':''}, held ${who.held}`;
+    pbRender(d);
+  }catch(e){huEl('note').innerHTML=`<span class="bad">start failed: ${esc(e)}</span>`;huButtons(false);}
+}
+function huConfirm(){
+  const who={target:huEl('c-target').value.trim(),state:huEl('c-state').value.trim(),held:huEl('c-held').value.trim()};
+  if(!who.target||!who.held){huEl('note').innerHTML='<span class="bad">the run needs a target and a held text</span>';return;}
+  hu.who=who;huEl('confirm').hidden=true;
+  const r=hu.pending;hu.pending=null;huGo(r,who);
+}
+function huNarrow(){
+  if(hu.f===null)return;
+  hu.narrowTo=hu.f;
+  huEl('narrow').disabled=true;
+  huEl('note').textContent=`stopping the tile; the 5 MHz hunt tile on ${hu.f.toFixed(3)} MHz starts as soon as the tile's analysis has finished`;
+  pbStop();
+}
+// Called from pbRender with every /probe/status answer: which run to listen to, and
+// the narrow step once the stopped tile has been analysed and the SDR is free.
+function huStatus(d){
+  if(!pbReady)return;
+  const busy=['starting','recording','stopping','analysing'].includes(d.state);
+  hu.state=d.state;
+  const tiled=/^(tile|hunt|live) /.test(d.range_label||'');
+  hu.range=tiled?(d.range_label||'').split(' ')[0]:null;
+  huButtons(busy);
+  if(d.planned_per_s)huEl('plan').textContent=d.planned_per_s.toFixed(1);
+  huEl('stop').disabled=d.state!=='recording';
+  huEl('narrow').disabled=!(d.state==='recording'&&hu.range!=='hunt'&&hu.f!==null);
+  if(d.csv&&busy&&d.csv!==hu.csv){hu.csv=d.csv;hu.have=0;hu.sweeps=0;hu.hopC=[];hu.lo=hu.hi=null;}
+  if(!busy){
+    if(hu.narrowTo!==null&&(d.state==='done'||d.state==='failed'||d.state==='idle')){
+      // the narrow step keeps what was confirmed for the tile it replaces
+      const f=hu.narrowTo;hu.narrowTo=null;huEl('centre').value=f.toFixed(3);
+      if(hu.who)huGo('hunt',hu.who);else huStart('hunt');return;}
+    if(hu.csv&&d.state!=='recording'){hu.csv=null;huMute();
+      if(d.state==='done')huEl('stat').textContent+=' · run finished, report written';}
+  }
+}
+// The meter. The server keeps the follower (hunt.Follower: hysteresis, lock, floor
+// level) and steps it once per new sweep; the page asks for the latest reading often
+// enough not to add delay: every 150 ms on the live hop, which makes ~6 spectra a
+// second, and every 500 ms on the tiles, which make one every 1-3 s.
+function huLockBtn(){
+  const b=huEl('lock');
+  b.classList.toggle('on',hu.lock!==null);
+  b.textContent=hu.lock!==null?`🔓 Unlock ${hu.lock.toFixed(hu.range==='tile'?3:4)}`:'🔒 Lock line';
+  b.disabled=!(hu.csv&&huEl('follow').value==='strongest'&&(hu.lock!==null||hu.f!==null));
+}
+function huToggleLock(){hu.lock=hu.lock===null?hu.f:null;huLockBtn();}
+async function huTick(){
+  let wait=1000;
+  try{
+    if(hu.csv&&(hu.state==='recording'||hu.state==='starting')){
+      wait=hu.range==='live'?150:500;
+      const mode=huEl('follow').value;
+      const q=`file=${encodeURIComponent(hu.csv)}&mode=${mode}&centre=${encodeURIComponent(huEl('centre').value||'')}`
+        +(hu.lock!==null&&mode==='strongest'?`&lock=${hu.lock}`:'')+(hu.reset?'&reset=1':'');
+      const r=await fetch('/hunt/reading?'+q);
+      if(r.ok){
+        const d=await r.json();hu.reset=false;
+        if(d.reading&&d.sweeps!==hu.sweeps){hu.sweeps=d.sweeps;hu.lastSweep=Date.now();hu.lo=d.lo;hu.hi=d.hi;hu.spec=d.spectrum||hu.spec;huShow(d);}
+        huEl('rate').textContent=d.updates_per_s!=null?d.updates_per_s.toFixed(1):'—';
+      }
+      const age=hu.lastSweep?(Date.now()-hu.lastSweep)/1000:null;
+      if(age!==null&&age>6){huEl('stat').textContent=`no new sweep for ${age.toFixed(0)} s — the recorder flushes in bursts, or the run is ending`;huMute();}
+    }
+  }catch(e){}
+  setTimeout(huTick,wait);
+}
+function huShow(d){
+  const x=d.reading, mode=huEl('follow').value;
+  hu.f=x.f_mhz;hu.over=x.value_db;
+  if(hu.lock!==null&&x.locked&&x.f_mhz!==null)hu.lock=x.f_mhz;     // a locked line may drift a bin or two
+  const dig=hu.range==='tile'?3:4, sg=v=>(v>=0?'+':'')+v.toFixed(1);
+  huEl('f').textContent=x.f_mhz===null?'—':x.f_mhz.toFixed(dig);
+  huEl('db').textContent=x.level_db===null?'—':x.level_db.toFixed(1);
+  huEl('over').textContent=x.over_db===null?'—':sg(x.over_db);
+  huEl('floor').textContent=x.floor_db.toFixed(1);
+  huEl('flv').textContent=x.floor_db.toFixed(1);
+  huEl('rise').textContent=sg(x.floor_rise_db)+' dB';
+  // the number that drives the tone is bright; the other is shown dimmer
+  huEl('over').style.opacity=mode==='floor'?0.45:1;huEl('flv').style.opacity=mode==='floor'?1:0.45;
+  const v=x.value_db===null?0:x.value_db;
+  huEl('bar').style.width=Math.max(0,Math.min(100,v/40*100)).toFixed(0)+'%';
+  const what=mode==='floor'?'the floor level of the whole span drives the tone'
+    :mode==='typed'?'watching the centre frequency'
+    :x.locked?'locked on this line':`strongest line with hysteresis${x.challenger_mhz!==null?` · ${x.challenger_mhz.toFixed(dig)} is stronger (${x.challenger_n}/3)`:''}`;
+  huEl('stat').textContent=`sweep ${d.sweeps} · ${HU_RANGE[hu.range]||'run'} ${d.lo!=null?d.lo.toFixed(2)+'–'+d.hi.toFixed(2)+' MHz':''} · ${what}`
+    +(x.switched?' · moved to a new line':'')+` · ${new Date().toLocaleTimeString()}`;
+  huEl('narrow').disabled=!(hu.state==='recording'&&hu.range!=='hunt'&&hu.f!==null);
+  huLockBtn();
+  huMeter(x,v,mode);
+  huSound(v);
+}
+// ---- the visual meter, drawn in the same call that sets the tone so sight and sound
+// never disagree. Scale as the tone and the bar: 0-40 dB of the driving value.
+const HU_SPAN=40, HU_HIST_S=45;
+function huCss(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+// cool (blue, 0 dB) to hot (red, 40 dB): the hue walks 220 -> 0
+function huHeat(v,l){const x=Math.max(0,Math.min(1,v/HU_SPAN));return `hsl(${Math.round(220-220*x)} 70% ${l}%)`;}
+function huBestReset(){hu.best=null;hu.bestF=null;hu.hist=[];huEl('best').textContent='—';huEl('bestf').textContent='';huDrawHist();}
+function huMeter(x,v,mode){
+  const now=Date.now(), dig=hu.range==='tile'?3:4, sg=a=>(a>=0?'+':'')+a.toFixed(1);
+  hu.last={x,v,mode};
+  if(x.value_db!==null&&(hu.best===null||v>hu.best)){hu.best=v;hu.bestF=mode==='floor'?null:x.f_mhz;}
+  hu.hist.push({t:now,v});
+  while(hu.hist.length&&now-hu.hist[0].t>HU_HIST_S*1000)hu.hist.shift();
+  const pk=hu.best===null?null:Math.max(0,Math.min(100,hu.best/HU_SPAN*100));
+  for(const id of ['barpk','m-pk']){const e=huEl(id);e.style.display=pk===null?'none':'block';if(pk!==null)e.style.left=pk+'%';}
+  huEl('best').textContent=hu.best===null?'—':sg(hu.best)+' dB';
+  huEl('bestf').textContent=hu.bestF!=null?`at ${hu.bestF.toFixed(dig)} MHz`:(hu.best!==null&&mode==='floor'?'(floor level)':'');
+  const word=mode==='floor'?'floor level over the quietest this run':(x.locked?'locked line over the floor':'line over the floor');
+  huEl('h-what').textContent=word;
+  if(hu.big){
+    huEl('m-what').textContent=`${word} · ${HU_RANGE[hu.range]||''}`;
+    huEl('m-v').textContent=x.value_db===null?'—':sg(v);
+    huEl('m-sub').textContent=(mode==='floor'?`median ${x.floor_db.toFixed(1)} dB`:`${x.f_mhz!==null?x.f_mhz.toFixed(dig)+' MHz':'—'}${x.locked?' 🔒':''}`)
+      +` · best ${hu.best===null?'—':sg(hu.best)}`;
+    huEl('m-fill').style.width=Math.max(0,Math.min(100,v/HU_SPAN*100)).toFixed(0)+'%';
+    huEl('meter').style.setProperty('--hm-heat',huHeat(v,17));
+  }
+  huDrawHist();huDrawSpec();
+}
+function huCanvas(id){
+  const c=huEl(id), r=window.devicePixelRatio||1, w=Math.max(10,c.clientWidth), h=Math.max(10,c.clientHeight);
+  if(c.width!==Math.round(w*r)||c.height!==Math.round(h*r)){c.width=Math.round(w*r);c.height=Math.round(h*r);}
+  const g=c.getContext('2d');g.setTransform(r,0,0,r,0,0);g.clearRect(0,0,w,h);return {g,w,h};
+}
+function huDrawHist(){
+  const {g,w,h}=huCanvas('hist'), ink=huCss('--ink'), dim=huCss('--dim'), line=huCss('--line');
+  const top=Math.max(HU_SPAN,...hu.hist.map(p=>p.v),hu.best||0), bot=Math.min(0,...hu.hist.map(p=>p.v));
+  const y=v=>h-4-(v-bot)/(top-bot||1)*(h-8), now=Date.now(), xOf=t=>w-(now-t)/(HU_HIST_S*1000)*w;
+  g.strokeStyle=line;g.lineWidth=1;g.fillStyle=dim;g.font='10px ui-monospace,Consolas,monospace';
+  for(let d=Math.ceil(bot/10)*10;d<=top;d+=10){g.beginPath();g.moveTo(0,y(d));g.lineTo(w,y(d));g.stroke();g.fillText((d>0?'+':'')+d,3,y(d)-2);}
+  if(hu.best!==null){g.setLineDash([5,4]);g.strokeStyle=ink;g.beginPath();g.moveTo(0,y(hu.best));g.lineTo(w,y(hu.best));g.stroke();g.setLineDash([]);}
+  // each segment coloured by its level, the same cool-to-hot scale as the big meter
+  g.lineWidth=hu.big?4:2;
+  for(let i=1;i<hu.hist.length;i++){const a=hu.hist[i-1],b=hu.hist[i];
+    g.strokeStyle=huHeat(b.v,60);g.beginPath();g.moveTo(xOf(a.t),y(a.v));g.lineTo(xOf(b.t),y(b.v));g.stroke();}
+}
+function huDrawSpec(){
+  const {g,w,h}=huCanvas('spec'), s=hu.spec, L=hu.last;
+  if(!s||!s.db||!s.db.length)return;
+  const ink=huCss('--ink'), dim=huCss('--dim'), acc=huCss('--accent');
+  const vals=s.db.filter(v=>v!==null); if(!vals.length)return;
+  const lo=Math.min(...vals)-2, hi=Math.max(...vals)+3, n=s.db.length, span=s.hi_mhz-s.lo_mhz||1;
+  const y=v=>h-14-(v-lo)/(hi-lo)*(h-20), xf=f=>(f-s.lo_mhz)/span*w;
+  g.fillStyle='rgba(133,153,168,.28)';
+  for(const [a,b] of s.excluded_mhz||[])g.fillRect(xf(a),0,Math.max(2,xf(b)-xf(a)),h-14);
+  if(L&&L.x.floor_db!=null){g.strokeStyle=dim;g.setLineDash([2,3]);g.beginPath();g.moveTo(0,y(L.x.floor_db));g.lineTo(w,y(L.x.floor_db));g.stroke();g.setLineDash([]);}
+  g.strokeStyle=acc;g.lineWidth=1.5;g.beginPath();let on=false;
+  s.db.forEach((v,i)=>{if(v===null){on=false;return;}const X=(i+0.5)/n*w;if(on)g.lineTo(X,y(v));else{g.moveTo(X,y(v));on=true;}});
+  g.stroke();
+  g.fillStyle=dim;g.font='10px ui-monospace,Consolas,monospace';
+  g.fillText(s.lo_mhz.toFixed(3),2,h-2);const t=s.hi_mhz.toFixed(3);g.fillText(t,w-g.measureText(t).width-2,h-2);
+  if(L&&L.mode!=='floor'&&L.x.f_mhz!=null){
+    const X=xf(L.x.f_mhz);g.strokeStyle=L.x.locked?'#ffb74d':ink;g.lineWidth=hu.big?4:2;
+    g.beginPath();g.moveTo(X,0);g.lineTo(X,h-14);g.stroke();
+    const lab=L.x.f_mhz.toFixed(hu.range==='tile'?3:4)+(L.x.locked?' 🔒':'');
+    g.fillStyle=g.strokeStyle;g.fillText(lab,Math.min(w-g.measureText(lab).width-2,X+4),11);
+  }
+  if(L&&L.x.challenger_mhz!=null){const X=xf(L.x.challenger_mhz);g.strokeStyle='#ff8a65';g.lineWidth=1.5;g.setLineDash([4,3]);
+    g.beginPath();g.moveTo(X,0);g.lineTo(X,h-14);g.stroke();g.setLineDash([]);}
+}
+function huBig(on){
+  hu.big=on;huEl('meter').classList.toggle('big',on);huEl('bigbtn').classList.toggle('on',on);
+  huEl('m-listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
+  if(on&&hu.last)huMeter(hu.last.x,hu.last.v,hu.last.mode);else{huEl('meter').style.removeProperty('--hm-heat');huDrawHist();huDrawSpec();}
+}
+// Sound. Tone: pitch doubles every 10 dB over the floor (dB and pitch are both
+// logarithmic, so equal level steps sound like equal musical steps), 110 Hz at the
+// floor, capped at 3.5 kHz. Clicks: a Geiger counter, rate doubling every 6 dB from
+// 2/s at the floor to 40/s. Audio needs a click on the page first; Listen is that click.
+function huAudioStart(){
+  if(!hu.audio){
+    const A=window.AudioContext||window.webkitAudioContext;
+    hu.audio=new A();
+    hu.toneG=hu.audio.createGain();hu.toneG.gain.value=0;hu.toneG.connect(hu.audio.destination);
+    hu.osc=hu.audio.createOscillator();hu.osc.type='triangle';hu.osc.frequency.value=110;hu.osc.connect(hu.toneG);hu.osc.start();
+    hu.clickG=hu.audio.createGain();hu.clickG.gain.value=0;hu.clickG.connect(hu.audio.destination);
+    hu.clickOsc=hu.audio.createOscillator();hu.clickOsc.type='square';hu.clickOsc.frequency.value=1400;hu.clickOsc.connect(hu.clickG);hu.clickOsc.start();
+  }
+  hu.audio.resume();
+}
+function huMute(){
+  if(!hu.audio)return;
+  const t=hu.audio.currentTime;
+  hu.toneG.gain.cancelScheduledValues(t);hu.toneG.gain.setTargetAtTime(0,t,0.05);
+  hu.clickG.gain.cancelScheduledValues(t);hu.clickG.gain.setValueAtTime(0,t);
+  hu.clickAt=0;
+}
+function huSound(over){
+  if(!hu.on||!hu.audio)return;
+  const t=hu.audio.currentTime, vol=huVol();
+  if(huEl('mode').value==='tone'){
+    hu.clickG.gain.cancelScheduledValues(t);hu.clickG.gain.setValueAtTime(0,t);hu.clickAt=0;
+    const pitch=Math.min(3500,Math.max(80,110*Math.pow(2,over/10)));
+    hu.osc.frequency.setTargetAtTime(pitch,t,0.06);
+    hu.toneG.gain.setTargetAtTime(over>1?vol*0.5:vol*0.08,t,0.05);   // nearly silent at the floor
+  }else{
+    hu.toneG.gain.setTargetAtTime(0,t,0.05);
+    hu.rate=Math.min(40,Math.max(0.5,2*Math.pow(2,over/6)));
+  }
+}
+// The click scheduler runs on a timer and books clicks a little ahead on the audio clock,
+// at whatever rate the last reading set, so clicks keep coming between sweeps.
+function huClicks(){
+  if(hu.on&&hu.audio&&huEl('mode').value==='clicks'&&hu.rate&&hu.csv){
+    const t=hu.audio.currentTime, vol=huVol();
+    if(hu.clickAt<t)hu.clickAt=t+0.02;
+    while(hu.clickAt<t+0.3){
+      hu.clickG.gain.setValueAtTime(vol,hu.clickAt);
+      hu.clickG.gain.setValueAtTime(0,hu.clickAt+0.004);
+      hu.clickAt+=1/hu.rate;
+    }
+  }
+  hu.clickTimer=setTimeout(huClicks,150);
+}
+function huListen(){
+  hu.on=!hu.on;
+  huEl('listen').classList.toggle('on',hu.on);
+  huEl('listen').textContent=huEl('m-listen').textContent=hu.on?'🔇 Mute':'🔊 Listen';
+  if(hu.on){huAudioStart();if(hu.over!==null)huSound(hu.over);}else huMute();
+}
+let huReady=false;
+function huInit(){
+  if(huReady)return;huReady=true;
+  huLoadReports();
+  huEl('reload').onclick=huLoadReports;
+  huEl('rank').onclick=huRank;
+  huEl('bg').onchange=huEl('dev').onchange=huFingerNote;
+  huEl('tile').onclick=()=>huStart('tile');
+  huEl('5').onclick=()=>huStart('hunt');
+  huEl('live').onclick=()=>huStart('live');
+  huEl('c-ok').onclick=huConfirm;
+  huEl('c-cancel').onclick=()=>{huEl('confirm').hidden=true;hu.pending=null;huEl('note').textContent='not started';};
+  huEl('lock').onclick=huToggleLock;
+  huEl('bigbtn').onclick=()=>huBig(!hu.big);
+  huEl('m-exit').onclick=()=>huBig(false);
+  huEl('m-listen').onclick=huListen;
+  huEl('bestreset').onclick=huEl('m-reset').onclick=huBestReset;
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&hu.big)huBig(false);});
+  window.addEventListener('resize',()=>{huDrawHist();huDrawSpec();});
+  huEl('follow').onchange=()=>{hu.reset=true;if(huEl('follow').value!=='strongest')hu.lock=null;huLockBtn();huBestReset();};
+  huEl('stop').onclick=pbStop;
+  huEl('narrow').onclick=huNarrow;
+  huEl('listen').onclick=huListen;
+  huEl('mode').onchange=()=>{if(hu.over!==null)huSound(hu.over);else huMute();};
+  huEl('vol').oninput=()=>{if(hu.over!==null)huSound(hu.over);};
+  try{const c=localStorage.getItem('sdr-hunt-centre');if(c&&!huEl('centre').value)huEl('centre').value=parseFloat(c).toFixed(3);}catch(e){}
+  huTick();huClicks();
+}
+// ---------------------------------------------------------------- Room catalogue
+// The server groups the probe runs by target and state and does the subtraction
+// (/room/compare, /room/loudest, both on hunt.rank); the page only draws the answer.
+const rmEl=id=>document.getElementById('rm-'+id);
+let rmReady=false;
+const sgn=x=>(x>0?'+':'')+x.toFixed(1);
+async function rmLoad(){
+  try{
+    const [t,r]=await Promise.all([fetch('/room/targets').then(x=>x.json()),fetch('/hunt/reports').then(x=>x.json())]);
+    const tSel=rmEl('target').value, bSel=rmEl('bg').value;
+    const devs=(t.targets||[]).filter(x=>!x.background);
+    rmEl('target').innerHTML=devs.length?devs.map(x=>`<option value="${esc(x.target)}">${esc(x.target)} — `
+      +esc(Object.entries(x.states).map(([s,n])=>s+(n>1?' ×'+n:'')).join(', '))+'</option>').join('')
+      :'<option value="">no device runs yet</option>';
+    if(tSel&&devs.some(x=>x.target===tSel))rmEl('target').value=tSel;
+    rmEl('bg').innerHTML='<option value="">its own unplugged run (newest)</option>'
+      +(r.reports||[]).filter(i=>!(i.tag||'').startsWith('hunt-')).map(i=>`<option value="${esc(i.name)}" title="${esc(i.fingerprint||'')}">${esc(huLabel(i))}${i.state?' · '+esc(i.state):''}</option>`).join('');
+    rmEl('bg').value=bSel;
+    if(!rmEl('block').options.length)rmEl('block').innerHTML=(t.block_choices_mhz||[10]).map(b=>`<option value="${b}"${b===t.block_mhz?' selected':''}>${b} MHz</option>`).join('');
+  }catch(e){rmEl('out').innerHTML=`<span class="bad">could not list the catalogue: ${esc(e)}</span>`;}
+}
+async function rmCompare(){
+  if(!rmEl('target').value){rmEl('out').innerHTML='<span class="note">No device has a probe run with a report yet.</span>';return;}
+  rmEl('go').disabled=true;rmEl('out').innerHTML='<span class="note">subtracting…</span>';
+  try{
+    const q=`target=${encodeURIComponent(rmEl('target').value)}&bg=${encodeURIComponent(rmEl('bg').value)}&block=${rmEl('block').value}`;
+    const d=await (await fetch('/room/compare?'+q)).json();
+    if(d.error){rmEl('out').innerHTML=`<div class="bad">${esc(d.error).replace(/\n/g,'<br>')}</div>`;return;}
+    const bg=d.background;
+    let h=`<div class="note">Background: <b>${esc(huLabel(bg))}${bg.state?' · '+esc(bg.state):''}</b>${bg.held?', probe held '+esc(bg.held):''}. `
+      +`Blocks of ${d.block_mhz} MHz; a block "rises" when its strongest bin is up ${d.loud_db} dB or more.</div>`;
+    for(const st of d.states){
+      h+=st.sentence?`<div class="say"><b>${esc(st.sentence)}</b></div>`:`<div class="say">${esc(st.state)}</div>`;
+      for(const r of st.runs){
+        const when=String(r.started||'').slice(5,16).replace('T',' ');
+        if(r.is_background){h+=`<div class="note">${esc(when)} · this is the background</div>`;continue;}
+        if(r.refused){h+=`<div class="warn">${esc(when)} · refused: ${esc(r.refused)}</div>`;continue;}
+        if(r.same_position===false)h+=`<div class="warn">⚠ ${esc(when)}: probe held "${esc(r.held)}", the background "${esc(bg.held)}" — not the same position</div>`;
+        // only blocks that moved: a state that adds nothing should not show a table of 0.0 dB
+        const moved=r.candidates.filter(x=>x.peak_rise_db>=1);
+        h+=`<div class="note">${esc(when)} · ${esc(r.run)} · ${r.loud_blocks} of ${r.blocks} blocks rise ${d.loud_db} dB or more`
+          +(moved.length?'':'; no block rose by 1 dB or more')+'</div>';
+        if(moved.length)h+='<table><thead><tr><th>#</th><th>Block</th><th>Peak at</th><th>Peak rise</th><th>Floor rise</th><th>Level</th><th>Tag</th></tr></thead><tbody>'
+          +moved.map(x=>`<tr><td class="l">${x.rank}</td><td class="l">${x.lo_mhz}–${x.hi_mhz} MHz</td><td>${x.peak_mhz.toFixed(4)}</td>`
+            +`<td><b>${sgn(x.peak_rise_db)}</b> dB</td><td>${sgn(x.floor_rise_db)} dB</td><td>${x.device_db.toFixed(1)} dB</td>`
+            +`<td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}</td></tr>`).join('')+'</tbody></table>';
+      }
+    }
+    rmEl('out').innerHTML=h;
+  }catch(e){rmEl('out').innerHTML=`<span class="bad">comparison failed: ${esc(e)}</span>`;}
+  finally{rmEl('go').disabled=false;}
+}
+async function rmLoudest(){
+  rmEl('loudgo').disabled=true;rmEl('loud').innerHTML='<span class="note">subtracting every device…</span>';
+  try{
+    const d=await (await fetch('/room/loudest?block='+rmEl('block').value)).json();
+    if(d.error){rmEl('loud').innerHTML=`<div class="bad">${esc(d.error)}</div>`;return;}
+    let h=d.ranked.length?'<table><thead><tr><th>#</th><th>Device</th><th>State</th><th>Strongest rise</th><th>At</th><th>Blocks ≥ '+d.loud_db+' dB</th><th>Tag</th></tr></thead><tbody>'
+      +d.ranked.map(x=>`<tr><td class="l">${x.rank}</td><td class="l">${esc(x.target)}</td><td class="l">${esc(x.state)}</td>`
+        +`<td><b>${sgn(x.peak_rise_db)}</b> dB</td><td>${x.peak_mhz.toFixed(3)} MHz</td><td>${x.loud_blocks} of ${x.blocks}</td>`
+        +`<td class="l">${x.tag?'<span class="warn">'+esc(x.tag)+'</span>':''}${x.same_position===false?' <span class="warn">probe moved</span>':''}</td></tr>`).join('')+'</tbody></table>'
+      :'<p class="note">No device has both an unplugged run and an active run yet.</p>';
+    if(d.skipped.length)h+='<div class="note" style="margin-top:6px">Not ranked: '+d.skipped.map(x=>`${esc(x.target)} (${esc(x.reason)})`).join('; ')+'</div>';
+    rmEl('loud').innerHTML=h;
+  }catch(e){rmEl('loud').innerHTML=`<span class="bad">ranking failed: ${esc(e)}</span>`;}
+  finally{rmEl('loudgo').disabled=false;}
+}
+function rmInit(){
+  if(rmReady)return;rmReady=true;
+  rmLoad();
+  rmEl('reload').onclick=rmLoad;
+  rmEl('go').onclick=rmCompare;
+  rmEl('loudgo').onclick=rmLoudest;
+}
+async function pbPoll(){
+  try{const d=await (await fetch('/probe/status')).json();pbRender(d);}catch(e){}
+  setTimeout(pbPoll,2000);
+}
+async function loadProbeMap(){
+  try{
+    const t=await (await fetch('/probe/log')).text();
+    const rows=t.split('\n').filter(l=>l.startsWith('|')&&!/^\|\s*-/.test(l));
+    const box=pbEl('map');
+    if(rows.length<2){box.innerHTML='<p class="note">No probe runs logged yet. Each completed run adds one row.</p>';return;}
+    const cells=l=>l.slice(1,-1).split(/(?<!\\)\|/).map(c=>c.replace(/\\\|/g,'|').trim());
+    const head=cells(rows[0]);
+    box.innerHTML='<table><thead><tr>'+head.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr></thead><tbody>'
+      +rows.slice(1).reverse().map(r=>'<tr>'+cells(r).map(c=>`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+'</tbody></table>';
+  }catch(e){}
+}
+
+async function tick(){
+  try{
+    const r=await fetch('/data?since='+have+(curFile?'&file='+encodeURIComponent(curFile):''));
+    if(r.status===404){setTimeout(tick,5000);return;}   // no survey yet
+    const d=await r.json();
+    if(d.live&&d.live!==liveFile){
+      // The server moved to a newer CSV. Follow it if we were watching live;
+      // leave a deliberately chosen archive file alone.
+      const wasLive=(!curFile||curFile===liveFile);
+      liveFile=d.live;
+      if(wasLive){curFile=liveFile;resetView();loadSurveys();setTimeout(tick,500);return;}
+    }
+    if(curFile&&d.file!==curFile){setTimeout(tick,500);return;}   // response for a file we left
+    if(d.lo!==null){lo=d.lo;hi=d.hi;}
+    document.getElementById('file').textContent=d.file;
+    if(d.rows.length){rows=rows.concat(d.rows);meds=meds.concat(d.medians||[]);stamps=stamps.concat(d.stamps||[]);
+      have=d.from+d.rows.length;
+      if(rows.length>400){rows=rows.slice(-400);meds=meds.slice(-400);stamps=stamps.slice(-400);}}
+    if(d.step_khz&&d.step_khz!==stepK){stepK=d.step_khz;spurMask=null;layerVer++;}
+    partial=d.partial||null;
+    if(d.hop_centres_mhz){hopC=d.hop_centres_mhz;spurMask=null;layerVer++;}
+    if(intData===null&&lo!==null)loadInternal();
+    engine=d.engine||'rtl_power';
+    refused=d.refused_mhz||[];
+    const eng=document.getElementById('engine');
+    if(engine==='rtl_power_fftw'){
+      const mm=d.meta||{};
+      eng.hidden=false;
+      eng.innerHTML='rtl_power_fftw · dB = its own scale'+(mm.fingerprint?'  <span style="color:var(--dim)">'+esc(mm.fingerprint)+'</span>':'');
+      eng.title=(mm.scale||'')+(mm.fingerprint?'\nfingerprint: '+mm.fingerprint:'');
+      document.getElementById('key-refused').hidden=!refused.length;
+    }else{eng.hidden=true;document.getElementById('key-refused').hidden=true;}
+    const sb=document.getElementById('scan-stop');
+    sb.hidden=!(engine==='rtl_power_fftw'&&d.can_stop&&curFile===liveFile);
+    if(d.peaks){peaks=d.peaks;
+      const nk={signal:0,spur:0,artefact:0};for(const p of peaks)nk[p.kind]++;
+      document.getElementById('pk').textContent=peaks.length
+        ?`${nk.signal} possible signal${nk.signal===1?'':'s'} · ${nk.spur} known spur${nk.spur===1?'':'s'} · `
+         +`${nk.artefact} artefact${nk.artefact===1?'':'s'}  (max-hold ≥ ${THR} dB over the latest sweep's floor)`
+        :' ';}
+    cursorPct=(d.cursor_pct===null||d.cursor_pct===undefined)?null:d.cursor_pct;
+    document.getElementById('cur').textContent=d.cursor?('~'+d.cursor.toFixed(0)+' MHz'):'—';
+    document.getElementById('eta').textContent=fmt(d.eta_s);
+    const m=d.meta||{};
+    const fin=m.finished_local;
+    document.getElementById('fin').textContent=fin?('finished '+String(fin).slice(11,16)):'';
+    document.title=(fin?'done · ':'')+'SDR station';
+    document.getElementById('islive').textContent=(curFile===liveFile)?'live':'';
+    document.getElementById('meta').textContent=
+      [m.receiver?m.receiver.toUpperCase():null,
+       m.gain_db!=null?('g'+m.gain_db):null,
+       m.integration_s!=null?('i'+m.integration_s):null,
+       d.expected?('of '+(engine==='rtl_power_fftw'?'~':'')+d.expected+(engine==='rtl_power_fftw'?' passes':' sweeps')):null,
+       (engine==='rtl_power_fftw'&&d.planned_hops)?(d.tuned_hops+' of '+d.planned_hops+' hops tuned'+(refused.length?', '+refused.length+' refused':'')):null,
+       (engine==='rtl_power_fftw'&&(d.meta||{}).ended&&!(d.meta||{}).finished_local)?'session ended':null,
+       // the analyser's saturation diagnostic: non-finite readings land on the strongest bins
+       (d.nonfinite_pct>1)?('⚠ '+d.nonfinite_pct.toFixed(1)+'% readings non-finite: peaks are lower bounds'):null
+      ].filter(Boolean).join('  ');
+    total=d.total;
+    document.getElementById('n').textContent=total;
+    // Only overwrite when a sweep actually completed - otherwise every poll between
+    // sweeps blanks it, since the payload is incremental and returns no stamps.
+    if(d.stamps.length)document.getElementById('last').textContent=d.stamps[d.stamps.length-1].slice(11);
+    stale=(d.bytes===lastBytes)?stale+1:0;lastBytes=d.bytes;
+    document.getElementById('dot').className='dot'+(stale>6?' stale':'');
+    draw();
+  }catch(e){}
+  setTimeout(tick,2500);
+}
+// The internal layer's floor: a terminated run with this recording's fingerprint.
+async function loadInternal(){
+  intData={found:false,pending:true};
+  const want=curFile;
+  try{const d=await (await fetch('/internal'+(curFile?'?file='+encodeURIComponent(curFile):''))).json();
+    if(want!==curFile)return;
+    intData=d;}catch(e){intData={found:false,reason:'could not ask the server: '+e};}
+  spurMask=null;layerVer++;layerNote();if(!allLayers())redrawView();
+}
+function layerNote(){
+  document.getElementById('ly-note').textContent=allLayers()
+    ?'all three on = the raw measurement'
+    :'an estimate of the split, composed in linear power; all three on is the raw measurement';
+  const el=document.getElementById('ly-int');
+  if(!intData||intData.pending){el.textContent='';return;}
+  el.textContent='Internal layer: 14.4 MHz clock family and hop centres (hop centres only where a column is finer than a quarter hop); '
+    +(intData.found?`receiver floor from the terminated run ${intData.name}.`:`${intData.reason||'no terminated run matches'}.`);
+}
+document.getElementById('fh-btns').innerHTML=['fit',1,2,4,8,16].map(v=>`<button class="btn" data-ry="${v}">${v==='fit'?'fit':v+' px'}</button>`).join(' ');
+document.querySelectorAll('#fh-btns .btn').forEach(b=>b.onclick=()=>{
+  if(b.dataset.ry==='fit')view.fit=true;else{view.fit=false;view.ry=+b.dataset.ry;}
+  clampView();redrawView();});
+for(const k of ['noise','signal','internal']){const el=document.getElementById('ly-'+k);
+  el.onchange=()=>{layers[k]=el.checked;layerNote();redrawView();};}
+document.getElementById('ly-thr').oninput=e=>{const v=parseFloat(e.target.value);if(isFinite(v)){sigThr=v;redrawView();}};
+document.getElementById('sel-clear').onclick=e=>{e.preventDefault();selectSweep(null);};
+layerNote();
+addEventListener('resize',draw);
+hook('spec');hook('fall');
+for(const k of ['sig','spur','art','grid','hop']){const el=document.getElementById('mk-'+k);
+  el.checked=!!marks[k];
+  el.onchange=()=>{marks[k]=el.checked;try{localStorage.setItem('sdr-marks',JSON.stringify(marks));}catch(e){}redrawLight();};}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showPane(t.dataset.pane));
+document.getElementById('survey').onchange=e=>{curFile=e.target.value;resetView();};
+document.getElementById('scan-stop').onclick=async()=>{
+  const b=document.getElementById('scan-stop');
+  if(!confirm('Stop this rtl_power_fftw run? It finishes the pass in progress, then analyses and archives what it has.'))return;
+  b.disabled=true;
+  try{const r=await fetch('/scan/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:curFile})});
+    const d=await r.json();b.textContent=d.error?('Stop failed: '+d.error):'Stopping…';
+    if(d.error)alert(d.error);}
+  catch(e){b.textContent='Stop failed';}
+  setTimeout(()=>{b.textContent='Stop run';b.disabled=false;},8000);};
+fetch('/roadmap').then(r=>r.text()).then(t=>document.getElementById('road').textContent=t)
+  .catch(()=>document.getElementById('road').textContent='roadmap not found');
+loadSurveys();
+setInterval(loadSurveys,30000);
+recPoll();
+setInterval(recPoll,3000);
+otPoll();
+setInterval(otPoll,2000);
+tick();
+let startPane='scan';
+try{startPane=localStorage.getItem('sdr-pane')||'scan';}catch(e){}
+if(startPane!=='scan')showPane(startPane);
+// A probe run started earlier keeps reporting whichever tab is open.
+fetch('/probe/status').then(r=>r.json()).then(d=>{if(d.state&&d.state!=='idle')probeInit();}).catch(()=>{});
+</script></body></html>

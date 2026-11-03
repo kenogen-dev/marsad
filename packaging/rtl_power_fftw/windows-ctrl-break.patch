@@ -1,0 +1,17 @@
+diff --git a/src/interrupts.cxx b/src/interrupts.cxx
+index e057a2c..592e276 100644
+--- a/src/interrupts.cxx
++++ b/src/interrupts.cxx
+@@ -32,7 +32,11 @@ void CtrlC_handler(int signal) {
+ 
+ void set_CtrlC_handler(bool install) {
+ #ifdef _WIN32
+-  signal(SIGINT, CtrlC_handler);
++  // Windows has no sigaction. Also catch SIGBREAK (Ctrl+Break, which is the
++  // event a parent process can send to just this process group), so a
++  // supervising program can ask for the same graceful finish as Ctrl+C.
++  signal(SIGINT, install ? CtrlC_handler : SIG_DFL);
++  signal(SIGBREAK, install ? CtrlC_handler : SIG_DFL);
+ #else
+   struct sigaction action;
+   action.sa_handler = (install ? &CtrlC_handler : SIG_DFL);
