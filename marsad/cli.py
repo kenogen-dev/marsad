@@ -51,6 +51,7 @@ COMMANDS = {
     "calibrate-retune": "measure rtl_power's retune cost per hop on this computer",
     "characterise": "measure an IQ recording (bandwidth, pulses, chirp, period) and write a recipe",
     "watch": "the triggered recorder: fixed watch, survey + recorder, the captures catalogue",
+    "backup": "copy the station to a verified zip on another drive, and restore one",
     "init": "write a station.json into this folder to edit",
     "config": "show the loaded station configuration",
     "version": "print the version",
@@ -199,6 +200,9 @@ def main(argv=None) -> int:
     if cmd == "watch":
         from . import watch
         return watch.main(args, station, prog)
+    if cmd == "backup":
+        from . import backup
+        return backup.main(args, station, prog)
     if cmd == "init":
         force = "--force" in args
         path = station.write_full(overwrite=force)

@@ -76,6 +76,68 @@ def running_sdr_programs() -> list[str] | None:
     return found
 
 
+def _windows_volume(path) -> str | None:
+    """'C:\\' for a path, from the system's own idea of its volume."""
+    import ctypes
+    buf = ctypes.create_unicode_buffer(300)
+    if ctypes.windll.kernel32.GetVolumePathNameW(str(path), buf, 300):
+        return buf.value
+    return None
+
+
+def _windows_disks(path) -> set | None:
+    """The physical disk numbers a path's volume sits on, or None if Windows will not say."""
+    import ctypes
+    from ctypes import wintypes
+    vol = _windows_volume(path)
+    if not vol or not vol[1:2] == ":":
+        return None
+    k = ctypes.windll.kernel32
+    k.CreateFileW.restype = wintypes.HANDLE
+    h = k.CreateFileW(f"\\\\.\\{vol[:2]}", 0, 3, None, 3, 0, None)     # no access needed for this query
+    if h in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        out = ctypes.create_string_buffer(8 + 24 * 8)
+        got = wintypes.DWORD()
+        if not k.DeviceIoControl(wintypes.HANDLE(h), 0x560000, None, 0, out, len(out), ctypes.byref(got), None):
+            return None
+        n = int.from_bytes(out.raw[:4], "little")
+        return {int.from_bytes(out.raw[8 + 24 * i:12 + 24 * i], "little") for i in range(min(n, 8))}
+    finally:
+        k.CloseHandle(wintypes.HANDLE(h))
+
+
+def same_physical_drive(a, b) -> bool | None:
+    """True or False, or None when it cannot be told. Two partitions of one disk are the
+    same drive here, because they fail together."""
+    try:
+        if IS_WINDOWS:
+            da, db = _windows_disks(a), _windows_disks(b)
+            if da and db:
+                return bool(da & db)
+            va, vb = _windows_volume(a), _windows_volume(b)
+            return True if va and va == vb else None
+        return os.stat(a).st_dev == os.stat(b).st_dev
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def filesystem_name(path) -> str | None:
+    """'NTFS', 'exFAT', 'FAT32'... on Windows; None where it cannot be told."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        import ctypes
+        vol = _windows_volume(path)
+        name = ctypes.create_unicode_buffer(64)
+        if vol and ctypes.windll.kernel32.GetVolumeInformationW(vol, None, 0, None, None, None, name, 64):
+            return name.value
+    except (OSError, AttributeError, ValueError):
+        pass
+    return None
+
+
 def port_in_use(port: int, host_addr: str = "127.0.0.1") -> bool:
     """True when something already answers on the port (a running viewer, usually)."""
     import socket

@@ -32,6 +32,7 @@ same command, so `sdr run wide 1h` and `marsad run wide 1h` are identical.
 | `marsad adsb-check` | proves the receive path works, in 60 s, by counting aircraft at 1090 MHz |
 | `marsad archive list / new / trend / band / seen` | the long-term occupancy database |
 | `marsad response --open A --load B --antenna C` | an antenna's return loss and SWR at every bin, from three runs through a return-loss bridge |
+| `marsad backup export <folder>` | copies the station to a verified zip on another drive; `backup list`, `verify` and `import` restore it |
 | `marsad calibrate-retune` | measures how long *your* PC loses to retuning between hops |
 | `marsad init` | writes a `station.json` for you to edit |
 | `marsad config` | shows what was loaded and from where |
@@ -176,6 +177,35 @@ pagers, DECT and cordless, private land-mobile, from a table in station.json) ge
 fingerprint only: their raw IQ never touches disk.** The table shipped follows North American
 allocations, so outside North America add your own bands before recording. Storage has a pool and a daily cap, and
 nothing is ever deleted; the Captures tab can move a good capture into a verified zip archive.
+
+## Backing up
+
+Your surveys, captures and notes live on one drive until you copy them.
+
+```bash
+marsad backup export E:\backups --dry-run      # sizes, free space, warnings; writes nothing
+marsad backup export E:\backups                # all groups
+marsad backup export E:\backups --include settings,surveys,reports,db
+marsad backup verify E:\backups\marsad-backup_20310115-1200.zip
+marsad backup import E:\backups\marsad-backup_20310115-1200.zip --into D:\radio
+```
+
+An export copies and changes nothing in the station. The groups are `settings` (`station.json`,
+`chain.json`, your notes and other files of yours in the folder, not program files, `rtl-sdr`, a
+venv or git), `surveys`, `reports`, `db` (`occupancy.db`, taken through sqlite's backup API so a
+recorder writing to it cannot tear the copy), `captures`, `archive` and `recordings` (anything else
+in `recordings/`). The zip is written as `.part`, every member is read back and hashed against
+`manifest.json`, and only then is it renamed. A destination inside the station is refused, and one
+on the same physical drive gets a plain warning, because that does not protect against a drive
+failure. `station.local.json` (your location) stays out unless you add `--include-location`. Files a
+running recorder is writing are left out and named, and raw IQ of a private band can never be
+exported. Each export is a full copy: there is no incremental mode yet. `rtl-sdr/` is not copied;
+reinstall it after a restore.
+
+An import verifies the whole zip first, restores each file with its hash checked, and refuses, listing
+them, if a file already there differs. Into an empty folder it gives a working station: `marsad
+--station <folder>` opens it with its archive, captures and settings. It refuses a backup made by a
+newer version. The Archive tab has the same export and verify in a Backup panel.
 
 ## The web app
 

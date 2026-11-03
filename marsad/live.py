@@ -1141,6 +1141,17 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     except OSError as exc:          # a full disk, a file held open: said, not crashed
                         self._send(json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode(), code=500)
                         return
+                elif u.path in ("/backup/plan", "/backup/export", "/backup/verify", "/backup/list"):
+                    from . import backup
+                    if u.path == "/backup/plan":
+                        out = backup.plan(station, form.get("dest"), form.get("groups"),
+                                          form.get("include_location") is True)
+                    elif u.path == "/backup/export":
+                        out = backup.start_export(station, form)
+                    elif u.path == "/backup/verify":
+                        out = backup.start_verify(form)
+                    else:
+                        out = backup.listing(form.get("file"))
                 elif u.path == "/scan/stop":
                     name = str(form.get("file") or "")
                     t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)
@@ -1188,6 +1199,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 body = json.dumps({"live": live["path"].name if live["path"] else None,
                                    "follow": follow,
                                    "surveys": survey_list(station)}).encode()
+            elif u.path == "/backup/status":
+                from . import backup
+                body = json.dumps(dict(backup.JOB)).encode()
             elif u.path == "/config":
                 body = json.dumps(cfg).encode()
             elif u.path == "/builder/fingerprint":

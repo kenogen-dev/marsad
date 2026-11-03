@@ -20,6 +20,7 @@ to work out by hand, for a radio survey on a cheap dongle, belongs in a tool.
 | `marsad response` | Antenna return loss and SWR through a bridge, with trust flags |
 | `marsad characterise` | Measures an IQ recording (bandwidth, pulses, PRIs, chirp shape, rotation, modulation family) and writes a recipe for the next capture |
 | `marsad watch fixed / survey / list` | The triggered recorder. Private bands: fingerprint only, never IQ |
+| `marsad backup export / list / verify / import` | Copies the station to a verified zip on another drive and restores it; never overwrites, never removes |
 | `marsad web status / start / stop / restart` | The web app on 8731, in the background with no window |
 
 **Web app tabs**: Scan, Builder, Archive, Captures, Chain, Probe, Roadmap.
@@ -35,6 +36,7 @@ to work out by hand, for a radio survey on a cheap dongle, belongs in a tool.
   dongle's offset on a carrier it hears would finish it.
 - **Band tables by region**: the private-band table follows North American allocations.
 - **14.4 MHz family in the spur tagger**, and an odd/even half-harmonic test.
+- **Incremental backups**: skip what an earlier backup at the destination already holds.
 - **Trend plots** from `occupancy.db`: frequency versus time across the whole archive.
 
 ---

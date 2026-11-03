@@ -339,6 +339,16 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
 
 <div class="pane" id="pane-archive">
   <main>
+    <div class="wrap" id="backup-panel">
+      <div class="lab">Backup — copy this station to a verified zip on another drive</div>
+      <p class="note">This copies: nothing in the station is removed or changed. Restore with
+        <code>marsad backup import &lt;file&gt; --into &lt;folder&gt;</code>, which never overwrites a file that differs.</p>
+      <div class="frm">
+        <label>Destination folder <input id="bk-dest" style="min-width:320px" placeholder="E:\backups"></label>
+        <span id="bk-groups"></span>
+        <label title="station.local.json holds your location. It stays out of a backup unless ticked."><input type="checkbox" id="bk-loc"> include my location (station.local.json)</label>
+        <button class="btn" id="bk-plan">Show sizes and free space</button>
+      </div>
     <div class="wrap">
       <div class="lab">Every survey in surveys/ — click a row to open it on the Scan tab</div>
       <div style="overflow-x:auto"><table id="arch"><tbody></tbody></table></div>
@@ -351,6 +361,16 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
     <div class="wrap">
       <div class="lab">Frequencies seen in at least two antenna surveys — the persistent set</div>
       <div style="overflow-x:auto"><table id="dbseen"><tbody></tbody></table></div>
+    </div>
+      <div id="bk-out" class="note" style="margin-top:8px"></div>
+      <div class="frm" style="margin-top:8px">
+        <button class="btn halt" id="bk-go" hidden>Write the backup</button>
+        <span id="bk-prog" class="note" style="margin:0"></span>
+      </div>
+      <div class="frm" style="margin-top:12px">
+        <label>Check a backup <input id="bk-file" style="min-width:320px" placeholder="E:\backups\marsad-backup_....zip"></label>
+        <button class="btn" id="bk-verify">Verify every file</button>
+      </div>
     </div>
   </main>
 </div>
@@ -1194,7 +1214,52 @@ async function loadSurveys(){
   }catch(e){}
 }
 
+const BK_GROUPS={settings:'settings and notes',surveys:'surveys',reports:'reports',db:'occupancy.db',captures:'captures pool',archive:'capture archive',recordings:'other recordings'};
+const bkEl=id=>document.getElementById('bk-'+id);
+function bkInit(){
+  if(bkEl('groups').childElementCount)return;
+  bkEl('groups').innerHTML=Object.entries(BK_GROUPS).map(([k,v])=>`<label style="margin-right:10px"><input type="checkbox" data-bk="${k}" checked> ${esc(v)}</label>`).join('');
+  bkEl('plan').onclick=bkPlan;bkEl('go').onclick=bkGo;bkEl('verify').onclick=bkVerify;
+  bkPoll();
+}
+function bkForm(){return{dest:bkEl('dest').value,include_location:bkEl('loc').checked,
+  groups:[...document.querySelectorAll('[data-bk]')].filter(x=>x.checked).map(x=>x.dataset.bk)};}
+async function bkPost(path,body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();if(d.error)throw new Error(d.error);return d;}
+async function bkPlan(){
+  bkEl('go').hidden=true;bkEl('out').textContent='adding up…';
+  try{const p=await bkPost('/backup/plan',bkForm());
+    bkEl('out').innerHTML=`<div>Will write <b>${esc(p.file)}</b></div><table><tbody>`
+      +p.groups.map(g=>`<tr><td>${esc(g.label)}</td><td class="n">${g.files} files</td><td class="n">${(g.bytes/1048576).toFixed(1)} MB</td></tr>`).join('')
+      +`</tbody></table><div>Up to <b>${esc(p.total_h)}</b>; free there: <b>${esc(p.free_h)}</b>.</div>`
+      +`<div>${p.location_included?'Your location IS included.':'Your location is NOT included.'}</div>`
+      +p.warnings.map(w=>`<div style="color:#e8b14f"><b>Warning:</b> ${esc(w)}</div>`).join('')
+      +p.skipped.map(s=>`<div>Left out: ${esc(s.path)}: ${esc(s.why)}</div>`).join('');
+    bkEl('go').hidden=false;
+  }catch(e){bkEl('out').textContent=e.message;}
+}
+async function bkGo(){
+  if(!confirm('Write the backup? Nothing in the station changes.'))return;
+  bkEl('go').hidden=true;
+  try{await bkPost('/backup/export',{...bkForm(),confirm:true});bkPoll();}catch(e){bkEl('prog').textContent=e.message;}
+}
+async function bkVerify(){
+  try{await bkPost('/backup/verify',{file:bkEl('file').value});bkPoll();}catch(e){bkEl('prog').textContent=e.message;}
+}
+async function bkPoll(){
+  let j;try{j=await (await fetch('/backup/status')).json();}catch(e){return;}
+  const p=bkEl('prog');
+  if(j.state==='running'){const pct=j.total?Math.floor(100*j.done/j.total):0;
+    p.textContent=`${j.kind} running: ${pct}%  ${j.label||''}`;setTimeout(bkPoll,1000);}
+  else if(j.state==='failed')p.textContent=`${j.kind} failed: ${j.error}`;
+  else if(j.state==='done'&&j.kind==='export'){const r=j.result;
+    p.textContent=`Wrote and verified ${r.file}: ${r.files} files, ${r.bytes_h}.`+(r.changed.length?` ${r.changed.length} changed while being copied.`:'');}
+  else if(j.state==='done'){const r=j.result;
+    p.textContent=r.ok?`OK: ${r.files} files, ${r.bytes_h}, every hash matches.`:`FAILED: ${r.bad.length} bad of ${r.files}. First: ${(r.bad[0]||{}).member||r.extra[0]}`;}
+}
 async function loadArchive(){
+  bkInit();
   try{
     const d=await (await fetch('/archive')).json();
     const note=document.getElementById('dbnote');
