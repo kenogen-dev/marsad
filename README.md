@@ -163,6 +163,7 @@ Built in:
 marsad watch fixed --freq 433.92M --duration 1h                     # one radio parked on a signal
 marsad watch survey milair 12h --chain "..." --conditions "..."     # two radios: one surveys, the other records
 marsad watch list                                                   # the catalogue
+marsad watch report                                                 # the review of the newest watch
 ```
 
 With one dongle, `watch fixed` finds it by itself. With two, it tells them apart by tuner;
@@ -177,6 +178,29 @@ pagers, DECT and cordless, private land-mobile, from a table in station.json) ge
 fingerprint only: their raw IQ never touches disk.** The table shipped follows North American
 allocations, so outside North America add your own bands before recording. Storage has a pool and a daily cap, and
 nothing is ever deleted; the Captures tab can move a good capture into a verified zip archive.
+
+Before the first capture of a signal the recorder takes a **wide look**: a few seconds at the radio's full
+rate, held in memory and dropped, to see whether the signal is pulsed or continuous and how wide it really is.
+What it saw sets the capture's width; if it saw nothing (a beam that comes round every few seconds is easily
+missed), the whole band is kept, because a survey's width is only a guess. Private bands get no look. `--look 0`
+or `recorder.look_s: 0` turns it off.
+
+With a keep level (`--keep-min-snr`, off by default), the first `recorder.keep_check_s` seconds are held in
+memory until the recorder's own SNR reaches it. If it does not, nothing is written, but the recorder keeps
+listening: a burst later in the same event still starts a capture, with the second before it.
+
+`recorder.known_cooldown_min` (off by default) limits a signal the catalogue already knows well: once
+`recorder.known_after` captures of it have a strong or medium grade and a meaningful label, it records at most
+that often, and its events stay catalogued. `--dry-run` says whether this is on.
+
+`marsad watch report [survey or part of its name] [--md file]` is the review of a watch, read-only: signals with
+their events, captures and GB, events per hour by tier, grades, captures that look empty, events the keep level
+refused despite a high peak, and episodes (three or more strong events on two or more signals, close in time and
+frequency). Private rows appear only as counts per band and when they happened.
+
+Two kinds of question are raised and never answered for you: an event at twice a private band's frequency carries
+"possible harmonic of <band>", and two open signals with the same pulse spacings and rotation get "same emitter?".
+Neither changes a tier, what is kept or what may be exported.
 
 ## Backing up
 

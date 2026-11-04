@@ -15,6 +15,7 @@
         `marsad run`.
 
     marsad watch list [--last 30]          the captures catalogue, newest first
+    marsad watch report [survey]           the review of one watch (read-only)
     marsad watch ... --dry-run             show the plan, open no radio
 
 Trigger rules (each a station.json `recorder` setting): SNR >= 12 dB over the pass's
@@ -43,6 +44,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+import numpy as np
 
 from . import capture as cap
 from . import characterise, host, probe
@@ -165,6 +168,13 @@ def launch_rtl_sdr(cmd: list, log_path: Path):
             pass
         log.close()
     return proc.stdout, stop
+
+
+def look_words(res: dict) -> str:
+    if res["kind"] == "nothing":
+        return f"nothing seen in {res['seconds']:g} s, so the whole band is kept"
+    return (f"{res['kind']}, {res['width_hz'] / 1e3:.1f} kHz wide"
+            + (f", {res['pulses']} pulses in {res['seconds']:g} s" if res.get("pulses") else ""))
 
 
 class Recorder:
@@ -307,6 +317,10 @@ class Recorder:
                 last = rows[0]["started_epoch"] if rows else None
             if mode == "watch" and last is not None and now - last < self.cooldown_s:
                 return "cooldown"
+            if mode == "watch":
+                known = self.known_refusal(target, plan["width_hz"], now)
+                if known:
+                    return known
             expect = capture_s * plan["store_rate_hz"] * 4
             r = self.budget.iq_refusal(expect)
             if r:
@@ -369,6 +383,72 @@ class Recorder:
         out["rows"] = state["rows"]
         return out
 
+    def wide_look(self, signal_hz: float, band: dict, hint_hz: float | None, stop=None) -> dict | None:
+        """A few seconds at the radio's full rate, held in memory and dropped, to see what the
+        signal really is before choosing how narrowly to keep it. Never in a private band:
+        nothing there is kept, so there is nothing for the look to decide."""
+        secs = float(self.cfg.get("look_s") or 0)
+        if secs <= 0 or band["tier"] == "private":
+            return None
+        plan = cap.plan_capture(signal_hz, None, self.rx["tuner"], None, self.gain_db, off_dc=True)
+        cmd = self.exe + cap.rtl_sdr_command(self.exe[0], self.rx["serial"], plan, self.ppm)[1:]
+        self.note_status(job={"kind": "wide look", "target_mhz": signal_hz / 1e6, "tuned_mhz": plan["tune_hz"] / 1e6,
+                              "rate": plan["rtl_rate_hz"], "gain_db": plan.get("gain_db"), "tier": band["tier"],
+                              "band": band.get("band") or None, "trigger": "wide look",
+                              "since": time.time(), "until": time.time() + secs})
+        stream, stop_proc = self.launch(cmd, self.pool / "rtl_sdr.log")
+        rate = plan["rtl_rate_hz"]
+        reader = cap.StreamReader(stream, int(rate * 0.1) * 2)
+        chunks = []
+        try:
+            for _ in range(int(round(secs / 0.1))):
+                if stop is not None and stop.is_set():
+                    break
+                b = reader.get()
+                if not b:
+                    break
+                chunks.append(cap.cu8_to_complex(b))
+        finally:
+            stop_proc()
+            self.note_status(job=None)
+        if not chunks:
+            return None
+        x = np.concatenate(chunks)
+        del chunks
+        at = signal_hz - plan["tune_hz"]
+        res = characterise.look(x, rate, at, max((hint_hz or 0) / 2, 25e3))
+        if res.get("centre_hz") is not None:
+            res["signal_hz"] = plan["tune_hz"] + res["centre_hz"]
+        self.clock = max(self.clock, time.time())
+        self.say("    wide look: " + look_words(res))
+        return res
+
+    def plan_for(self, signal_hz: float, width_hz: float | None, band: dict, stop=None) -> tuple:
+        """(plan, words about the look or None) for a capture with no recipe yet. The look
+        decides: a signal it saw is kept as wide as it measured; a signal it did not see gets
+        the whole band, because a survey's width is one bin-wide guess and a pulse it never
+        saw can be far wider."""
+        res = self.wide_look(signal_hz, band, width_hz, stop)
+        if res is None:
+            return cap.plan_capture(signal_hz, width_hz, self.rx["tuner"], None, self.gain_db), None
+        if res["kind"] == "nothing" or res["width_hz"] >= 0.4 * 2.4e6:
+            plan = cap.plan_capture(signal_hz, None, self.rx["tuner"], None, self.gain_db, off_dc=True)
+        else:
+            plan = cap.plan_capture(res["signal_hz"], res["width_hz"], self.rx["tuner"], None, self.gain_db)
+            plan["target_hz"] = signal_hz
+        plan["source"] = "wide look"
+        return plan, "wide look: " + look_words(res)
+
+    def known_refusal(self, freq_hz: float, width_hz: float, now: float) -> str | None:
+        """Why a well-known signal records nothing yet, or None. Off unless the station sets it."""
+        minutes = float(self.cfg.get("known_cooldown_min") or 0)
+        if minutes <= 0:
+            return None
+        k = cap.known_signal(self.con, freq_hz, 25e3, width_hz, int(self.cfg.get("known_after", 3)))
+        if k and now - k["last"] < minutes * 60:
+            return "known signal"
+        return None
+
     def _event_row(self, ev, sess, plan, band, mode, trigger, survey, state, extra):
         start = sess.t0 + ev["start_s"]
         private = band["tier"] == "private"
@@ -413,7 +493,9 @@ class Recorder:
                "gain_db": plan.get("gain_db"), "ppm": self.ppm, "chain": self.chain,
                "grade": cap.grade_for(ev["snr_peak_db"]),
                "settings": self.settings_used(),
-               "notes": "; ".join(x for x in [ev.get("anomaly"), keep_note, extra.get("notes")] if x) or None}
+               "notes": "; ".join(x for x in [ev.get("anomaly"), keep_note, extra.get("notes"),
+                                              cap.harmonic_note(plan["signal_hz"] + ev.get("centre_rel_hz", 0.0), self.cfg)]
+                                  if x) or None}
         state["prev_start"] = start
         rid = cap.add_row(self.con, row)
         if self.st is not None:
@@ -430,6 +512,7 @@ class Recorder:
                 c["row_id"] = rid
                 c["event_snr_db"] = row["snr_peak_db"]
             self._link(c)
+            self._append_note(c)
 
     def _link(self, c: dict) -> None:
         """Write what is known about a capture into its row, whichever half finished last."""
@@ -469,19 +552,22 @@ class Recorder:
                     recipe["gain_db_used"] = c.get("gain_db")
                     recipe["occupied_hz"] = (res.get("occupied") or {}).get("bandwidth_hz")
                 snr = cap.capture_snr(res)
-                out = {"family": res.get("family"), "characterised": str(md),
+                timing = characterise.timing_signature(res)
+                out = {"family": res.get("family"), "characterised": str(md), "timing": timing,
                        "recipe": recipe, "capture_snr_db": None if snr is None else round(snr, 2),
                        "grade": cap.grade_for(snr if snr is not None else c.get("event_snr_db"),
                                               res.get("family"))}
                 if out["grade"] is None:
                     out.pop("grade")          # keep the event's own grade
                 self.say(f"    characterised {meta.name}: {res.get('family')}")
+                c["timing_question"] = self._timing_question(meta, res, timing)
             except BaseException as exc:      # a bad capture must not stop the watch
                 out = {"notes": f"characterise failed: {exc}"}
                 recipe = None
             with self.lock:
                 c["result"] = out
             self._link(c)
+            self._append_note(c)
             if recipe:
                 self.recipe_ready.set()
         if self.inline:
@@ -490,6 +576,31 @@ class Recorder:
         t = threading.Thread(target=work, daemon=True)
         self.threads.append(t)
         t.start()
+
+    def _timing_question(self, meta: Path, res: dict, timing: dict | None) -> str | None:
+        """A question, never a finding, for an open capture that shares another's pulse timing."""
+        if not timing or not res.get("tuned_hz"):
+            return None
+        occ = res.get("occupied") or {}
+        con = cap.connect(self.station)
+        try:
+            other = cap.same_timing_elsewhere(con, res["tuned_hz"] + occ.get("centre_offset_hz", 0.0),
+                                              occ.get("bandwidth_hz", 0.0), timing)
+        finally:
+            con.close()
+        return cap.timing_question(other, timing) if other else None
+
+    def _append_note(self, c: dict) -> None:
+        q, rid = c.get("timing_question"), c.get("row_id")
+        if not q or rid is None or c.get("timing_noted"):
+            return
+        c["timing_noted"] = True
+        con = cap.connect(self.station)
+        try:
+            r = con.execute("SELECT notes FROM captures WHERE id = ?", (rid,)).fetchone()
+            cap.update_row(con, rid, notes="; ".join(x for x in [r["notes"] if r else None, q] if x))
+        finally:
+            con.close()
 
     def settings_used(self) -> dict:
         """The trigger settings this watch runs with (flags over station.json)."""
@@ -531,7 +642,10 @@ def fixed_watch(rec: Recorder, freq_hz: float, duration_s: float, width_hz: floa
 def _fixed_loop(rec, freq_hz, band, end, width_hz, capture_s, stop, total) -> None:
     while rec.clock < end - 0.5 and not stop.is_set():
         recipe = cap.recipe_for(rec.con, freq_hz)
-        plan = cap.plan_capture(freq_hz, None if recipe else width_hz, rec.rx["tuner"], recipe, rec.gain_db)
+        if recipe or width_hz:             # a recipe, or a width you gave: nothing for a look to decide
+            plan = cap.plan_capture(freq_hz, None if recipe else width_hz, rec.rx["tuner"], recipe, rec.gain_db)
+        else:
+            plan, _ = rec.plan_for(freq_hz, None, band, stop)
         clen = capture_len(rec.cfg, recipe, capture_s)
         total["plan"] = plan
         rec.recipe_ready.clear()
@@ -639,7 +753,8 @@ class Triggers:
     {"kind": "capture" | "ambush", "f_mhz", "snr_db", "width_khz", "why"}.
     """
 
-    def __init__(self, cfg: dict, last_handled=None):
+    def __init__(self, cfg: dict, last_handled=None, known=None):
+        self.known = known or (lambda f, tol, w=0.0: None)   # says when a well-known signal may record next
         self.threshold = float(cfg.get("threshold_db", 12))
         self.passes = int(cfg.get("passes", 2))
         self.ambush_db = float(cfg.get("ambush_db", 20))
@@ -684,7 +799,10 @@ class Triggers:
                 continue
             act = {"f_mhz": d["f_mhz"], "snr_db": d["snr_db"], "width_khz": d["width_khz"],
                    "reference": ref}
-            if count >= self.passes:
+            until = None if ref else self.known(d["f_mhz"] * 1e6, max(d["tol_khz"], 25.0) * 1e3, d["width_khz"] * 1e3)
+            if until is not None and count >= self.passes:
+                act.update(kind="known", until=until, why=f"{count} passes, {d['snr_db']:.1f} dB, known signal")
+            elif count >= self.passes:
                 act.update(kind="capture", why=f"{count} passes, {d['snr_db']:.1f} dB"
                            + (" (reference carrier)" if ref else ""))
             elif count == 1 and d["snr_db"] >= self.ambush_db:
@@ -770,8 +888,12 @@ def survey_job(rec: Recorder, station: Station, survey_name: str, survey_ppm: fl
                                   "captured": 1, "iq_status": "outside the recorder's range"})
             return
         recipe = cap.recipe_for(rec.con, f_true)
-        plan = cap.plan_capture(f_true, None if recipe else max(job["width_khz"] * 1e3, 5e3),
-                                rec.rx["tuner"], recipe, rec.gain_db)
+        hint = max(job["width_khz"] * 1e3, 5e3)
+        seen = None
+        if recipe or job["kind"] != "capture":
+            plan = cap.plan_capture(f_true, None if recipe else hint, rec.rx["tuner"], recipe, rec.gain_db)
+        else:
+            plan, seen = rec.plan_for(f_true, hint, band, job["stop"])
         clen = capture_len(cfg, recipe, cfg.get("capture_override_s"))
         rec.cool(f_true, (cap.local_midnight(time.time()) + 86400) if job.get("reference")
                  else time.time() + rec.cooldown_s)
@@ -779,7 +901,8 @@ def survey_job(rec: Recorder, station: Station, survey_name: str, survey_ppm: fl
                 + (f"; {band['band']}, PRIVATE: fingerprint only" if band["tier"] == "private" else "") + ")")
         if job["kind"] == "capture":
             rec.session(plan, band, "now", clen, clen, trigger, survey_name, stop=job["stop"],
-                        extra={"notes": f"survey SNR {job['snr_db']:.1f} dB, width {job['width_khz']:.1f} kHz"})
+                        extra={"notes": "; ".join(x for x in [
+                            f"survey SNR {job['snr_db']:.1f} dB, width {job['width_khz']:.1f} kHz", seen] if x)})
         else:
             # the survey pass itself is the record of a one-off that never returns
             cap.add_row(rec.con, {"started": dt.datetime.now().isoformat(timespec="seconds"),
@@ -831,8 +954,25 @@ def watch_tailer(path: Path):
     return t
 
 
+def known_row(rec: Recorder, survey_name: str, survey_ppm: float, act: dict) -> None:
+    """The survey saw a signal the catalogue already knows well and the recorder stayed free:
+    its row, so the event stays in the catalogue, costs no radio time and no IQ."""
+    f_true = act["f_mhz"] * 1e6 / (1.0 + survey_ppm * 1e-6)
+    band = cap.band_tier(f_true, rec.cfg)
+    when = dt.datetime.fromtimestamp(act["until"]).strftime("%H:%M")
+    cap.add_row(rec.con, {"started": dt.datetime.now().isoformat(timespec="seconds"),
+                          "started_epoch": time.time(), "freq_hz": f_true, "target_hz": f_true, "receiver": "survey",
+                          "mode": "survey pass", "trigger": f"survey {act['why']}", "survey": survey_name,
+                          "tier": band["tier"], "band": band["band"] or None,
+                          "flags": cap.PRIVATE if band["tier"] == "private" else None,
+                          "snr_peak_db": act["snr_db"], "bandwidth_hz": act["width_khz"] * 1e3, "captured": 1,
+                          "iq_status": "known signal: not recorded", "settings": rec.settings_used(),
+                          "notes": "; ".join(x for x in [f"next capture allowed after {when}",
+                                                         cap.harmonic_note(f_true, rec.cfg)] if x)})
+
+
 def follow_survey(tailer, triggers: Triggers, dispatcher, families, floor_window_mhz: float,
-                  alive, say=print, poll_s: float = 1.0, on_pass=None) -> int:
+                  alive, say=print, poll_s: float = 1.0, on_pass=None, on_known=None) -> int:
     """Feed each completed pass of a growing survey to the trigger rules. Returns passes seen."""
     seen = 0
     while True:
@@ -847,7 +987,11 @@ def follow_survey(tailer, triggers: Triggers, dispatcher, families, floor_window
             dets = pass_detections(latest, step, hc, triggers.threshold, floor_window_mhz, families)
             for act in triggers.feed(dets, time.time()):
                 say(f"  pass {seen}: {act['kind']} {act['f_mhz']:.4f} MHz ({act['why']})")
-                dispatcher.submit(act)
+                if act["kind"] == "known":
+                    if on_known:
+                        on_known(act)
+                else:
+                    dispatcher.submit(act)
         if not running:
             return seen
         time.sleep(poll_s)
@@ -869,15 +1013,23 @@ def add_trigger_flags(p, survey: bool) -> None:
     p.add_argument("--capture", type=float, metavar="S",
                    help="seconds per IQ capture, over any recipe (default: the recipe, else recorder.capture_s)")
     p.add_argument("--keep-min-snr", type=float, metavar="DB",
-                   help="keep IQ only if the recorder's own SNR reaches this within the first "
-                        "recorder.keep_check_s seconds; else fingerprint only (recorder.keep_min_snr_db, 0 = off)")
+                   help="keep IQ only if the recorder's own SNR reaches this; the first recorder.keep_check_s "
+                        "seconds are held in memory until then, and a later burst in the same event still "
+                        "starts a capture; else fingerprint only (recorder.keep_min_snr_db, 0 = off)")
+    p.add_argument("--known-cooldown", type=float, metavar="MIN",
+                   help="a signal with recorder.known_after good captures records at most this often; its events "
+                        "stay catalogued (recorder.known_cooldown_min, 0 = off: treated like any other)")
+    p.add_argument("--look", type=float, metavar="S",
+                   help="seconds at the full radio rate, in memory, before a first capture chooses its width "
+                        "(recorder.look_s, 0 = off)")
 
 
 def apply_trigger_flags(cfg: dict, args) -> dict:
     """cfg with the flags laid over it: what the watch runs with and every row records."""
     cfg = dict(cfg)
     for flag, key in (("threshold", "threshold_db"), ("passes", "passes"), ("ambush", "ambush_db"),
-                      ("cooldown", "cooldown_min"), ("keep_min_snr", "keep_min_snr_db")):
+                      ("cooldown", "cooldown_min"), ("keep_min_snr", "keep_min_snr_db"),
+                      ("known_cooldown", "known_cooldown_min"), ("look", "look_s")):
         v = getattr(args, flag, None)
         if v is not None:
             cfg[key] = v
@@ -893,7 +1045,12 @@ def settings_line(cfg: dict, survey: bool) -> str:
     bits += [f"cooldown {cfg.get('cooldown_min')} min",
              f"capture {cfg['capture_override_s']:g} s (over any recipe)" if cfg.get("capture_override_s")
              else f"capture the recipe's length, else {cfg.get('capture_s')} s",
-             f"keep IQ at {keep:g} dB or more within {cfg.get('keep_check_s', 3)} s" if keep > 0 else "keep level off"]
+             f"keep IQ at {keep:g} dB or more" if keep > 0 else "keep level off"]
+    look = float(cfg.get("look_s") or 0)
+    bits.append(f"wide look {look:g} s before a first capture" if look > 0 else "no wide look")
+    known = float(cfg.get("known_cooldown_min") or 0)
+    bits.append(f"a signal with {cfg.get('known_after', 3)} good captures records at most every {known:g} min, "
+                "its events still catalogued" if known > 0 else "known signals are not limited")
     return ", ".join(bits)
 
 
@@ -1009,6 +1166,9 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true")
     li = sub.add_parser("list", help="the captures catalogue, newest first")
     li.add_argument("--last", type=int, default=30)
+    rp = sub.add_parser("report", help="the review of one watch: signals, GB, hours, grades, what looks empty")
+    rp.add_argument("survey", nargs="?", help="survey name or part of it (default: the newest watch)")
+    rp.add_argument("--md", help="also save the report as this Markdown file")
     return ap
 
 
@@ -1046,6 +1206,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad watch", 
     args, rest = ap.parse_known_args(argv)
     if args.what == "list":
         return show_list(station, args.last)
+    if args.what == "report":
+        from . import watch_report
+        return watch_report.main(station, args.survey, args.md)
     cfg = apply_trigger_flags(cap.settings(station), args)
     if args.what == "fixed":
         if rest:
@@ -1149,8 +1312,16 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
     print(f"  following {path.name}")
     fw = float(pre.get("floor_window") or 2.0)
     survey_name = path.stem
-    trig = Triggers(cfg, lambda f, tol, w=0.0: cap.last_captured(rec.con, f, tol, w))
     survey_ppm = cap.ppm_of(cfg, surveyor["serial"])
+
+    def known(f, tol, w=0.0):
+        minutes = float(cfg.get("known_cooldown_min") or 0)
+        if minutes <= 0:
+            return None
+        k = cap.known_signal(rec.con, f / (1.0 + survey_ppm * 1e-6), tol, w, int(cfg.get("known_after", 3)))
+        return k["last"] + minutes * 60 if k and time.time() - k["last"] < minutes * 60 else None
+
+    trig = Triggers(cfg, lambda f, tol, w=0.0: cap.last_captured(rec.con, f, tol, w), known)
     disp = Dispatcher(survey_job(rec, station, survey_name, survey_ppm))
     rec.queue_len = lambda: len(disp.queue)
     rec.start_status("survey + recorder", ends_at=t_start + dur, survey=survey_name,
@@ -1158,7 +1329,8 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
     try:
         follow_survey(watch_tailer(path), trig, disp, trigger_families(station), fw,
                       alive=lambda: proc.poll() is None, say=rec.say, poll_s=poll_s,
-                      on_pass=lambda n: rec.note_status(passes=n))
+                      on_pass=lambda n: rec.note_status(passes=n),
+                      on_known=lambda act: known_row(rec, survey_name, survey_ppm, act))
     except KeyboardInterrupt:
         stopfile.parent.mkdir(parents=True, exist_ok=True)
         stopfile.write_text("stop")

@@ -792,12 +792,39 @@ def survey_list(station: Station) -> list:
     return out
 
 
-def started_at(path: Path) -> float:
-    """When a recording was created. Two radios write two files at once, and the one
-    modified last flips back and forth with every flush, so "newest" for the Scan tab
-    means newest STARTED. On Windows st_ctime is the creation time."""
+_STARTED: dict = {}
+
+
+def _sidecar_start(path: Path) -> float | None:
+    """When the sidecar says the recording began. Cached per sidecar and age, because the
+    follow loop asks about every recording on every poll."""
+    side = path.with_suffix(".json")
+    try:
+        key = (str(side), side.stat().st_mtime)
+    except OSError:
+        return None
+    if key not in _STARTED:
+        try:
+            _STARTED[key] = dt.datetime.fromisoformat(
+                json.loads(side.read_text(encoding="utf-8"))["started_local"]).timestamp()
+        except (OSError, ValueError, KeyError, TypeError):
+            _STARTED[key] = None
+    return _STARTED[key]
+
+
+def _created(path: Path) -> float:
     s = path.stat()
     return getattr(s, "st_birthtime", s.st_ctime)
+
+
+def started_at(path: Path) -> float:
+    """When a recording began. Two radios write two files at once, and the one modified
+    last flips back and forth with every flush, so "newest" for the Scan tab means newest
+    STARTED. The sidecar's start time comes first, because a restored backup gives every
+    file a new creation time, in whatever order it was unpacked. Without a sidecar: the
+    file's creation time (on Windows that is st_ctime)."""
+    t = _sidecar_start(path)
+    return t if t is not None else _created(path)
 
 
 def newest_recording(station: Station):
@@ -805,7 +832,8 @@ def newest_recording(station: Station):
     if not station.surveys.exists():
         return None
     files = list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat"))
-    return max(files, key=lambda p: (started_at(p), p.stat().st_mtime)) if files else None
+    # sidecars say the second; two runs started in one second go by creation time
+    return max(files, key=lambda p: (started_at(p), _created(p), p.stat().st_mtime)) if files else None
 
 
 STILL_WRITING_S = 300.0      # a recording untouched this long is not being written any more
@@ -840,7 +868,7 @@ def other_recording(station: Station, main: str | None, now: float | None = None
     if not station.surveys.exists():
         return None
     files = list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat"))
-    for f in sorted(files, key=started_at, reverse=True):
+    for f in sorted(files, key=lambda p: (started_at(p), _created(p)), reverse=True):
         if f.name != main and recording_active(f, now):
             return f
     return None

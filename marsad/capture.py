@@ -34,6 +34,7 @@ import json
 import math
 import os
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -58,6 +59,8 @@ LIVE_COLS = 256           # the status file's live spectrum: power per column, n
 LIVE_HOLD_S = 2.0         # ... averaged and max-held over this long
 LIVE_EVERY = 10           # recomputed every this many blocks (~0.2 s)
 
+CUT_CUTOFF = 0.4          # the cut filter's edge, recorded in each capture's meta
+
 PRIVATE = "PRIVATE: do not decode"
 ANOMALY = "ANOMALY: review"
 BELOW_KEEP = "below keep level"
@@ -67,7 +70,8 @@ BELOW_KEEP = "below keep level"
 GRADES = (("strong", 20.0), ("medium", 12.0), ("weak", 6.0), ("empty", -1e9))
 EMPTY_FAMILIES = ("nothing found", "too weak to classify")
 # The trigger settings a watch ran with, stored in every row so watches stay comparable.
-SETTING_KEYS = ("threshold_db", "passes", "ambush_db", "cooldown_min", "capture_s", "keep_min_snr_db")
+SETTING_KEYS = ("threshold_db", "passes", "ambush_db", "cooldown_min", "capture_s", "keep_min_snr_db",
+                "known_cooldown_min", "look_s")
 
 
 # ---------------------------------------------------------------- settings
@@ -128,7 +132,7 @@ def snap_gain(tuner: str | None, gain_db: float) -> float:
 # ---------------------------------------------------------------- planning a capture
 
 def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
-                 recipe: dict | None = None, gain_db: float | None = None) -> dict:
+                 recipe: dict | None = None, gain_db: float | None = None, off_dc: bool = False) -> dict:
     """Radio rate, tuning, cut rate and watched band for one signal.
 
     With a recipe from an earlier capture, follow it. Without one, the bandwidth is
@@ -137,7 +141,7 @@ def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
     2.4 MS/s is kept, centred on a low-IF tuner (R820T, R860: no DC spike), on a
     zero-IF tuner a quarter of the band above DC.
     """
-    zero_if = (tuner or "").lower() == "e4000"
+    zero_if = (tuner or "").lower() == "e4000" or off_dc   # off_dc: a low-IF tuner has a smaller bump there too
     target = signal_hz
     if recipe and recipe.get("signal_hz"):
         # Tune on the centre the characteriser measured (a chirp's centre can sit tens of
@@ -178,11 +182,23 @@ def plan_capture(signal_hz: float, width_hz: float | None, tuner: str | None,
             "decim": decim, "store_rate_hz": rtl / decim, "width_hz": width,
             "source": src, "duration_s": (recipe or {}).get("duration_s")}
     if gain_db is not None:
-        # the recipe's nudge is relative to the gain its capture was made at
-        base = (recipe or {}).get("gain_db_used")
-        change = ((recipe or {}).get("gain") or {}).get("change_db", 0) or 0
-        plan["gain_db"] = snap_gain(tuner, (gain_db if base is None else base) + change)
+        plan["gain_db"] = snap_gain(tuner, next_gain(gain_db, recipe))
     return plan
+
+
+def next_gain(standing_db: float, recipe: dict | None) -> float:
+    """The gain for the next capture. The recipe's nudge is relative to the gain its capture
+    was made at. A capture that went below the standing gain and came out well clear of the
+    rails climbs back, keeping 3 dB in hand and never passing the standing gain, so one
+    clipped capture cannot walk the gain down for good."""
+    base = (recipe or {}).get("gain_db_used")
+    if base is None:
+        base = standing_db
+    change = ((recipe or {}).get("gain") or {}).get("change_db", 0) or 0
+    peak = (recipe or {}).get("peak_dbfs")
+    if change == 0 and peak is not None and base < standing_db and peak < -6.0:
+        change = min(-peak - 3.0, standing_db - base)
+    return base + change
 
 
 def rtl_sdr_command(exe: str, device: str, plan: dict, ppm: float) -> list:
@@ -237,7 +253,8 @@ CREATE TABLE IF NOT EXISTS captures (
   notes           TEXT,
   capture_snr_db  REAL,
   grade           TEXT,
-  settings        TEXT
+  settings        TEXT,
+  timing          TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_cap_freq ON captures(freq_hz);
 CREATE INDEX IF NOT EXISTS ix_cap_time ON captures(started_epoch);
@@ -247,9 +264,10 @@ COLUMNS = ("started", "started_epoch", "duration_s", "freq_hz", "target_hz", "tu
            "bandwidth_hz", "peak_hz", "duty", "repeat_s", "captured", "iq_status", "iq_path",
            "iq_bytes", "fingerprint", "fp_bytes", "rtl_rate_hz", "store_rate_hz", "gain_db",
            "ppm", "chain", "family", "characterised", "recipe", "notes",
-           "capture_snr_db", "grade", "settings")
+           "capture_snr_db", "grade", "settings", "timing")
 # Columns added after the table first shipped: connect() adds any that are missing.
-LATER_COLUMNS = (("target_hz", "REAL"), ("capture_snr_db", "REAL"), ("grade", "TEXT"), ("settings", "TEXT"))
+LATER_COLUMNS = (("target_hz", "REAL"), ("capture_snr_db", "REAL"), ("grade", "TEXT"), ("settings", "TEXT"),
+                 ("timing", "TEXT"))
 
 
 def connect(station: Station) -> sqlite3.Connection:
@@ -322,6 +340,8 @@ def grade_row(row: dict) -> tuple:
         snr, src = row.get("snr_peak_db"), "recorder event peak"
     if row.get("receiver") == "survey":         # a survey-pass row: the recorder saw nothing
         return None, None, None
+    if filter_shaped(row):
+        return "empty", snr, "only the capture's filter shape"
     g = grade_for(snr, row.get("family"))
     return g, snr, (src if g else None)
 
@@ -369,14 +389,106 @@ def near(con, freq_hz: float, tol_hz: float, where: str = "1") -> list:
         (freq_hz, tol_hz, freq_hz, tol_hz)).fetchall()
 
 
+def filter_shaped(row) -> bool:
+    """A row whose measured width is only its capture's own filter. Characterisers before
+    the passband fix took the noise floor from the filter's stopband, so plain receiver noise
+    read as a flat 40-50 dB signal 0.44 x the cut rate wide. Told apart from a real pulsed
+    signal in the same filter by level: noise sits tens of dB under full scale. Read-only:
+    such rows stay as they are, and their recipes and labels are simply not trusted."""
+    r = dict(row)
+    try:
+        rec = json.loads(r.get("recipe") or "null")
+    except ValueError:
+        return False
+    if not rec or "peak_dbfs" in rec:      # recipes that carry peak_dbfs are from the fixed code
+        return False
+    rate, occ = r.get("store_rate_hz"), rec.get("occupied_hz")
+    if not rate or not occ or (r.get("rtl_rate_hz") or 0) < 1.5 * rate:
+        return False
+    if not 0.38 <= occ / rate <= 0.50 or str(r.get("family") or "").startswith("pulsed"):
+        return False
+    m = re.search(r"peak (-?[0-9.]+) dBFS", str((rec.get("gain") or {}).get("why") or ""))
+    return bool(m) and float(m.group(1)) < -25.0
+
+
 def recipe_for(con, freq_hz: float, tol_hz: float = 20e3) -> dict | None:
-    """The newest recipe the characteriser wrote for this frequency."""
+    """The newest recipe the characteriser wrote for this frequency, leaving out any that
+    only measured the capture's own filter."""
     for r in near(con, freq_hz, tol_hz, "recipe IS NOT NULL"):
+        if filter_shaped(r):
+            continue
         try:
             return json.loads(r["recipe"])
         except ValueError:
             continue
     return None
+
+
+def harmonic_note(freq_hz: float | None, cfg: dict) -> str | None:
+    """A flag for an event at twice a private band's frequency. It changes nothing: not the
+    tier, not what is kept, not what may be exported. A harmonic is only one possibility."""
+    if not freq_hz:
+        return None
+    half = band_tier(float(freq_hz) / 2, cfg)
+    return f"possible harmonic of {half['band']}" if half["tier"] == "private" and half["band"] else None
+
+
+def timing_match(a: dict | None, b: dict | None) -> bool:
+    """Do two captures share their pulse spacings? Two or more spacings must all agree
+    within 0.5 %, or one spacing and the rotation within 1 %: one lone number is too easy
+    to share by chance. When both have a rotation, it must agree too."""
+    if not a or not b or not a.get("pri_us") or not b.get("pri_us"):
+        return False
+    pa, pb = a["pri_us"], b["pri_us"]
+    if len(pa) != len(pb) or any(abs(x - y) > max(0.005 * x, 5.0) for x, y in zip(pa, pb)):
+        return False
+    ra, rb = a.get("rotation_s"), b.get("rotation_s")
+    both = bool(ra and rb)
+    if both and abs(ra - rb) > 0.01 * ra:
+        return False
+    return len(pa) >= 2 or both
+
+
+def same_timing_elsewhere(con, freq_hz: float, width_hz: float, timing: dict | None) -> dict | None:
+    """An earlier OPEN capture at another frequency with this pulse timing, or None."""
+    if not timing or "timing" not in {r[1] for r in con.execute("PRAGMA table_info(captures)")}:
+        return None
+    for r in con.execute("SELECT id, freq_hz, bandwidth_hz, timing FROM captures WHERE timing IS NOT NULL "
+                         "AND tier = 'open' ORDER BY started_epoch DESC"):
+        apart = abs(r["freq_hz"] - freq_hz)
+        if apart <= max(100e3, (width_hz + (r["bandwidth_hz"] or 0)) / 2):
+            continue
+        try:
+            if timing_match(timing, json.loads(r["timing"])):
+                return {"id": r["id"], "freq_hz": r["freq_hz"]}
+        except ValueError:
+            continue
+    return None
+
+
+def timing_question(other: dict, timing: dict) -> str:
+    bits = "pulse spacings and rotation" if timing.get("rotation_s") else "pulse spacings"
+    return f"same {bits} as {other['freq_hz'] / 1e6:.3f} MHz (event {other['id']}): same emitter?"
+
+
+GOOD_GRADES = ("strong", "medium")
+
+
+def known_signal(con, freq_hz: float, tol_hz: float, width_hz: float, need: int) -> dict | None:
+    """How well the catalogue already knows this signal: {"captures": n, "last": epoch} once
+    `need` captures of it have IQ, a strong or medium grade and a label that means something.
+    Noise that only measured its capture's filter never counts, new rows or old."""
+    f = "COALESCE(target_hz, freq_hz)" if has_target(con) else "freq_hz"
+    good, last = 0, None
+    for r in con.execute(
+            "SELECT * FROM captures WHERE iq_bytes > 0 AND family IS NOT NULL AND tier = 'open' AND "
+            f"ABS({f} - ?) <= MAX(?, (? + COALESCE(bandwidth_hz, 0)) / 2)", (freq_hz, tol_hz, width_hz)):
+        last = max(last or 0.0, r["started_epoch"] or 0.0)
+        if r["family"] in EMPTY_FAMILIES or filter_shaped(r):
+            continue
+        if grade_row(dict(r))[0] in GOOD_GRADES:
+            good += 1
+    return {"captures": good, "last": last} if good >= need and last else None
 
 
 def last_captured(con, freq_hz: float, tol_hz: float, width_hz: float = 0.0) -> float | None:
@@ -470,18 +582,18 @@ class Cutter:
 
     Decimation is by a whole number so the filter state carries over exactly; the
     cut rate is therefore the radio rate / D, never below what the plan asked for.
+    The filter's -6 dB edges sit at +/-CUT_CUTOFF x the cut rate. A recipe keeps the signal
+    inside +/-0.2, so there is noise beside it for the characteriser to measure a floor on.
     """
 
     def __init__(self, rate: float, shift_hz: float, decim: int):
-        from scipy.signal import firwin
         self.rate, self.decim = rate, int(decim)
         self.shift = shift_hz if decim > 1 else 0.0
         self.phase = 0.0
         self.taps = None
         if self.decim > 1:
-            n = min(1023, 16 * self.decim + 1)
-            self.taps = firwin(n, 0.4 / self.decim).astype(np.float32)   # pass +/-0.4 x the cut rate
-            self.hist = np.zeros(n - 1, np.complex64)
+            self.taps = characterise.cut_taps(self.decim, CUT_CUTOFF).astype(np.float32)
+            self.hist = np.zeros(len(self.taps) - 1, np.complex64)
         self.skip = 0          # samples to drop before the next kept one
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
@@ -539,7 +651,8 @@ class IQWriter:
              "core:hw": self.meta.get("hw", "")}
         g.update({f"marsad:{k}": v for k, v in self.meta.items() if k not in ("description", "hw")})
         g.update({"marsad:tuned_hz": self.plan["tune_hz"], "marsad:radio_rate_hz": self.plan["rtl_rate_hz"],
-                  "marsad:decimation": self.plan["decim"], "marsad:gain_db": self.plan.get("gain_db")})
+                  "marsad:decimation": self.plan["decim"], "marsad:cut_cutoff": CUT_CUTOFF,
+                  "marsad:gain_db": self.plan.get("gain_db")})
         m = {"global": g,
              "captures": [{"core:sample_start": 0, "core:frequency": self.centre,
                            "core:datetime": utc_iso(self.start_epoch)}],
@@ -663,6 +776,7 @@ class Session:
         self.keep_blocks = max(1, int(math.ceil(keep_check_s / self.block_s)))
         self.pending = None
         self.below_keep = 0
+        self.refused_ev = None       # the open event whose first seconds did not reach the keep level
         self.stat_max = -99.0
         # The web app's picture of this tuning: power only, LIVE_COLS columns, held
         # over LIVE_HOLD_S. Replaced whole (never mutated), so the status thread can
@@ -797,6 +911,20 @@ class Session:
         self.below_keep += 1                    # held in memory only: nothing was written
         if p["ev"] is not None:
             p["ev"]["iq_refused"] = BELOW_KEEP
+            self.refused_ev = p["ev"]
+
+    def _late_keep(self, t_s: float, x: np.ndarray, stat: float) -> None:
+        """A burst after the keep window closed: the event is still open and has only now
+        reached the keep level, so the capture starts here, with the pre-trigger second."""
+        ev, self.refused_ev = self.refused_ev, None
+        reason = self.allow_iq(t_s) if self.allow_iq else None
+        if reason:
+            ev["iq_refused"] = reason
+            return
+        ev["keep_snr_db"] = stat
+        ev.pop("iq_refused", None)
+        self.below_keep -= 1
+        self._open_capture(t_s, list(self.pre), [x], ev)
 
     def _close_capture(self):
         w, self.writer = self.writer, None
@@ -851,6 +979,8 @@ class Session:
                     self.stop.set()
         elif self.pending is not None:
             self._pend(x, stat)
+        elif self.refused_ev is not None and self.refused_ev is self.ev and stat >= self.keep_min:
+            self._late_keep(t_s, x, stat)
         else:
             self.pre.append(x)
         self.n_blocks += 1
@@ -860,7 +990,8 @@ class Session:
         need = int(self.duration_s / self.block_s)
         stalls = 0
         ended = "duration"
-        while self.n_blocks < need:
+        # a survey capture that started late (see _late_keep) still gets its full length
+        while self.n_blocks < need or (self.mode == "now" and self.writer is not None):
             if self.stop.is_set():
                 ended = "stop"
                 break

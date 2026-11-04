@@ -44,7 +44,7 @@ R820T = {"role": "r820t", "serial": "00000202", "device": 0, "tuner": "r820t"}
 def station(tmp_path: Path, recorder: dict | None = None) -> Station:
     tmp_path.mkdir(parents=True, exist_ok=True)
     rec = {"serials": {"e4000": "00000101", "r820t": "00000202"},
-           "roles": {"surveyor": "e4000", "recorder": "r820t"}, **(recorder or {})}
+           "roles": {"surveyor": "e4000", "recorder": "r820t"}, "look_s": 0, **(recorder or {})}
     (tmp_path / "station.json").write_text(json.dumps({"recorder": rec}))
     return Station.load(tmp_path)
 
@@ -151,7 +151,7 @@ def test_cutter_is_continuous_across_blocks():
     whole = cap.Cutter(fs, off, d)(x)
     c = cap.Cutter(fs, off, d)
     parts = np.concatenate([c(x[i:i + 4567]) for i in range(0, len(x), 4567)])
-    assert np.array_equal(whole, parts)
+    assert np.abs(whole.astype(int) - parts.astype(int)).max() <= 1    # single-precision FFT rounding at most
     z = (parts[0::2] + 1j * parts[1::2])[200:] / 32768
     f = np.fft.fftfreq(len(z), d / fs)
     assert abs(f[np.argmax(np.abs(np.fft.fft(z)))] - 1e3) < 30    # signal moved to 0 Hz, tone at +1 kHz

@@ -508,6 +508,7 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
         <div id="cs-bk-plan"></div>
       </div>
       <div class="note" id="cs-bk-out" style="margin:0 0 8px"></div>
+      <div id="cs-eps" hidden style="margin-bottom:8px"></div>
       <div id="cs-groups" tabindex="0"></div>
     </div>
   </main>
@@ -1583,6 +1584,14 @@ async function capturesLoad(){
     if(newest){cs.auto=true;cs.open.add(newest.k);}}
   csEl('note').textContent=d.db?`${d.total} event(s) in ${d.groups.length} signal(s), ${csSize(d.bytes||0)} in the pool, from ${d.db}`
     :'No captures yet. `marsad watch fixed` or `marsad watch survey` fill this list.';
+  const eps=d.episodes||[];
+  csEl('eps').hidden=!eps.length;
+  csEl('eps').innerHTML=eps.length?`<div class="hm-l">Episodes: several signals close in time and frequency. Click one to filter the list to it.</div>`
+    +eps.map((e,i)=>`<button class="btn cs-ep" data-e="${i}" title="events ${e.ids.join(', ')}">${esc((e.first||'').slice(5,16).replace('T',' '))} to ${esc((e.last||'').slice(11,16))}, ${e.lo_mhz.toFixed(1)}-${e.hi_mhz.toFixed(1)} MHz: ${e.events} events on ${e.signals} signals</button>`).join(' '):'';
+  csEl('eps').querySelectorAll('.cs-ep').forEach(b=>b.onclick=()=>{const e=eps[+b.dataset.e];
+    csEl('d0').value=(e.first||'').slice(0,10);csEl('d1').value=(e.last||'').slice(0,10);
+    if(csEl('d0').value===csEl('d1').value){csEl('t0').value=(e.first||'').slice(11,16);csEl('t1').value=(e.last||'').slice(11,16);}
+    csEl('lo').value=Math.floor(e.lo_mhz*10)/10;csEl('hi').value=Math.ceil(e.hi_mhz*10)/10;capturesLoad();});
   csEl('groups').innerHTML=d.groups.map((g,gi)=>{
     const key=g.f_mhz.toFixed(3);
     return `<div class="cs-grp${cs.open.has(key)?' open':''}" data-k="${key}"><div class="h">`
@@ -1903,7 +1912,8 @@ async function csEvent(id){
     csFact('duration / duty',r.duration_s!=null?`${r.duration_s.toFixed(2)} s, ${(100*(r.duty||0)).toFixed(0)} % active`:null),
     csFact('since previous',r.repeat_s!=null?r.repeat_s.toFixed(2)+' s':null),
     csFact('strength',r.grade?`${esc(r.grade)}${r.grade_snr_db!=null?', '+Number(r.grade_snr_db).toFixed(1)+' dB':''} (${esc(r.grade_source||'')})`:null),
-    csFact('family',esc(r.family||'')),csFact('notes',esc(r.notes||'')),
+    csFact('family',esc(r.family||'')+(r.filter_shaped?' (that label is not reliable: the width is only this capture\'s own filter, and it reads as receiver noise)':'')),
+    csFact('notes',esc(r.notes||'')),csFact('possible harmonic',r.harmonic&&!(r.notes||'').includes(r.harmonic)?esc(r.harmonic)+' (a flag only)':null),
     csFact('watch settings',r.settings&&typeof r.settings==='object'?esc(recSettings(r.settings).replace('settings: ','')):null),
     csFact('receiver',esc(`${(r.receiver||'').toUpperCase()} SN ${r.serial||'?'}, gain ${r.gain_db??'?'} dB, ppm ${r.ppm??0}`)),
     csFact('radio / cut rate',r.rtl_rate_hz?`${(r.rtl_rate_hz/1e6).toFixed(3)} MS/s`+(r.store_rate_hz?` / ${(r.store_rate_hz/1e3).toFixed(1)} kS/s`:''):null),

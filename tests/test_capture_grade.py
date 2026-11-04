@@ -133,7 +133,7 @@ def test_flags_override_station_json_and_reach_every_row(tmp_path, monkeypatch):
     assert rows
     s = json.loads(rows[0]["settings"])
     assert s == {"threshold_db": 15.0, "passes": 2, "ambush_db": 20, "cooldown_min": 0.05, "capture_s": 30,
-                 "keep_min_snr_db": 13.0, "capture_override_s": 3.0}
+                 "keep_min_snr_db": 13.0, "capture_override_s": 3.0, "known_cooldown_min": 0, "look_s": 0}
     assert got[0]["settings"]["threshold_db"] == 15.0 and got[0]["queue"] == 0
 
 

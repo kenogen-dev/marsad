@@ -49,15 +49,38 @@ GOOD_PULSE_SNR_DB = 15.0  # pulses used for width and chirp statistics
 MERGE_GAP_S = 25e-6       # dropouts shorter than this inside a pulse are joined
 WIDTH_LEVELS_DB = (3, 6, 10, 20)   # widths reported at these levels below the pulse peak
 MAINLOBE_DB = 10.0        # pulses within this of the strongest mark the beam passing
+PASSBAND_DB = -10.0       # a decimated capture is judged only where its filter is above this
+DC_GUARD_HZ = 2.5e3       # zero-IF and low-IF tuners both leave a bump at the tuned frequency
+FILLS = 0.8               # a width this share of the usable band says more about the capture
 # Stable RTL2832U rates (the 300k-900k band is not available; above 2.56 drops samples)
 RTL_RATES = [240e3, 250e3, 288e3, 300e3, 960e3, 1.024e6, 1.2e6, 1.44e6, 1.6e6,
              1.8e6, 1.92e6, 2.048e6, 2.4e6, 2.56e6]
+
+
+# ---------------------------------------------------------------- the recorder's cut filter
+
+def cut_taps(decim: int, cutoff_x: float = 0.4) -> np.ndarray:
+    """The low-pass the recorder cuts a capture with (capture.Cutter uses this one).
+    cutoff_x is the -6 dB edge as a fraction of the cut rate, either side of the centre.
+    Captures from before the SigMF key marsad:cut_cutoff existed were cut at 0.2."""
+    from scipy.signal import firwin
+    return firwin(min(1023, 16 * int(decim) + 1), 2 * cutoff_x / int(decim))
+
+
+def cut_response(decim: int, cutoff_x: float, f_over_rate: np.ndarray) -> np.ndarray:
+    """Power response of that filter at these frequencies (fractions of the cut rate)."""
+    h = cut_taps(decim, cutoff_x)
+    n = np.arange(len(h)) - len(h) // 2
+    w = 2 * np.pi * np.asarray(f_over_rate, float) / int(decim)
+    return np.abs(np.exp(-1j * np.outer(w, n)) @ h) ** 2
 
 
 # ---------------------------------------------------------------- reading files
 
 class IQSource:
     """A memory-mapped IQ file. read() returns complex64 scaled to full scale 1.0."""
+
+    decim, cutoff_x, dc_hz = 1, 0.2, 0.0      # what the recorder did to it; open_sigmf fills these
 
     def __init__(self, path: Path, fmt: str, fs: float, f0: float | None,
                  offset: int = 0, n: int | None = None, origin: str = ""):
@@ -99,6 +122,37 @@ class IQSource:
         if self.fmt == "cs16":
             return float(max(abs(int(r.max())), abs(int(r.min()))) / 32768.0)
         return float(np.max(np.abs(r)))
+
+    def weights(self, freqs: np.ndarray) -> np.ndarray:
+        """Per-bin factor that makes receiver noise flat: 1 / the cut filter's response
+        where it passes, 0 where it does not and around the tuner's DC bump. Noise then
+        reads level across the kept bins, so the filter's own shape is never a signal."""
+        w = np.ones(len(freqs))
+        if self.decim > 1:
+            r = cut_response(self.decim, self.cutoff_x, freqs / self.fs)
+            w = np.where(r >= 10 ** (PASSBAND_DB / 10), 1 / np.maximum(r, 1e-6), 0.0)
+        step = abs(freqs[1] - freqs[0])
+        w[np.abs(freqs - self.dc_hz) <= max(2 * step, min(DC_GUARD_HZ, 0.02 * self.fs))] = 0.0
+        return w
+
+
+class ArraySource(IQSource):
+    """Samples already in memory (the recorder's wide look). No file is involved."""
+
+    def __init__(self, x: np.ndarray, fs: float, f0: float | None = None):
+        self.x, self.fs, self.f0, self.origin = x.astype(np.complex64), float(fs), f0, "memory"
+        self.fmt, self.n, self.path = "cf32", len(x), Path("memory")
+
+    def raw(self, start: int, count: int) -> np.ndarray:
+        s = max(0, start)
+        return self.x[s: max(s, start + count)].view(np.float32)
+
+    def read(self, start: int, count: int) -> np.ndarray:
+        s = max(0, start)
+        return self.x[s: max(s, start + count)]
+
+    def rails(self, r: np.ndarray) -> int:
+        return int(np.count_nonzero(np.abs(r) >= 0.999))
 
 
 def freq_from_name(name: str) -> float | None:
@@ -151,7 +205,12 @@ def open_sigmf(path: Path, freq: float | None) -> IQSource:
         raise SystemExit(f"{meta.name}: SigMF datatype {dt!r} not supported (cu8, ci16_le, cf32_le)")
     caps = m.get("captures") or [{}]
     f0 = freq if freq is not None else caps[0].get("core:frequency")
-    return IQSource(data, kind, g["core:sample_rate"], f0, origin=f"SigMF {dt}")
+    src = IQSource(data, kind, g["core:sample_rate"], f0, origin=f"SigMF {dt}")
+    src.decim = int(g.get("marsad:decimation") or 1)
+    src.cutoff_x = float(g.get("marsad:cut_cutoff") or 0.2)
+    if g.get("marsad:tuned_hz") and caps[0].get("core:frequency"):
+        src.dc_hz = float(g["marsad:tuned_hz"]) - float(caps[0]["core:frequency"])
+    return src
 
 
 def open_iq(path, rate=None, freq=None, fmt=None) -> IQSource:
@@ -173,11 +232,11 @@ def _freqs(fs: float, n: int = NFFT) -> np.ndarray:
     return (np.arange(n) - n // 2) * fs / n
 
 
-def obw99(freqs: np.ndarray, sig: np.ndarray, noise) -> tuple | None:
+def obw99(freqs: np.ndarray, sig: np.ndarray, noise, over: float = 0.5) -> tuple | None:
     """99 % power bandwidth of `sig` (noise already subtracted), counting only bins
-    that stand at least 3 dB below the noise or higher, so leftover noise around
-    zero does not widen it. Returns (low edge, high edge) in Hz."""
-    p = np.where(sig > 0.5 * noise, sig, 0.0)
+    that stand at least `over` x the noise (default 3 dB below it) or higher, so leftover
+    noise around zero does not widen it. Returns (low edge, high edge) in Hz."""
+    p = np.where(sig > over * noise, sig, 0.0)
     total = p.sum()
     if total <= 0:
         return None
@@ -243,9 +302,18 @@ def _period_autocorr(series: np.ndarray, dt: float, min_s: float) -> dict | None
 # ---------------------------------------------------------------- the passes
 
 def pass_activity(src: IQSource, start: int, n: int) -> dict:
-    """Pass 1: per-frame coarse spectra -> which frames hold a signal; ADC rails."""
+    """Pass 1: per-frame coarse spectra -> which frames hold a signal; ADC rails.
+
+    Two answers, because one steady line must not hide everything else in the band:
+    `active` frames have power over the receiver's general floor (a steady line makes
+    that all of them); `bursts` frames rise over each bin's OWN median, so they mark
+    what comes and goes. Only bins the capture's filter passes are judged."""
     frames = n // NFFT
     coarse = np.empty((frames, COARSE), np.float32)
+    w = src.weights(_freqs(src.fs))
+    # a coarse bin with few fine bins left behaves like far noisier data than its neighbours
+    kept = (w > 0).reshape(COARSE, NFFT // COARSE).sum(axis=1)
+    use = kept >= 0.75 * NFFT // COARSE
     rails = 0
     peak = 0.0
     per = CHUNK // NFFT
@@ -255,23 +323,26 @@ def pass_activity(src: IQSource, start: int, n: int) -> dict:
         rails += src.rails(r)
         peak = max(peak, src.full_scale(r))
         x = src.read(start + f0 * NFFT, k * NFFT).reshape(k, NFFT)
-        p = np.abs(np.fft.fftshift(np.fft.fft(x, axis=1), axes=1)) ** 2
+        p = np.abs(np.fft.fftshift(np.fft.fft(x, axis=1), axes=1)) ** 2 * w
         coarse[f0:f0 + k] = p.reshape(k, COARSE, NFFT // COARSE).sum(axis=2)
     # each bin's own median is its noise, unless a signal is on all the time and
     # IS the median: cap it at the receiver's general floor (25th pct across bins)
+    coarse = coarse[:, use] / kept[use]
     med = np.median(coarse, axis=0)
     noise = np.minimum(med, np.percentile(med, 25))
     ratio = (coarse / np.maximum(noise, 1e-30)).max(axis=1)
+    own = (coarse / np.maximum(med, 1e-30)).max(axis=1)
     return {"frames": frames, "ratio": ratio, "active": ratio > ACTIVE_RATIO,
-            "rails": rails, "peak_fs": peak}
+            "bursts": own > ACTIVE_RATIO, "rails": rails, "peak_fs": peak}
 
 
 def pass_spectrum(src: IQSource, start: int, act: dict) -> dict:
     """Pass 2: spectrum of active frames minus quiet frames -> occupied band."""
     fs = src.fs
     win = np.hanning(NFFT).astype(np.float32)
-    active = np.flatnonzero(act["active"])
-    quiet = np.flatnonzero(~act["active"])
+    mask = act.get("use_frames", act["active"])
+    active = np.flatnonzero(mask)
+    quiet = np.flatnonzero(~mask)
 
     def mean_psd(idx, cap):
         if len(idx) > cap:
@@ -282,18 +353,17 @@ def pass_spectrum(src: IQSource, start: int, act: dict) -> dict:
         return acc / max(1, len(idx))
 
     freqs = _freqs(fs)
-    psd_a = mean_psd(active, 50000)
+    w = src.weights(freqs)
+    psd_a = mean_psd(active, 50000) * w
     note = ""
     if len(quiet) >= 50:
-        noise = mean_psd(quiet, 20000)
+        noise = mean_psd(quiet, 20000) * w
     else:
-        # always on: no quiet frames to subtract, so take the floor from the
-        # spectrum itself and patch the zero-IF DC spike out
-        c = NFFT // 2
-        psd_a[c - 2:c + 3] = np.median(np.r_[psd_a[c - 8:c - 2], psd_a[c + 3:c + 9]])
-        noise = np.full(NFFT, np.percentile(psd_a, 10))
-        note = "signal always on: noise floor taken from the spectrum's 10th percentile, DC bin patched"
-    sig = psd_a - noise
+        # always on: no quiet frames to subtract, so take the floor from the kept bins
+        # of the spectrum itself (never from where the capture's filter has cut it)
+        noise = np.full(NFFT, np.percentile(psd_a[w > 0], 10))
+        note = "signal always on: noise floor taken from the 10th percentile inside the passband, DC bins left out"
+    sig = np.where(w > 0, psd_a - noise, 0.0)
     edges = obw99(freqs, sig, noise)
     return {"freqs": freqs, "psd_active": psd_a, "noise": noise, "edges": edges, "note": note}
 
@@ -433,6 +503,75 @@ def chirp_of(pulse: dict, fs: float) -> dict | None:
             "end_to_mid_slope": float(ends / mid) if ok else None}
 
 
+def pulse_shape(pulses: list, fs: float) -> dict | None:
+    """How wide each pulse is, and where its centre sits, from its power spectrum alone.
+    Each pulse's spectrum is an average of short overlapping pieces, so a single pulse
+    gives a smooth curve and not a spiky one-shot periodogram."""
+    spans, centres = [], []
+    for p in pulses:
+        lo, y, widths = p["_y"]
+        a, b = widths[6]
+        seg = y[int(math.ceil(a)): int(math.floor(b)) + 1]
+        if len(seg) < 16:
+            continue
+        m = max(16, len(seg) // 8)
+        pieces = np.lib.stride_tricks.sliding_window_view(seg, m)[::m // 2]
+        psd = np.mean(np.abs(np.fft.fftshift(np.fft.fft(pieces * np.hanning(m), axis=1), axes=1)) ** 2, axis=0)
+        # a few pieces leave deep dips in anything noise-like: smooth before reading a width
+        psd = np.convolve(psd, np.ones(5) / 5, "same")
+        f = (np.arange(m) - m // 2) * fs / m
+        k = int(np.argmax(psd))
+        lim = psd[k] / 4
+        i, j = k, k
+        while i > 0 and psd[i - 1] >= lim:
+            i -= 1
+        while j < m - 1 and psd[j + 1] >= lim:
+            j += 1
+        spans.append(max(1, j - i + 1 - 4) * fs / m)     # the 5-bin smoothing adds 4 bins of its own
+        centres.append(float(np.sum(f[i:j + 1] * psd[i:j + 1]) / np.sum(psd[i:j + 1])))
+    if not spans:
+        return None
+    c = np.array(centres)
+    return {"pulses": len(spans), "span_6db_hz": float(np.median(spans)), "centre_hz": float(np.median(c)),
+            "centre_spread_hz": float(np.percentile(c, 90) - np.percentile(c, 10))}
+
+
+def pulsed_family(p: dict, usable_hz: float) -> str:
+    """A label for pulses that says only what was measured."""
+    ch, sh = p.get("chirp"), p.get("shape")
+    if ch and ch["linear"]:
+        return "pulsed, linear FM chirp (radar-like)"
+    if ch and ch["swept"]:
+        return "pulsed, non-linear FM chirp (radar-like)"
+    if not sh:
+        return "pulsed, unmodulated carrier" if ch else "pulsed"
+    span, spread = sh["span_6db_hz"], sh["centre_spread_hz"]
+    resolved = 16 / p["width_s"]         # a pulse this short cannot show a width under about this
+    if resolved >= 0.7 * usable_hz:
+        return "pulsed, too short to judge its width"
+    if span >= 0.7 * usable_hz:
+        return "pulsed, wider than the capture"
+    # the pulses do not sit at one frequency, by more than each one is wide
+    if spread > max(span, 20e3):
+        return "pulsed, frequency jumps between pulses"
+    if span > max(50e3, resolved):
+        return "pulsed, wide, no steady sweep"
+    return "pulsed, unmodulated carrier"
+
+
+def timing_signature(res: dict) -> dict | None:
+    """The pulse spacings, width and rotation of a capture, for comparing with others."""
+    p = res.get("pulses") or {}
+    pri = p.get("pri") or []
+    tot = sum(x["count"] for x in pri)
+    main = sorted(x["pri_s"] * 1e6 for x in pri if x["count"] >= 0.1 * tot)
+    rot = (p.get("rotation") or {}).get("period_s")
+    if not main:
+        return None
+    return {"pri_us": [round(x, 1) for x in main], "rotation_s": None if rot is None else round(rot, 3),
+            "width_us": round(p["width_s"] * 1e6, 1)}
+
+
 def pri_levels(diffs: np.ndarray) -> list:
     """Cluster pulse-to-pulse intervals into levels; drop the sums of two
     (a missed pulse between them). Returns [{'pri_s', 'count'}], ascending."""
@@ -544,6 +683,9 @@ def analyse_pulses(pulses: list, fs: float, duration_s: float) -> dict:
                                "rpm": float(60 / P) if P > 0 else None,
                                "dwell_s": float(np.median([t[b[-1]] - t[b[0]] for b in full]))}
 
+    shape = pulse_shape(sorted(good, key=lambda p: -p["snr_db"])[:200], fs)
+    if shape:
+        out["shape"] = shape
     chirps = [c for c in (chirp_of(p, fs) for p in sorted(good, key=lambda p: -p["snr_db"])[:200]) if c]
     if chirps:
         st = np.array([c["start_hz"] for c in chirps])
@@ -590,12 +732,16 @@ def continuous_features(src: IQSource, start: int, act: dict, centre: float, edg
     win = np.hanning(nfft)
     psd = np.mean(np.abs(np.fft.fftshift(np.fft.fft(x[:k * nfft].reshape(k, nfft) * win, axis=1), axes=1)) ** 2, axis=0)
     freqs = _freqs(fs, nfft)
-    noise = float(np.percentile(psd, 10))
-    sig = psd - noise
-    e = obw99(freqs, sig, noise) or edges
+    w = src.weights(freqs)
+    psd = psd * w
+    # This spectrum averages only about 8 frames, so its bins scatter by a third: the low
+    # percentiles sit well under the true floor, and noise bins clear a fixed 3 dB test.
+    noise = float(np.percentile(psd[w > 0], 25))
+    sig = np.where(w > 0, psd - noise, 0.0)
+    e = obw99(freqs, sig, noise, max(0.5, 4 / math.sqrt(k))) or edges
     obw = e[1] - e[0]
     fc = (e[0] + e[1]) / 2
-    inb = (freqs >= e[0]) & (freqs <= e[1])
+    inb = (freqs >= e[0]) & (freqs <= e[1]) & (w > 0)
     snr_db = 10 * math.log10(max(sig[inb].sum(), 1e-30) / (noise * max(inb.sum(), 1)))
     out = {"obw_hz": obw, "centre_hz": fc, "snr_db": snr_db}
     if snr_db < 6:
@@ -686,7 +832,11 @@ def recipe(fs_now: float, f0: float | None, centre: float, obw: float, res: dict
     need = (obw + guard) / 0.4          # signal one side of DC, inside 80 % of the band
     rtl = next((r for r in RTL_RATES if r >= need), None)
     notes = []
-    if rtl is not None:
+    if (res.get("occupied") or {}).get("fills_capture") and fs_now < 2.4e6:
+        # the width is the capture's, not the signal's: the next look must be wider
+        rtl, store, offset = 2.4e6, 2.4e6, 0.0
+        notes.append("this capture was too narrow to show the signal's width; the next one takes the radio's full 2.4 MS/s")
+    elif rtl is not None:
         offset = obw / 2 + guard        # signal centre sits this far above the tuned frequency
     else:
         rtl = 2.4e6
@@ -710,8 +860,12 @@ def recipe(fs_now: float, f0: float | None, centre: float, obw: float, res: dict
     rails = res["clipping"]["rail_fraction"]
     peak_db = res["clipping"]["peak_dbfs"]
     snr = (res.get("pulses") or {}).get("snr_db_max") or (res.get("continuous") or {}).get("snr_db") or 0.0
-    if rails > 1e-5 or peak_db > -0.5:
+    # Step down only for clipping that costs something. A strong pulse touching the rails
+    # for a few samples loses less than the SNR a whole gain step gives away.
+    if rails > 1e-3:
         gain = {"change_db": -6, "why": f"{rails:.2e} of I/Q values on the ADC rails (peak {peak_db:.1f} dBFS)"}
+    elif rails > 2e-5:
+        gain = {"change_db": -3, "why": f"{rails:.2e} of I/Q values on the ADC rails (peak {peak_db:.1f} dBFS)"}
     elif snr < 15 and peak_db < -12:
         gain = {"change_db": +6, "why": f"peak SNR only {snr:.0f} dB with {-peak_db:.0f} dB of headroom"}
     elif snr < 15:
@@ -721,7 +875,8 @@ def recipe(fs_now: float, f0: float | None, centre: float, obw: float, res: dict
     return {"store_rate_hz": store, "rtl_rate_hz": rtl,
             "signal_hz": (f0 + centre) if f0 else None,
             "tune_hz": (f0 + centre - offset) if f0 else None,
-            "signal_above_tune_hz": offset, "duration_s": dur, "gain": gain, "notes": notes}
+            "signal_above_tune_hz": offset, "duration_s": dur, "gain": gain, "notes": notes,
+            "peak_dbfs": peak_db}
 
 
 # ---------------------------------------------------------------- top level
@@ -748,6 +903,11 @@ def characterise(path, rate=None, freq=None, fmt=None, start_s: float = 0.0,
         res["summary"] = "no frame rose 6 dB above the noise"
         return res
 
+    # A steady line makes every frame active; what comes and goes beside it is still there.
+    burst_frac = float(act["bursts"].mean())
+    res["burst_fraction"] = burst_frac
+    if frac >= 0.5 and 0 < burst_frac < 0.5:
+        act["use_frames"] = act["bursts"]
     spec = pass_spectrum(src, start, act)
     if spec["edges"] is None:
         res["family"] = "nothing found"
@@ -755,8 +915,11 @@ def characterise(path, rate=None, freq=None, fmt=None, start_s: float = 0.0,
         return res
     lo, hi = spec["edges"]
     obw, centre = hi - lo, (lo + hi) / 2
+    kept = _freqs(fs)[src.weights(_freqs(fs)) > 0]
+    usable = float(kept.max() - kept.min())
     res["occupied"] = {"bandwidth_hz": obw, "low_hz": lo, "high_hz": hi,
-                       "centre_offset_hz": centre, "note": spec["note"]}
+                       "centre_offset_hz": centre, "note": spec["note"], "usable_hz": usable,
+                       "fills_capture": obw >= FILLS * usable}
 
     # repeat period of the activity envelope, in 10 ms bins (cross-check for pulses)
     per = max(1, int(round(0.01 * fs / NFFT)))
@@ -768,28 +931,87 @@ def characterise(path, rate=None, freq=None, fmt=None, start_s: float = 0.0,
 
     taps = band_taps(fs, lo, hi)
     pulsed = False
-    if frac < 0.5:
+    if frac < 0.5 or "use_frames" in act:
         env, B = pass_envelope(src, start, n, taps)
         pulses, _ = find_pulses(src, start, env, B, taps)
         if len(pulses) >= 8 and np.median([p["width"] for p in pulses]) < 5e-3:
             pulsed = True
             res["pulses"] = analyse_pulses(pulses, fs, dur)
     if pulsed:
-        ch = res["pulses"].get("chirp")
-        if ch and ch["linear"]:
-            res["family"] = "pulsed, linear FM chirp (radar-like)"
-        elif ch and ch["swept"]:
-            res["family"] = "pulsed, non-linear FM chirp (radar-like)"
-        elif ch:
-            res["family"] = "pulsed, unmodulated carrier"
-        else:
-            res["family"] = "pulsed"
+        res["family"] = pulsed_family(res["pulses"], usable)
+        if frac >= 0.5:
+            res["steady_line_too"] = True
     else:
         cont = continuous_features(src, start, act, centre, spec["edges"])
         res["continuous"] = cont
         res["family"] = cont["family"]
-    res["recipe"] = recipe(fs, src.f0, centre, obw, res)
+    if res["family"] != "too weak to classify":     # the next capture looks for itself instead
+        res["recipe"] = recipe(fs, src.f0, centre, obw, res)
     return res
+
+
+# ---------------------------------------------------------------- the wide look
+
+def _region(freqs: np.ndarray, sig: np.ndarray, level, at_hz: float, tol_hz: float) -> tuple | None:
+    """The run of bins over `level` that touches at_hz +/- tol_hz, as (low, high) Hz.
+    Another signal elsewhere in the band is not this signal's width."""
+    over = sig > level
+    step = float(freqs[1] - freqs[0])
+    near = np.flatnonzero(over & (np.abs(freqs - at_hz) <= tol_hz))
+    if near.size == 0:
+        return None
+    gap = max(1, int(2e3 / step))           # a short dip does not split a signal
+    i = j = int(near[np.argmax(sig[near])])
+    while True:
+        k = np.flatnonzero(over[max(0, i - gap):i])
+        if not k.size:
+            break
+        i = max(0, i - gap) + int(k[0])
+    while True:
+        k = np.flatnonzero(over[j + 1:j + 1 + gap])
+        if not k.size:
+            break
+        j = j + 1 + int(k[-1])
+    return float(freqs[i] - step / 2), float(freqs[j] + step / 2)
+
+
+def look(x: np.ndarray, fs: float, at_hz: float = 0.0, tol_hz: float = 25e3) -> dict:
+    """A few seconds at the radio's full rate, in memory: is the signal at at_hz (Hz from
+    the tuned frequency) pulsed or continuous, and how wide? Nothing is written, and the
+    caller drops the samples afterwards. Measures power, shape and timing only.
+
+    `kind` is "pulsed", "continuous", or "nothing" when the band shows nothing there in
+    this short a look: a beam that comes round every few seconds can easily miss it."""
+    src = ArraySource(x, fs)
+    n = len(x)
+    out = {"seconds": round(n / fs, 2), "kind": "nothing", "width_hz": None, "centre_hz": None}
+    if n < NFFT * 4:
+        return out
+    act = pass_activity(src, 0, n)
+    out["peak_dbfs"] = round(20 * math.log10(max(act["peak_fs"], 1e-9)), 1)
+    freqs = _freqs(fs)
+    w = src.weights(freqs)
+    frames = src.read(0, act["frames"] * NFFT).reshape(act["frames"], NFFT) * np.hanning(NFFT)
+    p = np.abs(np.fft.fftshift(np.fft.fft(frames, axis=1), axes=1)) ** 2 * w
+    mean_all = p.mean(axis=0)
+    floor = float(np.percentile(mean_all[w > 0], 25))
+    q = act["bursts"]
+    if 0 < q.mean() < 0.5:
+        sig = np.where(w > 0, p[q].mean(axis=0) - p[~q].mean(axis=0), 0.0)
+        # a mean over few frames is noisy: over 4 sigma of that, and never under -3 dB of the floor
+        e = _region(freqs, sig, floor * max(0.5, 4 / math.sqrt(q.sum())), at_hz, tol_hz)
+        if e:
+            mid, half = (e[0] + e[1]) / 2, max((e[1] - e[0]) / 2, 2 * float(freqs[1] - freqs[0]))
+            lvl = p[:, np.abs(freqs - mid) <= half].sum(axis=1)
+            on = lvl > 4 * np.median(lvl)
+            starts = np.flatnonzero(on & ~np.r_[False, on[:-1]])
+            if len(starts) >= 2 and on.mean() < 0.5:
+                out.update(kind="pulsed", pulses=int(len(starts)), width_hz=e[1] - e[0], centre_hz=mid)
+                return out
+    e = _region(freqs, np.where(w > 0, mean_all - floor, 0.0), floor, at_hz, tol_hz)      # 3 dB over the floor
+    if e:
+        out.update(kind="continuous", width_hz=e[1] - e[0], centre_hz=(e[0] + e[1]) / 2)
+    return out
 
 
 # ---------------------------------------------------------------- output
@@ -810,6 +1032,8 @@ def to_markdown(r: dict) -> str:
     if o:
         L.append(f"- Occupied bandwidth (99 % power): **{o['bandwidth_hz'] / 1e3:.1f} kHz**, "
                  f"{o['low_hz'] / 1e3:+.1f} to {o['high_hz'] / 1e3:+.1f} kHz, centre offset {o['centre_offset_hz'] / 1e3:+.1f} kHz")
+        if o.get("fills_capture"):
+            L.append(f"  (this fills the {o['usable_hz'] / 1e3:.1f} kHz the capture can show: the real width may be larger)")
         if o.get("note"):
             L.append(f"  ({o['note']})")
     p = r.get("pulses")
@@ -832,6 +1056,10 @@ def to_markdown(r: dict) -> str:
             L.append(f"- Rotation: **{ro['period_s']:.3f} s** ({ro['rpm']:.2f} RPM) from {ro['bursts']} bursts, "
                      f"fit rms {ro['fit_rms_s'] * 1e3:.0f} ms, intervals {min(ro['intervals_s']):.2f} to {max(ro['intervals_s']):.2f} s, "
                      f"dwell {ro['dwell_s'] * 1e3:.0f} ms")
+        sh = p.get("shape")
+        if sh:
+            L.append(f"- Each pulse: **{sh['span_6db_hz'] / 1e3:.1f} kHz** wide at -6 dB, centre "
+                     f"{sh['centre_hz'] / 1e3:+.1f} kHz, centres spread {sh['centre_spread_hz'] / 1e3:.1f} kHz between pulses")
         c = p.get("chirp")
         if c:
             if c["linear"]:
@@ -845,6 +1073,8 @@ def to_markdown(r: dict) -> str:
                      f"straight-line fit {c['fit_start_hz'] / 1e3:+.0f} to {c['fit_end_hz'] / 1e3:+.0f} kHz "
                      f"({c['rate_mhz_per_us'] * 1e3:+.2f} kHz/us, residual {c['rms_hz'] / 1e3:.0f} kHz rms); "
                      f"{shape}; from {c['pulses_fitted']} pulses")
+    if r.get("steady_line_too"):
+        L.append("- A steady line is also present in this capture, beside the pulses")
     rep = r.get("repeat")
     if rep:
         L.append(f"- Envelope repeats every {rep['period_s']:.2f} s (autocorrelation {rep['correlation']:.2f})")

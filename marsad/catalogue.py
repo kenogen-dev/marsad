@@ -84,6 +84,9 @@ def _row(r: sqlite3.Row, cfg: dict) -> dict:
     d["private"] = is_private(d, cfg)
     d["badges"] = badges(d, cfg)
     d["grade"], d["grade_snr_db"], d["grade_source"] = cap.grade_row(d)
+    # Worked out on read, so old rows get them too and nothing in the catalogue is rewritten.
+    d["filter_shaped"] = cap.filter_shaped(d)
+    d["harmonic"] = cap.harmonic_note(d.get("freq_hz"), cfg)
     d.pop("recipe", None)          # the list does not need it; the event page has it
     return d
 
@@ -266,6 +269,41 @@ def group(rs: list, sort: str = "time") -> list:
     return out
 
 
+EPISODE_GAP_S = 600.0        # events further apart than this are not one episode
+EPISODE_SPAN_HZ = 15e6       # ...nor further apart in frequency than this
+EPISODE_MIN_DB = 20.0        # weak events chain together by chance across a busy band
+
+
+def episodes(rs: list, gap_s: float = EPISODE_GAP_S, span_hz: float = EPISODE_SPAN_HZ,
+             min_db: float = EPISODE_MIN_DB) -> list:
+    """Strong events close in time and in frequency, read as one happening: at least three
+    events on at least two signals, so a lone signal repeating is not an episode. A view over
+    the events and never a replacement for them. Open bands only."""
+    open_eps: list = []
+    done: list = []
+    for r in sorted(rs, key=lambda r: r.get("started_epoch") or 0):
+        if r.get("private") or not r.get("started_epoch") or not r.get("freq_hz") or (r.get("snr_peak_db") or 0) < min_db:
+            continue
+        t, f = r["started_epoch"], r.get("target_hz") or r["freq_hz"]
+        for e in [e for e in open_eps if t - e["t1"] > gap_s]:
+            open_eps.remove(e)
+            done.append(e)
+        hit = next((e for e in open_eps if max(e["hi"], f) - min(e["lo"], f) <= span_hz), None)
+        if hit is None:
+            hit = {"lo": f, "hi": f, "t0": t, "t1": t, "rows": []}
+            open_eps.append(hit)
+        hit.update(lo=min(hit["lo"], f), hi=max(hit["hi"], f), t1=t)
+        hit["rows"].append(r)
+    out = []
+    for e in done + open_eps:
+        n = len(group(e["rows"]))
+        if len(e["rows"]) >= 3 and n >= 2:
+            out.append({"first": e["rows"][0].get("started"), "last": e["rows"][-1].get("started"),
+                        "lo_mhz": round(e["lo"] / 1e6, 3), "hi_mhz": round(e["hi"] / 1e6, 3),
+                        "events": len(e["rows"]), "signals": n, "ids": [r["id"] for r in e["rows"]]})
+    return sorted(out, key=lambda e: e["first"] or "", reverse=True)
+
+
 # ---------------------------------------------------------------- storage and status
 
 _POOL_CACHE = {"t": 0.0, "pool": None, "bytes": 0, "archive_gb": 0.0}
@@ -356,6 +394,7 @@ def summary(station: Station, date=None, lo_mhz=None, hi_mhz=None, badge=None, g
             rs = [r for r in rs if r["bytes"] >= float(min_mb) * 1e6]
         return {"storage": storage(station, cfg, con), "dates": dates, "groups": group(rs, sort),
                 "total": len(rs), "bytes": sum(r["bytes"] for r in rs), "families": fams, "watches": watches,
+                "episodes": episodes(rs),
                 "status": recorder_status(station, cfg, con), "db": str(station.db)}
     finally:
         if con is not None:
@@ -420,7 +459,8 @@ def event(station: Station, event_id: int) -> dict:
         private = is_private(row, cfg)
         g = cap.grade_row(row)
         shown = {k: v for k, v in row.items() if k != "recipe"}
-        shown.update(grade=g[0], grade_snr_db=g[1], grade_source=g[2])
+        shown.update(grade=g[0], grade_snr_db=g[1], grade_source=g[2], filter_shaped=cap.filter_shaped(row),
+                     harmonic=cap.harmonic_note(row.get("freq_hz"), cfg))
         if shown.get("settings"):
             try:
                 shown["settings"] = json.loads(shown["settings"])
