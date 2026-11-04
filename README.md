@@ -209,6 +209,15 @@ show the newer figures with the old label beside them. SNR from before and after
 rows, a capture still being written and captures already made by the current recorder, runs at low priority, and
 `recorder.timing_only_bands` (MHz pairs) keeps captures touching those bands to timing, width and level.
 
+`marsad watch tidy [--exclude-survey S] [--before YYYY-MM-DD]` lists the captures graded empty and what each takes,
+with a token, and moves nothing. `marsad watch tidy --confirm TOKEN` moves exactly that list, `.sigmf-data` and
+`.sigmf-meta` only, to a holding folder outside the pool (`recorder.set_aside`, default `recordings/set_aside/<date>/`),
+checked by size and sha256. Rows, fingerprints and characterise reports stay, the row reads "set aside", and the page
+offers no IQ or Listen for it. `marsad watch tidy --put-back [--ids 1,2] [--confirm]` returns them with their old
+status. **Nothing is deleted**: the holding folder is yours to delete when you are sure, and is not in a backup. Held back and said why:
+archived captures, a capture a recorder is writing or that other events are filed inside, anything touching
+`recorder.timing_only_bands`, and surveys in `recorder.tidy_exclude_surveys` (a list of names or parts of names).
+
 ## Backing up
 
 Your surveys, captures and notes live on one drive until you copy them.

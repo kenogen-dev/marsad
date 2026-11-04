@@ -49,8 +49,11 @@ def _get_json(port: int, path: str, timeout: float = 1.5):
 
 
 def viewer_answers(port: int = PORT) -> dict | None:
-    """The web app's /surveys answer if a Marsad web app serves `port`, else None."""
-    data = _get_json(port, "/surveys")
+    """What a Marsad web app serving `port` says about itself, else None. /ping touches no
+    file, so it answers while a long recording loads; /surveys is for a copy from before it."""
+    data = _get_json(port, "/ping")
+    if not (isinstance(data, dict) and data.get("app") == "marsad"):
+        data = _get_json(port, "/surveys")
     return data if isinstance(data, dict) else None
 
 
@@ -198,7 +201,9 @@ def start(station: Station, port: int = PORT,
         # app was still loading, and it was up seconds later. A live process is
         # reported as still starting, not as a failure.
         alive = getattr(proc, "poll", lambda: None)() is None
-        return ("starting" if alive else "failed"), proc.pid
+        return ("starting" if alive else "failed"), listener_pid(port) or proc.pid
+    # A venv's python.exe is a launcher with the real interpreter as its child, so the
+    # process that listens is not the one Popen started. The listener is the one to name.
     return "started", listener_pid(port) or proc.pid
 
 
@@ -218,6 +223,9 @@ def ensure_running(station: Station, port: int = PORT) -> str:
         print(f"  web app: already up on {port}   {url}{note}")
     elif outcome == "started":
         print(f"  web app: started on {port}, pid {pid}   {url}   (no window; `marsad web stop` ends it)")
+        note = loading_note(port)
+        if note:
+            print(note)
     elif outcome == "starting":
         print(f"  web app: launched on {port}, pid {pid}, still loading   {url}"
               "   (`marsad web status` confirms; the scan goes on)")
@@ -227,6 +235,13 @@ def ensure_running(station: Station, port: int = PORT) -> str:
     else:
         print(f"  web app: did not start on {port} (see reports/{LOG_NAME}); the scan goes on.")
     return outcome
+
+
+def loading_note(port: int = PORT) -> str:
+    """What the app is still reading, in a sentence, or nothing."""
+    name = (viewer_answers(port) or {}).get("loading")
+    return (f"  web app: reading {name} first; the Scan tab fills in when it is done (about a minute per 300 MB)."
+            if name else "")
 
 
 def stop(port: int = PORT, timeout: float = 10.0) -> tuple[bool, int | None]:
@@ -270,10 +285,15 @@ def main(argv: list, station: Station, prog: str = "marsad web") -> int:
         info = viewer_answers(port)
         pid = listener_pid(port)
         if info is None:
-            held = f"held by another program (pid {pid})" if host.port_in_use(port) else "nothing"
-            print(f"  web app: not running on {port} ({held})")
+            if host.port_in_use(port):
+                print(f"  web app: not answering on {port}; pid {pid} holds the port and did not reply as the "
+                      "web app. It may be busy: try again before treating it as another program.")
+            else:
+                print(f"  web app: not running on {port} (nothing)")
             return 1
         print(f"  web app: up on {port}, pid {pid}   http://127.0.0.1:{port}/")
+        if info.get("loading"):
+            print(loading_note(port))
         print(f"  follows the newest scan: {'yes' if info.get('follow', True) else 'no (pinned)'}")
         print(f"  Probe-tab run: {probe_state(port) or 'unknown'}")
         return 0
@@ -308,6 +328,9 @@ def main(argv: list, station: Station, prog: str = "marsad web") -> int:
     outcome, pid = start(station, port, timeout=RESTART_TIMEOUT)
     if outcome == "started":
         print(f"  web app: started on {port}, pid {pid}   http://127.0.0.1:{port}/")
+        note = loading_note(port)
+        if note:
+            print(note)
         return 0
     if outcome == "starting":
         print(f"  web app: launched on {port}, pid {pid}, but not answering after"

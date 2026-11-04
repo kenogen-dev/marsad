@@ -1568,7 +1568,8 @@ async function capturesLoad(){
   csEl('pool').innerHTML=`pool <b>${s.used_gb.toFixed(2)}</b> of ${s.pool_gb} GB  ·  ${esc(s.pool)}`;
   csEl('day').innerHTML=`today <b>${s.today_gb.toFixed(2)}</b> of ${s.daily_gb} GB`;
   csBar('poolbar',s.used_gb,s.pool_gb);csBar('daybar',s.today_gb,s.daily_gb);
-  csEl('arch').innerHTML=`archive <b>${(s.archive_gb||0).toFixed(2)}</b> GB  ·  ${esc(s.archive||'')}  ·  not counted in the pool`;
+  csEl('arch').innerHTML=`archive <b>${(s.archive_gb||0).toFixed(2)}</b> GB  ·  ${esc(s.archive||'')}  ·  not counted in the pool`
+    +(s.set_aside_gb?`  ·  set aside <b>${s.set_aside_gb.toFixed(2)}</b> GB, not counted either`:'');
   csCool=(d.status&&d.status.cooldowns)||[];
   recRender();
   csOpts('family',[['','any'],['none','not characterised'],...(d.families||[]).map(f=>[f,f])]);
@@ -1603,7 +1604,7 @@ async function capturesLoad(){
       +(g.anomaly?'<span class="badge anom">ANOMALY: review</span>':'')
       +(g.grade?`<span title="best grade among its events; ${Object.entries(g.grades||{}).map(([k,n])=>n+' '+k).join(', ')}">${csGrade(g.grade)}</span>`:'')
       +`</div><div class="ev"><table><thead><tr><th class="ck"></th><th>Time</th><th>MHz</th><th>SNR dB</th><th>bw kHz</th><th>dur s</th><th>mode</th><th title="on disk in the pool: the capture it owns, its fingerprint, characterise report and exports">size</th><th style="text-align:left">badges</th></tr></thead><tbody>`
-      +g.rows.map(r=>`<tr class="go${r.id===cs.sel?' sel':''}" data-id="${r.id}"><td class="ck"><input type="checkbox" data-pick="${r.id}"${csLocked(r)?' disabled title="already archived"':''}></td><td>${esc((r.started||'').slice(0,19).replace('T',' '))}</td>`
+      +g.rows.map(r=>`<tr class="go${r.id===cs.sel?' sel':''}" data-id="${r.id}"><td class="ck"><input type="checkbox" data-pick="${r.id}"${csLocked(r)?` disabled title="${r.iq_status==='archived'?'already archived':'IQ set aside'}"`:''}></td><td>${esc((r.started||'').slice(0,19).replace('T',' '))}</td>`
         +`<td>${csMHz(r.freq_hz)}</td><td>${r.snr_peak_db!=null?r.snr_peak_db.toFixed(1):'—'}</td>`
         +`<td>${r.bandwidth_hz!=null?(r.bandwidth_hz/1e3).toFixed(1):'—'}</td><td>${r.duration_s!=null?r.duration_s.toFixed(2):'—'}</td>`
         +`<td>${esc(r.mode||'')}</td><td class="sz">${csSizeCell(r)}</td><td style="text-align:left">${csBadges(r)}</td></tr>`).join('')
@@ -1620,7 +1621,7 @@ async function capturesLoad(){
 const CS_FILTERS=['d0','d1','t0','t1','lo','hi','grade','family','content','min_mb','tier','anomaly','archived','watch'];
 const CS_PARAM={d0:'date_from',d1:'date_to',t0:'tod_from',t1:'tod_to'};
 const csSize=b=>!b?'0 MB':b>=1e9?(b/1e9).toFixed(2)+' GB':b>=1e7?(b/1e6).toFixed(0)+' MB':(b/1e6).toFixed(b>=1e5?1:2)+' MB';
-const csLocked=r=>r.iq_status==='archived';
+const csLocked=r=>r.iq_status==='archived'||r.iq_status==='set aside';
 const csWatchName=s=>{const m=/^survey_[^_]+_[^_]+_(.+)_\d{8}-\d{4}$/.exec(s||'');return m?m[1]:s;};
 function csOpts(id,list){const e=csEl(id),keep=e.value;
   e.innerHTML=list.map(([v,t])=>`<option value="${esc(v)}">${esc(t)}</option>`).join('');
@@ -1917,7 +1918,7 @@ async function csEvent(id){
     csFact('watch settings',r.settings&&typeof r.settings==='object'?esc(recSettings(r.settings).replace('settings: ','')):null),
     csFact('receiver',esc(`${(r.receiver||'').toUpperCase()} SN ${r.serial||'?'}, gain ${r.gain_db??'?'} dB, ppm ${r.ppm??0}`)),
     csFact('radio / cut rate',r.rtl_rate_hz?`${(r.rtl_rate_hz/1e6).toFixed(3)} MS/s`+(r.store_rate_hz?` / ${(r.store_rate_hz/1e3).toFixed(1)} kS/s`:''):null),
-    csFact('IQ',esc(r.iq_status||'')+(e.capture?` — ${esc(e.capture.file)}, ${(e.capture.bytes/1e6).toFixed(0)} MB, ${e.capture.seconds.toFixed(1)} s`
+    csFact('IQ',esc(r.iq_status||'')+(r.set_aside_path?` — in ${esc(r.set_aside_path)}; marsad watch tidy --put-back returns it`:'')+(e.capture?` — ${esc(e.capture.file)}, ${(e.capture.bytes/1e6).toFixed(0)} MB, ${e.capture.seconds.toFixed(1)} s`
       +(e.capture.own?'':`, this event ${e.capture.offset_s.toFixed(1)} s in`):'')),
     csFact('hardware',esc(g['core:hw']||'')),csFact('chain',esc(g['marsad:chain']||r.chain||'')),
     csFact('start (UTC)',esc(((e.meta||{}).captures||[{}])[0]['core:datetime']||'')),
@@ -1953,7 +1954,7 @@ function csArOpts(){return {id:cs.sel,scope:document.querySelector('input[name=c
 function csArShow(e){
   const r=e.row,a=e.archive,arch=r.iq_status==='archived';
   csEl('ar-dlg').hidden=true;csEl('ar-plan').innerHTML='';csEl('ar-out').textContent='';
-  csEl('ar-new').hidden=arch;
+  csEl('ar-new').hidden=arch||r.iq_status==='set aside';
   const box=csEl('ar-arch');box.hidden=!a;
   if(a)box.innerHTML=(a.error?`<b>Archive:</b> ${esc(a.file)} — ${esc(a.error)}`
       :`<b>${arch?'Archived':'Also archived'}</b> in ${esc(a.file)} (${csMB(a.bytes)}, ${esc((a.created_utc||'').replace('T',' ').replace('+00:00',''))} UTC, `

@@ -118,6 +118,7 @@ class Tailer:
         # hunt hop reads it on every request); one reader at a time keeps the offset sane.
         self.poll_lock = threading.Lock()
         self.finish_times: list = []    # wall clock of the last few completed sweeps
+        self.loaded = False             # false until the file has been read to its end once
 
     def _sidecar(self) -> dict:
         """The .json beside the CSV carries the range and the target duration,
@@ -219,6 +220,7 @@ class Tailer:
     def poll(self) -> None:
         with self.poll_lock:
             self._poll()
+            self.loaded = True
 
     def updates_per_s(self, window_s: float = 5.0):
         """Sweeps completed per second over the last few seconds, as they reached
@@ -1196,7 +1198,15 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
             LAST_REQUEST[0] = time.time()
             q = parse_qs(u.query)
             ctype = "application/json"
-            if u.path == "/data":
+            if u.path == "/ping":
+                # Touches no file. Reading a long recording for the first time takes minutes
+                # and starves every request that does (each file call waits for the
+                # interpreter), so this is what says the app is up while it loads.
+                t = live["tail"]
+                busy = t is not None and not t.loaded
+                body = json.dumps({"app": "marsad", "follow": follow,
+                                   "loading": t.path.name if busy else None}).encode()
+            elif u.path == "/data":
                 since = int(q.get("since", ["0"])[0])
                 name = (q.get("file") or [None])[0]
                 cur = live["tail"]

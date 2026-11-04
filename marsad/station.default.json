@@ -137,6 +137,8 @@
   "recorder": {
     "pool": "recordings/captures",
     "pool_gb": 100,
+    "set_aside": "recordings/set_aside",
+    "tidy_exclude_surveys": [],
     "daily_gb": 20,
     "serials": {},
     "ppm": {},

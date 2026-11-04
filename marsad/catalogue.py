@@ -102,6 +102,7 @@ GRADE_ORDER = {"strong": 3, "medium": 2, "weak": 1, "empty": 0}
 
 
 INSIDE = "inside an earlier capture"
+SET_ASIDE = "set aside"              # `marsad watch tidy`: the IQ is in a holding folder outside the pool
 HAS_IQ = ("written", INSIDE)
 
 
@@ -308,15 +309,32 @@ def episodes(rs: list, gap_s: float = EPISODE_GAP_S, span_hz: float = EPISODE_SP
 
 # ---------------------------------------------------------------- storage and status
 
-_POOL_CACHE = {"t": 0.0, "pool": None, "bytes": 0, "archive_gb": 0.0}
+_POOL_CACHE = {"t": 0.0, "pool": None, "bytes": 0, "archive_gb": 0.0, "set_aside_gb": 0.0}
+
+
+def set_aside_dir(station: Station, cfg: dict) -> Path:
+    """The holding folders of `marsad watch tidy`, never inside the pool or the archive."""
+    from .capture_archive import archive_dir
+    p = Path(cfg.get("set_aside") or "recordings/set_aside")
+    p = p if p.is_absolute() else station.root / p
+    r = p.resolve()
+    for name, d in (("the pool", cap.pool_dir(station, cfg)), ("the archive folder", archive_dir(station, cfg))):
+        d = d.resolve()
+        if r == d or d in r.parents:
+            raise Refused(f"recorder.set_aside ({p}) is inside {name} ({d}). Point it somewhere else in station.json.")
+    return p
 
 
 def storage(station: Station, cfg: dict, con) -> dict:
     from . import capture_archive
     pool = cap.pool_dir(station, cfg)
     if _POOL_CACHE["pool"] != str(pool) or time.time() - _POOL_CACHE["t"] > 30:
+        try:
+            aside = cap.folder_bytes(set_aside_dir(station, cfg)) / 1e9
+        except Refused:
+            aside = 0.0
         _POOL_CACHE.update(t=time.time(), pool=str(pool), bytes=cap.folder_bytes(pool),
-                           archive_gb=capture_archive.size_gb(station, cfg))
+                           archive_gb=capture_archive.size_gb(station, cfg), set_aside_gb=aside)
     today = cap.bytes_since(con, cap.local_midnight(time.time())) if con is not None else 0
     try:
         adir = str(capture_archive.archive_dir(station, cfg))
@@ -324,7 +342,7 @@ def storage(station: Station, cfg: dict, con) -> dict:
         adir = str(exc)
     return {"pool": str(pool), "used_gb": _POOL_CACHE["bytes"] / 1e9, "pool_gb": float(cfg.get("pool_gb", 100)),
             "today_gb": today / 1e9, "daily_gb": float(cfg.get("daily_gb", 20)),
-            "archive": adir, "archive_gb": _POOL_CACHE["archive_gb"]}
+            "archive": adir, "archive_gb": _POOL_CACHE["archive_gb"], "set_aside_gb": _POOL_CACHE["set_aside_gb"]}
 
 
 STALE_S = 15.0        # a running watch rewrites its file every 2 s; silence this long means it is gone
@@ -446,6 +464,12 @@ def covering_capture(con, row: dict) -> dict | None:
     return None
 
 
+def _no_iq(row: dict) -> Refused:
+    if row.get("iq_status") == SET_ASIDE:
+        return Refused("this capture's IQ has been set aside; `marsad watch tidy --put-back` returns it")
+    return Refused("no IQ was written for this event (" + (row.get("iq_status") or "not recorded") + ")")
+
+
 def _meta(data_path: Path) -> dict:
     m = data_path.with_name(data_path.name.replace(".sigmf-data", ".sigmf-meta"))
     return json.loads(m.read_text(encoding="utf-8"))
@@ -490,6 +514,11 @@ def event(station: Station, event_id: int) -> dict:
             return out                 # fingerprint only: no IQ, no report, no exports
         c = covering_capture(con, row)
         if c is None:
+            if row.get("iq_status") == SET_ASIDE and row.get("characterised"):
+                try:                   # the report stays in the pool when the IQ goes
+                    out["report"] = _inside(row["characterised"], station, cfg).read_text(encoding="utf-8")
+                except Refused:
+                    pass
             return out
         try:
             data = _inside(c["iq_path"], station, cfg)
@@ -604,7 +633,7 @@ def iq_view(station: Station, event_id: int) -> dict:
     finally:
         con.close()
     if c is None:
-        raise Refused("no IQ was written for this event (" + (row.get("iq_status") or "not recorded") + ")")
+        raise _no_iq(row)
     data = _inside(c["iq_path"], station, cfg)
     st_ = data.stat()
     key = (str(data), st_.st_size, st_.st_mtime)
@@ -695,7 +724,7 @@ def audio_plan(station: Station, event_id: int, mode: str = "am", start_s: float
     finally:
         con.close()
     if c is None:
-        raise Refused("no IQ was written for this event (" + (row.get("iq_status") or "not recorded") + ")")
+        raise _no_iq(row)
     data = _inside(c["iq_path"], station, cfg)
     g = _meta(data)["global"]
     fs = float(g["core:sample_rate"])
@@ -890,7 +919,7 @@ def export(station: Station, event_id: int, fmt: str) -> dict:
     finally:
         con.close()
     if c is None:
-        raise Refused("this event has no IQ capture to export")
+        raise _no_iq(row) if row.get("iq_status") == SET_ASIDE else Refused("this event has no IQ capture to export")
     data = _inside(c["iq_path"], station, cfg)
     meta = _meta(data)
     g = meta["global"]

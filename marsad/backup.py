@@ -179,6 +179,14 @@ def _private_iq(name: str, private_names: set, cfg: dict) -> bool:
     return bool(m) and cap.band_tier(float(m.group(1)), cfg)["tier"] == "private"
 
 
+def _holding(station: Station, cfg: dict) -> Path:
+    """`marsad watch tidy`'s holding folders: set aside to be deleted, so not backed up."""
+    try:
+        return catalogue.set_aside_dir(station, cfg).resolve()
+    except catalogue.Refused:
+        return (station.recordings / "set_aside").resolve()
+
+
 def collect(station: Station, groups: list, include_location: bool = False) -> dict:
     """{group: [{"src", "rel", "bytes"}]} and what was left out, and why. Reads only."""
     cfg = cap.settings(station)
@@ -238,7 +246,7 @@ def collect(station: Station, groups: list, include_location: bool = False) -> d
             for p in _walk(arch):
                 add(g, p, arch)
         elif g == "recordings" and station.recordings.exists():
-            keep_out = [pool.resolve(), arch.resolve()]
+            keep_out = [pool.resolve(), arch.resolve(), _holding(station, cfg)]
             for p in _walk(station.recordings):
                 r = p.resolve()
                 if any(k == r or k in r.parents for k in keep_out):

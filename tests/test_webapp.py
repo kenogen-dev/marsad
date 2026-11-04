@@ -175,6 +175,7 @@ def test_a_live_process_not_yet_answering_is_starting_not_failed(monkeypatch, tm
     monkeypatch.setattr(webapp, "viewer_answers", lambda port=8731: None)
     monkeypatch.setattr(host, "port_in_use", lambda port, host_addr="127.0.0.1": False)
     monkeypatch.setattr(webapp, "launch_background", lambda station, port: SlowProc())
+    monkeypatch.setattr(webapp, "listener_pid", lambda port=8731: None)
     assert webapp.start(_real_station(tmp_path), 8731, timeout=0) == ("starting", 888)
 
 

@@ -127,7 +127,7 @@ def _with_inside(con, rows: list) -> list:
                 if e["id"] not in seen:
                     seen.add(e["id"])
                     rows.append(e)
-    return [r for r in rows if r.get("iq_status") != ARCHIVED]
+    return [r for r in rows if r.get("iq_status") not in (ARCHIVED, catalogue.SET_ASIDE)]
 
 
 def _exports_of(data: Path) -> list:
@@ -166,7 +166,7 @@ def plan(station: Station, event_id: int, scope: str = "event", include_exports:
     finally:
         con.close()
     if not rows:
-        raise Refused("everything chosen is already archived")
+        raise Refused("everything chosen is already archived or set aside")
     return _plan_rows(station, cfg, rows, scope, include_exports, keep_fingerprints)
 
 
@@ -390,7 +390,7 @@ def _units(con, cfg: dict, ids: list, notes: list) -> list:
         except Refused as exc:
             notes.append(str(exc))
             continue
-        if r.get("iq_status") == ARCHIVED:
+        if r.get("iq_status") in (ARCHIVED, catalogue.SET_ASIDE):
             continue
         owner = catalogue.covering_capture(con, r) if r.get("iq_status") == catalogue.INSIDE else None
         if owner is not None:
@@ -429,7 +429,7 @@ def plan_many(station: Station, ids: list, per_group: bool = True, include_expor
             skipped.append({"rows": [r["id"] for r in u], "why": str(exc)})
     if not ok:
         raise Refused("nothing to archive: " + ("; ".join(s["why"] for s in skipped)
-                                                 or "everything selected is already archived"))
+                                                 or "everything selected is already archived or set aside"))
     if per_group:
         lead = {u[0]["id"]: u for u in ok}
         batches = [[r for g_row in g["rows"] for r in lead[g_row["id"]]]

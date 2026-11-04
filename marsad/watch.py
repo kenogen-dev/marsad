@@ -17,6 +17,7 @@
     marsad watch list [--last 30]          the captures catalogue, newest first
     marsad watch report [survey]           the review of one watch (read-only)
     marsad watch recharacterise            measure older captures again; adds reports, changes nothing
+    marsad watch tidy                      plan setting aside the IQ of captures graded empty; deletes nothing
     marsad watch ... --dry-run             show the plan, open no radio
 
 Trigger rules (each a station.json `recorder` setting): SNR >= 12 dB over the pass's
@@ -1178,10 +1179,20 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     rc.add_argument("--ids", help="only these catalogue rows, comma separated")
     rc.add_argument("--limit", type=int, help="stop after this many captures")
     rc.add_argument("--dry-run", action="store_true", help="say what would be measured and stop")
+    td = sub.add_parser("tidy", help="set the IQ of captures graded empty aside, outside the pool: "
+                                     "a plan by default, deletes nothing")
+    td.add_argument("--confirm", nargs="?", const="", help="move what the plan lists: give the plan's token "
+                                                           "(with --put-back, no token)")
+    td.add_argument("--exclude-survey", action="append", help="leave out this survey or part of its name; repeatable")
+    td.add_argument("--before", help="only captures started before this date, YYYY-MM-DD")
+    td.add_argument("--put-back", action="store_true", help="return set-aside captures to the pool")
+    td.add_argument("--ids", help="with --put-back: only these rows, comma separated")
     return ap
 
 
 def show_list(station: Station, last: int) -> int:
+    from . import catalogue
+    cfg = cap.settings(station)
     con = cap.connect(station)
     rows = con.execute("SELECT * FROM captures ORDER BY started_epoch DESC LIMIT ?", (last,)).fetchall()
     if not rows:
@@ -1190,11 +1201,19 @@ def show_list(station: Station, last: int) -> int:
     print(f"  {'started':19}  {'MHz':>10}  {'mode':11} {'SNR':>5}  {'grade':12}  {'bw kHz':>7}  {'dur s':>6}  iq / flags")
     for r in rows:
         bw = f"{r['bandwidth_hz'] / 1e3:7.1f}" if r["bandwidth_hz"] else "      -"
-        g, gsnr, _ = cap.grade_row(dict(r))
+        d = dict(r)
+        d["private"] = catalogue.is_private(d, cfg)
+        d["grade"], d["grade_snr_db"], _ = cap.grade_row(d)
+        cap.overlay_remeasured(d, cfg)            # the figures the Captures tab shows
+        g, gsnr = d["grade"], d["grade_snr_db"]
         gtxt = f"{g} {gsnr:.0f}" if g and gsnr is not None else (g or "-")
+        fam = d["family"] or ""
+        if d.get("remeasured"):
+            old = d.get("family_old")
+            fam += f"  (re-measured, was {old or 'nothing'})" if old != d["family"] else "  (re-measured)"
         print(f"  {(r['started'] or '')[:19]:19}  {r['freq_hz'] / 1e6:10.4f}  {(r['mode'] or '')[:11]:11} "
               f"{(r['snr_peak_db'] or 0):5.1f}  {gtxt:12}  {bw}  {(r['duration_s'] or 0):6.2f}  {r['iq_status'] or ''}"
-              + (f"  [{r['flags']}]" if r["flags"] else "") + (f"  {r['family']}" if r["family"] else ""))
+              + (f"  [{r['flags']}]" if r["flags"] else "") + (f"  {fam}" if fam else ""))
     return 0
 
 
@@ -1222,6 +1241,9 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad watch", 
         from . import recharacterise
         ids = [int(x) for x in args.ids.split(",")] if args.ids else None
         return recharacterise.main(station, args.survey, ids, args.limit, args.dry_run)
+    if args.what == "tidy":
+        from . import capture_tidy
+        return capture_tidy.main(station, args)
     cfg = apply_trigger_flags(cap.settings(station), args)
     if args.what == "fixed":
         if rest:
