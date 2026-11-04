@@ -86,7 +86,9 @@ def _row(r: sqlite3.Row, cfg: dict) -> dict:
     d["grade"], d["grade_snr_db"], d["grade_source"] = cap.grade_row(d)
     # Worked out on read, so old rows get them too and nothing in the catalogue is rewritten.
     d["filter_shaped"] = cap.filter_shaped(d)
-    d["harmonic"] = cap.harmonic_note(d.get("freq_hz"), cfg)
+    d["harmonic"] = cap.shown_harmonic(d.get("freq_hz"), cfg)
+    d["notes"] = cap.hide_harmonic(d.get("notes"))
+    cap.overlay_remeasured(d, cfg)
     d.pop("recipe", None)          # the list does not need it; the event page has it
     return d
 
@@ -460,7 +462,9 @@ def event(station: Station, event_id: int) -> dict:
         g = cap.grade_row(row)
         shown = {k: v for k, v in row.items() if k != "recipe"}
         shown.update(grade=g[0], grade_snr_db=g[1], grade_source=g[2], filter_shaped=cap.filter_shaped(row),
-                     harmonic=cap.harmonic_note(row.get("freq_hz"), cfg))
+                     harmonic=cap.shown_harmonic(row.get("freq_hz"), cfg), notes=cap.hide_harmonic(row.get("notes")),
+                     private=private)
+        cap.overlay_remeasured(shown, cfg)
         if shown.get("settings"):
             try:
                 shown["settings"] = json.loads(shown["settings"])
@@ -468,7 +472,12 @@ def event(station: Station, event_id: int) -> dict:
                 pass
         out = {"row": shown, "private": private,
                "badges": badges(row, cfg), "recipe": None, "meta": None, "report": None,
-               "capture": None, "exports": [], "archive": None}
+               "capture": None, "exports": [], "archive": None, "report_new": None}
+        if shown.get("remeasured"):
+            try:
+                out["report_new"] = Path(shown["remeasured"]).read_text(encoding="utf-8")
+            except OSError:
+                pass
         if row.get("archive_path"):
             from . import capture_archive
             out["archive"] = capture_archive.describe(station, row["archive_path"])

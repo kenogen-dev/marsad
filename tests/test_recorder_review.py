@@ -461,7 +461,8 @@ def test_harmonic_flag_is_a_flag_and_nothing_else():
     assert not C.is_private(row, cfg)
 
 
-def test_harmonic_note_lands_on_the_row_and_the_iq_is_still_written(tmp_path):
+def test_harmonic_note_lands_on_the_row_and_the_iq_is_still_written(tmp_path, monkeypatch):
+    monkeypatch.setattr(cap, "SHOW_HARMONIC", True)       # hidden for now; the flag itself must still work
     st = station(tmp_path, {"capture_s": 2, "band_tiers": [
         {"lo": 200, "hi": 240, "tier": "private", "band": "some band"}]})
     f = 433.92e6

@@ -16,6 +16,7 @@
 
     marsad watch list [--last 30]          the captures catalogue, newest first
     marsad watch report [survey]           the review of one watch (read-only)
+    marsad watch recharacterise            measure older captures again; adds reports, changes nothing
     marsad watch ... --dry-run             show the plan, open no radio
 
 Trigger rules (each a station.json `recorder` setting): SNR >= 12 dB over the pass's
@@ -494,7 +495,7 @@ class Recorder:
                "grade": cap.grade_for(ev["snr_peak_db"]),
                "settings": self.settings_used(),
                "notes": "; ".join(x for x in [ev.get("anomaly"), keep_note, extra.get("notes"),
-                                              cap.harmonic_note(plan["signal_hz"] + ev.get("centre_rel_hz", 0.0), self.cfg)]
+                                              cap.shown_harmonic(plan["signal_hz"] + ev.get("centre_rel_hz", 0.0), self.cfg)]
                                   if x) or None}
         state["prev_start"] = start
         rid = cap.add_row(self.con, row)
@@ -540,7 +541,9 @@ class Recorder:
         def work():
             meta = Path(c["path"])
             try:
-                res = characterise.characterise(meta)
+                src = characterise.open_iq(meta)
+                res = characterise.characterise(meta, src=src,
+                                                timing_only=cap.timing_only(src.f0, src.fs, self.cfg))
                 stem = characterise.out_stem(meta)
                 md = meta.parent / f"{stem}.characterise.md"
                 md.write_text(characterise.to_markdown(res), encoding="utf-8")
@@ -968,7 +971,7 @@ def known_row(rec: Recorder, survey_name: str, survey_ppm: float, act: dict) -> 
                           "snr_peak_db": act["snr_db"], "bandwidth_hz": act["width_khz"] * 1e3, "captured": 1,
                           "iq_status": "known signal: not recorded", "settings": rec.settings_used(),
                           "notes": "; ".join(x for x in [f"next capture allowed after {when}",
-                                                         cap.harmonic_note(f_true, rec.cfg)] if x)})
+                                                         cap.shown_harmonic(f_true, rec.cfg)] if x)})
 
 
 def follow_survey(tailer, triggers: Triggers, dispatcher, families, floor_window_mhz: float,
@@ -1169,6 +1172,12 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="the review of one watch: signals, GB, hours, grades, what looks empty")
     rp.add_argument("survey", nargs="?", help="survey name or part of it (default: the newest watch)")
     rp.add_argument("--md", help="also save the report as this Markdown file")
+    rc = sub.add_parser("recharacterise", help="measure older captures again with the current characteriser: "
+                                               "adds new reports, changes no row, report or zip")
+    rc.add_argument("--survey", help="only this survey, or part of its name")
+    rc.add_argument("--ids", help="only these catalogue rows, comma separated")
+    rc.add_argument("--limit", type=int, help="stop after this many captures")
+    rc.add_argument("--dry-run", action="store_true", help="say what would be measured and stop")
     return ap
 
 
@@ -1209,6 +1218,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad watch", 
     if args.what == "report":
         from . import watch_report
         return watch_report.main(station, args.survey, args.md)
+    if args.what == "recharacterise":
+        from . import recharacterise
+        ids = [int(x) for x in args.ids.split(",")] if args.ids else None
+        return recharacterise.main(station, args.survey, ids, args.limit, args.dry_run)
     cfg = apply_trigger_flags(cap.settings(station), args)
     if args.what == "fixed":
         if rest:

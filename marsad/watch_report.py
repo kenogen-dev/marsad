@@ -45,6 +45,9 @@ def _hhmm(t: str | None) -> str:
     return (t or "")[5:16].replace("T", " ")
 
 
+SAME_SIGNAL_HZ = 2.4e6
+
+
 def timing_links(rows: list) -> list:
     """Pairs of open signals at different frequencies with the same pulse timing."""
     seen, out = [], []
@@ -57,13 +60,14 @@ def timing_links(rows: list) -> list:
             continue
         f = r.get("target_hz") or r["freq_hz"]
         for g in seen:
-            if cap.timing_match(t, g["timing"]) and abs(f - g["f"]) > 100e3:
-                pair = tuple(sorted((round(f / 1e6, 2), round(g["f"] / 1e6, 2))))
-                if pair not in out:
-                    out.append(pair)
+            if cap.timing_match(t, g["timing"]):
+                # within one radio band it is the same signal, not another place with its timing
+                if abs(f - g["f"]) > SAME_SIGNAL_HZ and not any(abs(f - x) <= SAME_SIGNAL_HZ for x in g["linked"]):
+                    g["linked"].append(f)
+                    out.append(tuple(sorted((round(f / 1e6, 2), round(g["f"] / 1e6, 2)))))
                 break
         else:
-            seen.append({"f": f, "timing": t})
+            seen.append({"f": f, "timing": t, "linked": []})
     return out
 
 

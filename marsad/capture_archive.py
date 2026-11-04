@@ -216,6 +216,10 @@ def _plan_rows(station: Station, cfg: dict, rows: list, scope: str, include_expo
             md = Path(r["characterised"])
             add(md, "characterise", True, r)
             add(md.with_suffix(".json"), "characterise", True, r)
+            for new in (md.with_name(md.name.replace(".characterise.md", ".characterise.v2.md")),
+                        md.with_name(md.name.replace(".characterise.md", ".characterise.v2.json"))):
+                if new != md and new.exists():
+                    add(new, "characterise", True, r)
         ex = _exports_of(data)
         if include_exports:
             for p in ex:

@@ -198,9 +198,16 @@ their events, captures and GB, events per hour by tier, grades, captures that lo
 refused despite a high peak, and episodes (three or more strong events on two or more signals, close in time and
 frequency). Private rows appear only as counts per band and when they happened.
 
-Two kinds of question are raised and never answered for you: an event at twice a private band's frequency carries
-"possible harmonic of <band>", and two open signals with the same pulse spacings and rotation get "same emitter?".
-Neither changes a tier, what is kept or what may be exported.
+Two open signals with the same pulse spacings and rotation get "same emitter?", a question it does not answer for
+you, and it changes no tier, nothing kept and nothing exported.
+
+`marsad watch recharacterise [--survey S] [--ids 1,2] [--limit N] [--dry-run]` measures older captures again after the
+characteriser improves. It only adds: `<capture>.characterise.v2.md` and `.json` beside the capture, or for a capture
+in an archive zip in `recharacterised/<zip name>/` beside the zip, which is read in place, checked against its
+manifest and left untouched. Catalogue rows and old reports stay as they were; the Captures tab and the watch report
+show the newer figures with the old label beside them. SNR from before and after is not comparable. It skips private
+rows, a capture still being written and captures already made by the current recorder, runs at low priority, and
+`recorder.timing_only_bands` (MHz pairs) keeps captures touching those bands to timing, width and level.
 
 ## Backing up
 

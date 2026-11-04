@@ -77,6 +77,9 @@ def cut_response(decim: int, cutoff_x: float, f_over_rate: np.ndarray) -> np.nda
 
 # ---------------------------------------------------------------- reading files
 
+TIMING_ONLY_FAMILY = "not pulsed: timing-only band, not analysed further"
+
+
 class IQSource:
     """A memory-mapped IQ file. read() returns complex64 scaled to full scale 1.0."""
 
@@ -197,15 +200,21 @@ def open_wav(path: Path, freq: float | None) -> IQSource:
 def open_sigmf(path: Path, freq: float | None) -> IQSource:
     meta = path if path.name.endswith(".sigmf-meta") else path.with_name(path.name.replace(".sigmf-data", ".sigmf-meta"))
     data = meta.with_name(meta.name.replace(".sigmf-meta", ".sigmf-data"))
-    m = json.loads(meta.read_text())
+    return sigmf_source(json.loads(meta.read_text()), data, freq, name=meta.name)
+
+
+def sigmf_source(m: dict, data: Path, freq: float | None = None, offset: int = 0, n: int | None = None,
+                 name: str = "") -> IQSource:
+    """An IQSource from a parsed SigMF meta. `offset` and `n` read a capture stored inside a
+    larger file, such as an uncompressed zip member: the map is read-only either way."""
     g = m.get("global", {})
     dt = g.get("core:datatype", "")
     kind = {"cu8": "cu8", "ci16_le": "cs16", "cf32_le": "cf32"}.get(dt)
     if kind is None:
-        raise SystemExit(f"{meta.name}: SigMF datatype {dt!r} not supported (cu8, ci16_le, cf32_le)")
+        raise SystemExit(f"{name}: SigMF datatype {dt!r} not supported (cu8, ci16_le, cf32_le)")
     caps = m.get("captures") or [{}]
     f0 = freq if freq is not None else caps[0].get("core:frequency")
-    src = IQSource(data, kind, g["core:sample_rate"], f0, origin=f"SigMF {dt}")
+    src = IQSource(data, kind, g["core:sample_rate"], f0, offset=offset, n=n, origin=f"SigMF {dt}")
     src.decim = int(g.get("marsad:decimation") or 1)
     src.cutoff_x = float(g.get("marsad:cut_cutoff") or 0.2)
     if g.get("marsad:tuned_hz") and caps[0].get("core:frequency"):
@@ -882,8 +891,11 @@ def recipe(fs_now: float, f0: float | None, centre: float, obw: float, res: dict
 # ---------------------------------------------------------------- top level
 
 def characterise(path, rate=None, freq=None, fmt=None, start_s: float = 0.0,
-                 duration_s: float | None = None) -> dict:
-    src = open_iq(path, rate, freq, fmt)
+                 duration_s: float | None = None, src: IQSource | None = None,
+                 timing_only: bool = False) -> dict:
+    """`timing_only` keeps a capture to timing, width and level: what is not a pulse train
+    gets no further analysis (recorder.timing_only_bands)."""
+    src = src or open_iq(path, rate, freq, fmt)
     fs = src.fs
     start = int(start_s * fs)
     n = src.n - start if duration_s is None else min(int(duration_s * fs), src.n - start)
@@ -941,6 +953,10 @@ def characterise(path, rate=None, freq=None, fmt=None, start_s: float = 0.0,
         res["family"] = pulsed_family(res["pulses"], usable)
         if frac >= 0.5:
             res["steady_line_too"] = True
+    elif timing_only:
+        res["family"] = TIMING_ONLY_FAMILY
+        res["timing_only"] = True
+        return res
     else:
         cont = continuous_features(src, start, act, centre, spec["edges"])
         res["continuous"] = cont
@@ -1132,7 +1148,12 @@ def main(argv=None, station=None, prog: str = "marsad characterise") -> int:
     path = Path(args.recording)
     if not path.exists():
         raise SystemExit(f"no such file: {path}")
-    res = characterise(path, args.rate, args.freq, args.format, args.start, args.duration)
+    src = open_iq(path, args.rate, args.freq, args.format)
+    only = False
+    if station is not None:
+        from . import capture as cap
+        only = cap.timing_only(src.f0, src.fs, cap.settings(station))
+    res = characterise(path, start_s=args.start, duration_s=args.duration, src=src, timing_only=only)
     out = Path(args.out) if args.out else path.parent
     out.mkdir(parents=True, exist_ok=True)
     stem = out_stem(path)

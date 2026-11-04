@@ -1912,7 +1912,7 @@ async function csEvent(id){
     csFact('duration / duty',r.duration_s!=null?`${r.duration_s.toFixed(2)} s, ${(100*(r.duty||0)).toFixed(0)} % active`:null),
     csFact('since previous',r.repeat_s!=null?r.repeat_s.toFixed(2)+' s':null),
     csFact('strength',r.grade?`${esc(r.grade)}${r.grade_snr_db!=null?', '+Number(r.grade_snr_db).toFixed(1)+' dB':''} (${esc(r.grade_source||'')})`:null),
-    csFact('family',esc(r.family||'')+(r.filter_shaped?' (that label is not reliable: the width is only this capture\'s own filter, and it reads as receiver noise)':'')),
+    csFact('family',esc(r.family||'')+(r.remeasured?` (re-measured; the old report said: ${esc(r.family_old||'nothing')})`:'')+(r.filter_shaped?' (that label is not reliable: the width is only this capture\'s own filter, and it reads as receiver noise)':'')),
     csFact('notes',esc(r.notes||'')),csFact('possible harmonic',r.harmonic&&!(r.notes||'').includes(r.harmonic)?esc(r.harmonic)+' (a flag only)':null),
     csFact('watch settings',r.settings&&typeof r.settings==='object'?esc(recSettings(r.settings).replace('settings: ','')):null),
     csFact('receiver',esc(`${(r.receiver||'').toUpperCase()} SN ${r.serial||'?'}, gain ${r.gain_db??'?'} dB, ppm ${r.ppm??0}`)),
@@ -1928,7 +1928,8 @@ async function csEvent(id){
   csArShow(e);
   const more=[];
   if(e.recipe)more.push(`<div><div class="hm-l">Recipe for the next capture</div><pre class="cmd">${esc(JSON.stringify(e.recipe,null,1))}</pre></div>`);
-  if(e.report)more.push(`<div><div class="hm-l">Characterise report</div><pre class="md" style="padding:8px">${esc(e.report)}</pre></div>`);
+  if(e.report_new)more.push(`<div><div class="hm-l">Re-measured report</div><pre class="md" style="padding:8px">${esc(e.report_new)}</pre></div>`);
+  if(e.report)more.push(`<div><div class="hm-l">${e.report_new?'Old characterise report, kept':'Characterise report'}</div><pre class="md" style="padding:8px">${esc(e.report)}</pre></div>`);
   csEl('more').innerHTML=more.join('');
   try{const f=await (await fetch('/captures/fp?id='+id)).json();
     if(f.error){csEl('fp-l').textContent=f.error;csEl('fp-r').textContent='';}

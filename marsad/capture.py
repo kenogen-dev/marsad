@@ -69,6 +69,9 @@ BELOW_KEEP = "below keep level"
 # too weak at the recorder to show anything in the waterfall. dB over the recorder's floor.
 GRADES = (("strong", 20.0), ("medium", 12.0), ("weak", 6.0), ("empty", -1e9))
 EMPTY_FAMILIES = ("nothing found", "too weak to classify")
+SHOW_HARMONIC = False     # the flag fired on nearly every L-band event, so it stays out of sight until it has been tested
+REMEASURED = "re-measured with the current characteriser; SNR is on a new scale, not comparable with the old report"
+REMEASURED_INDEX = "recharacterised_v2.json"
 # The trigger settings a watch ran with, stored in every row so watches stay comparable.
 SETTING_KEYS = ("threshold_db", "passes", "ambush_db", "cooldown_min", "capture_s", "keep_min_snr_db",
                 "known_cooldown_min", "look_s")
@@ -80,6 +83,7 @@ def settings(station: Station) -> dict:
     """The `recorder` section: built-in defaults, then whatever station.json sets."""
     cfg = dict(builtin_defaults().get("recorder", {}))
     cfg.update(station.data.get("recorder") or {})
+    cfg["_remeasured_index"] = str(pool_dir(station, cfg) / REMEASURED_INDEX)
     return cfg
 
 
@@ -431,6 +435,60 @@ def harmonic_note(freq_hz: float | None, cfg: dict) -> str | None:
         return None
     half = band_tier(float(freq_hz) / 2, cfg)
     return f"possible harmonic of {half['band']}" if half["tier"] == "private" and half["band"] else None
+
+
+def shown_harmonic(freq_hz: float | None, cfg: dict) -> str | None:
+    """The harmonic flag where a person would read it: nothing while SHOW_HARMONIC is off.
+    Nothing is lost, since harmonic_note can be worked out from the frequency at any time."""
+    return harmonic_note(freq_hz, cfg) if SHOW_HARMONIC else None
+
+
+def hide_harmonic(notes: str | None) -> str | None:
+    """Notes without a harmonic flag a watch has already written into them."""
+    if not notes or SHOW_HARMONIC:
+        return notes
+    return "; ".join(x for x in notes.split("; ") if not x.startswith("possible harmonic of ")) or None
+
+
+def timing_only(f0_hz: float | None, rate_hz: float | None, cfg: dict) -> bool:
+    """Does a capture's band touch recorder.timing_only_bands? There it gets timing, width
+    and level only. This changes no tier: what is kept and exported is decided elsewhere."""
+    if not f0_hz or not rate_hz:
+        return False
+    return any(lo * 1e6 < f0_hz + rate_hz / 2 and hi * 1e6 > f0_hz - rate_hz / 2
+               for lo, hi in cfg.get("timing_only_bands") or [])
+
+
+_REMEASURED: dict = {}
+
+
+def remeasured_index(cfg: dict) -> dict:
+    """{row id: what the capture measures now}, from `marsad watch recharacterise`. Read-only."""
+    p = Path(cfg.get("_remeasured_index") or "")
+    try:
+        key = (str(p), p.stat().st_mtime_ns)
+    except OSError:
+        return {}
+    if _REMEASURED.get("key") != key:
+        try:
+            _REMEASURED.update(key=key, rows=json.loads(p.read_text(encoding="utf-8")).get("rows") or {})
+        except (OSError, ValueError):
+            return {}
+    return _REMEASURED["rows"]
+
+
+def overlay_remeasured(d: dict, cfg: dict) -> dict:
+    """A display row with its capture's newer measurement on top. The catalogue row and the
+    old report stay as they were: this only changes what is read."""
+    e = None if d.get("private") else remeasured_index(cfg).get(str(d.get("id")))
+    if not e:
+        return d
+    snr = e.get("capture_snr_db")
+    d.update(family_old=d.get("family"), family=e.get("family"), grade=e.get("grade"),
+             grade_snr_db=snr if snr is not None else d.get("snr_peak_db"), grade_source=REMEASURED,
+             filter_shaped=False, remeasured=e.get("report"),
+             timing=json.dumps(e["timing"]) if e.get("timing") else None)
+    return d
 
 
 def timing_match(a: dict | None, b: dict | None) -> bool:
