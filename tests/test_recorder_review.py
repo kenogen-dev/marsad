@@ -407,6 +407,23 @@ def test_report_says_it_all_and_keeps_private_to_counts(tmp_path):
     assert before[0] == 11
 
 
+def test_report_still_counts_captures_set_aside_after_the_watch(tmp_path):
+    st = station(tmp_path, {"band_tiers": [{"lo": 750, "hi": 770, "tier": "private", "band": "secret band"}]})
+    con = seed(st)
+    before = WR.build(st)
+    con.execute("UPDATE captures SET iq_status = ? WHERE id IN (1, 2)", (C.SET_ASIDE,))
+    con.commit()
+    con.close()
+    rep = WR.build(st)
+    text = WR.to_text(rep)
+    assert (rep["captures"], rep["iq_bytes"]) == (before["captures"], before["iq_bytes"]) == (2, 2_014_000_000)
+    assert (rep["set_aside"], rep["set_aside_bytes"]) == (2, 2_014_000_000)
+    assert "2 IQ captures, 2.01 GB of IQ (2 of them, 2.01 GB, set aside since)" in text
+    assert "| 900.000 | pulsed, unmodulated carrier | 1 | 1 | 2.00 |" in text
+    assert [r["id"] for r in rep["empty"]] == [2] and "set aside since |" in text
+    assert "set aside since" not in WR.to_text(before)
+
+
 def test_report_finds_a_watch_by_part_of_its_name_and_refuses_plainly(tmp_path):
     st = station(tmp_path)
     con = seed(st)

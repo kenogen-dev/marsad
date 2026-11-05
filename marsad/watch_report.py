@@ -46,6 +46,12 @@ def _hhmm(t: str | None) -> str:
 
 
 SAME_SIGNAL_HZ = 2.4e6
+# The report says what a watch recorded, so IQ moved out of the pool afterwards still counts.
+RECORDED = ("written", "archived", cat.SET_ASIDE)
+
+
+def _recorded(r: dict) -> bool:
+    return r.get("iq_status") in RECORDED
 
 
 def timing_links(rows: list) -> list:
@@ -97,8 +103,9 @@ def build(station: Station, query: str | None = None) -> dict:
         b["events"] += 1
         b["last"] = r["started"]
 
-    iq = [r for r in open_rows if r.get("iq_status") in ("written", "archived")]
-    empty = [r for r in iq if r.get("grade") == "empty"]
+    iq = [r for r in open_rows if _recorded(r)]
+    set_aside = [r for r in iq if r.get("iq_status") == cat.SET_ASIDE]
+    empty =[r for r in iq if r.get("grade") == "empty"]
     refused = [r for r in open_rows if r.get("iq_status") == cap.BELOW_KEEP and (r.get("snr_peak_db") or 0) >=
                float(_settings(r).get("keep_min_snr_db") or 12.0)]
     harmonics: dict = {}
@@ -109,6 +116,7 @@ def build(station: Station, query: str | None = None) -> dict:
             h["last"] = r["started"]
     return {"survey": name, "rows": rows, "events": len(rows), "open": len(open_rows), "private": len(private),
             "captures": len(iq), "iq_bytes": sum(r.get("iq_bytes") or 0 for r in iq),
+            "set_aside": len(set_aside), "set_aside_bytes": sum(r.get("iq_bytes") or 0 for r in set_aside),
             "first": rows[0]["started"] if rows else None, "last": rows[-1]["started"] if rows else None,
             "groups": cat.group(open_rows, "size"), "bands": bands, "hours": hours,
             "grades": Counter(r["grade"] or "not graded" for r in open_rows),
@@ -128,16 +136,18 @@ def _settings(r: dict) -> dict:
 
 
 def to_text(rep: dict) -> str:
+    moved = (f" ({rep['set_aside']} of them, {rep['set_aside_bytes'] / 1e9:.2f} GB, set aside since)"
+             if rep["set_aside"] else "")
     L = [f"# Watch report: {rep['survey']}", "",
          f"{_hhmm(rep['first'])} to {_hhmm(rep['last'])}: {rep['events']} events ({rep['open']} open, "
-         f"{rep['private']} private), {rep['captures']} IQ captures, {rep['iq_bytes'] / 1e9:.2f} GB of IQ", ""]
+         f"{rep['private']} private), {rep['captures']} IQ captures, {rep['iq_bytes'] / 1e9:.2f} GB of IQ{moved}", ""]
 
     L += ["## Open signals, largest first", "",
           "| MHz | what it was labelled | events | captures | GB | peak dB | best grade |",
           "|---:|---|---:|---:|---:|---:|---|"]
     for g in rep["groups"]:
         gb = sum(r.get("iq_bytes") or 0 for r in g["rows"]) / 1e9
-        L.append(f"| {g['f_mhz']:.3f} | {g['family'] or '-'} | {g['events']} | {g['captures'] + g['archived']} | "
+        L.append(f"| {g['f_mhz']:.3f} | {g['family'] or '-'} | {g['events']} | {sum(map(_recorded, g['rows']))} | "
                  f"{gb:.2f} | {g['peak_db']:.1f} | {g['grade'] or '-'} |")
 
     L += ["", "## Events per hour", "", "| hour | open | private |", "|---|---:|---:|"]
@@ -165,6 +175,8 @@ def to_text(rep: dict) -> str:
         L += ["| event | MHz | when | MB | why |", "|---:|---:|---|---:|---|"]
         for r in rep["empty"]:
             why = "only the capture's filter shape" if r.get("filter_shaped") else (r.get("family") or "")
+            if r.get("iq_status") == cat.SET_ASIDE:
+                why += "; set aside since"
             L.append(f"| {r['id']} | {r['freq_hz'] / 1e6:.3f} | {_hhmm(r['started'])} | "
                      f"{(r.get('iq_bytes') or 0) / 1e6:.0f} | {why} |")
     else:
