@@ -204,6 +204,15 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
    envelope, recipe, report) is far taller than a screen, and below it the list would be
    out of reach again. Scrolled past the strip, viewer and list share one screen. */
 #cs-ev{max-height:50vh;overflow:auto}
+#cs-an{margin:0 0 12px}
+#cs-an .an-head{font-size:13px;margin-bottom:4px}
+#cs-an .an-head b{color:var(--accent)}
+#cs-an .an-note{font-size:11px;color:var(--dim);margin:0 0 6px}
+#cs-an .an-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (max-width:700px){#cs-an .an-grid{grid-template-columns:minmax(0,1fr)}}
+#cs-an .an-wide{grid-column:1/-1}
+#cs-ev #cs-an canvas{display:block;width:100%;height:120px}
+#cs-an .an-none{font-size:11px;color:var(--dim);border:1px dashed var(--line);border-radius:4px;padding:10px 8px}
 #cs-groups{max-height:min(32vh,460px);overflow:auto;border:1px solid var(--line);border-radius:6px;padding:0 6px;outline:none}
 #cs-groups:focus-visible{border-color:var(--accent)}
 @media (max-width:700px){#cs-ev{max-height:52vh}#cs-groups{max-height:28vh}}
@@ -389,13 +398,14 @@ pre.log{white-space:pre-wrap;font:11.5px ui-monospace,Consolas,monospace;color:v
     <div class="wrap" id="cs-ev" hidden>
       <div class="lab"><span id="cs-ev-t">Event</span></div>
       <div id="cs-ev-badges" style="margin-bottom:8px"></div>
+      <div id="cs-an" hidden></div>
       <div class="cs-two">
+        <div><table class="cs-facts"><tbody id="cs-facts"></tbody></table></div>
         <div>
           <div class="hm-l">Fingerprint: power at 20 ms x ~1 kHz, dB over the floor (time runs down)</div>
           <canvas id="cs-fp"></canvas>
           <div class="ax"><span id="cs-fp-l">—</span><span id="cs-fp-r">—</span></div>
         </div>
-        <div><table class="cs-facts"><tbody id="cs-facts"></tbody></table></div>
       </div>
       <div id="cs-priv" class="say" hidden><b>PRIVATE: do not decode.</b> This band carries private communications, so the recorder kept
         only the power fingerprint above. No IQ was ever written for it, and there is nothing to play or export.</div>
@@ -1892,6 +1902,95 @@ function csAuWire(){
   document.addEventListener('keydown',ev=>{
     if(ev.key==='Escape'&&csAu.sel&&document.getElementById('pane-captures').classList.contains('on'))csAuClear();});
 }
+// ---- the analysis panel: the characteriser's results as pictures (catalogue.analysis_summary, analysis_from_iq)
+const csAnState={a:null,iq:null,draw:[]};
+function csAnFit(cv){const d=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=Math.max(1,w*d);cv.height=Math.max(1,h*d);const x=cv.getContext('2d');x.setTransform(d,0,0,d,0,0);
+  const s=getComputedStyle(document.documentElement),v=n=>s.getPropertyValue(n).trim();
+  x.font='10px ui-monospace,Consolas,monospace';
+  return {x,w,h,bg:v('--bg'),line:v('--line'),dim:v('--dim'),acc:v('--accent'),warn:v('--amber')};}
+const csAnUs=s=>s>=0.1?s.toFixed(3)+' s':s>=1e-3?(s*1e3).toFixed(s>=0.01?1:3)+' ms':(s*1e6).toFixed(1)+' us';
+function csAnFig(title,wide){const d=document.createElement('div');if(wide)d.className='an-wide';
+  d.innerHTML=`<div class="hm-l">${esc(title)}</div>`;return d;}
+function csAnNone(d,text){const n=document.createElement('div');n.className='an-none';n.textContent=text;d.appendChild(n);return d;}
+function csAnPlot(d,paint){const c=document.createElement('canvas');d.appendChild(c);csAnState.draw.push(()=>paint(csAnFit(c)));return d;}
+function csAnTimeline(g,iq,p){const m={l:30,r:6,t:6,b:16},W=g.w-m.l-m.r,H=g.h-m.t-m.b,x=g.x;
+  const top=Math.max(...iq.snr_db,10),X=t=>m.l+t/iq.seconds*W,Y=s=>m.t+H*(1-Math.max(0,s)/top);
+  x.strokeStyle=g.line;x.strokeRect(m.l,m.t,W,H);x.fillStyle=g.dim;x.textAlign='right';
+  x.fillText(top.toFixed(0)+' dB',m.l-2,m.t+8);x.fillText('0',m.l-2,m.t+H);x.textAlign='left';x.fillText('0 s',m.l,g.h-4);
+  x.textAlign='right';x.fillText(iq.seconds.toFixed(1)+' s',m.l+W,g.h-4);
+  const r=p.rotation;if(r&&r.period_s){x.strokeStyle=g.warn;x.setLineDash([3,3]);
+    for(let k=-Math.ceil(iq.strongest_t/r.period_s);;k++){const t=iq.strongest_t+k*r.period_s;if(t>iq.seconds)break;
+      if(t>=0){x.beginPath();x.moveTo(X(t),m.t);x.lineTo(X(t),m.t+H);x.stroke();}}x.setLineDash([]);}
+  x.fillStyle=g.acc;iq.t.forEach((t,i)=>x.fillRect(X(t)-1,Y(iq.snr_db[i])-1,2,2));}
+function csAnPri(g,p,iq){const m={l:6,r:6,t:32,b:16},W=g.w-m.l-m.r,H=g.h-m.t-m.b,x=g.x,lv=p.pri||[];
+  const h=iq&&iq.pri,ps=lv.map(L=>L.pri_s),lo=h?h.lo_s:Math.min(...ps)*0.7,hi=h?h.hi_s:Math.max(...ps)*1.4;
+  const X=s=>m.l+Math.log(s/lo)/Math.log(hi/lo||2)*W;
+  x.strokeStyle=g.line;x.strokeRect(m.l,m.t,W,H);x.fillStyle=g.dim;x.textAlign='left';x.fillText(csAnUs(lo),m.l,g.h-4);
+  x.textAlign='right';x.fillText(csAnUs(hi),m.l+W,g.h-4);
+  if(h){const top=Math.sqrt(Math.max(...h.counts,1)),n=h.counts.length;x.fillStyle=g.acc;
+    h.counts.forEach((c,i)=>{if(!c)return;const b=Math.sqrt(c)/top*H;x.fillRect(m.l+i/n*W,m.t+H-b,Math.max(1,W/n),b);});}
+  else{const top=Math.sqrt(Math.max(...lv.map(L=>L.count),1));x.fillStyle=g.acc;
+    lv.forEach(L=>{const b=Math.sqrt(L.count)/top*H;x.fillRect(X(L.pri_s)-2,m.t+H-b,4,b);});}
+  x.textAlign='center';let last=-1e9,row=0;
+  [...lv].sort((a,b)=>a.pri_s-b.pri_s).forEach(L=>{const px=X(L.pri_s);x.strokeStyle=g.warn;x.beginPath();x.moveTo(px,m.t);x.lineTo(px,m.t+H);x.stroke();
+    row=px-last<52?(row+1)%3:0;last=px;x.fillStyle=g.warn;
+    x.fillText(csAnUs(L.pri_s),Math.min(Math.max(px,24),g.w-24),m.t-3-row*10);});}
+function csAnWidth(g,p){const lv=Object.entries(p.width_at_db_s||{}).map(([d,w])=>[+d,w]).sort((a,b)=>a[0]-b[0]),x=g.x;
+  const top=Math.max(...lv.map(v=>v[1])),rowH=Math.min(20,(g.h-8)/lv.length),L=46,W=g.w-L-70;
+  lv.forEach(([d,w],i)=>{const y=4+i*rowH,b=w/top*W;x.fillStyle=g.dim;x.textAlign='left';x.fillText('-'+d+' dB',2,y+rowH*0.7);
+    x.fillStyle=g.acc;x.fillRect(L+(W-b)/2,y+2,b,rowH-5);x.fillStyle=g.dim;x.fillText(csAnUs(w),L+W+4,y+rowH*0.7);});}
+function csAnRot(g,r){const x=g.x,iv=r.intervals_s||[],t=[0];iv.forEach(v=>t.push(t[t.length-1]+v));const end=t[t.length-1]||1,m=16,W=g.w-2*m,y=g.h/2;
+  x.strokeStyle=g.line;x.beginPath();x.moveTo(m,y);x.lineTo(m+W,y);x.stroke();x.textAlign='center';
+  t.forEach(v=>{const px=m+v/end*W;x.fillStyle=g.acc;x.fillRect(px-2,y-14,4,28);});
+  x.fillStyle=g.dim;iv.forEach((v,i)=>{if(iv.length<=8)x.fillText(v.toFixed(3)+' s',m+(t[i]+v/2)/end*W,y-18);});
+  x.fillText(`${r.period_s.toFixed(3)} s, ${r.rpm?r.rpm.toFixed(2)+' RPM':''}, ${r.bursts} passes, fit ${(r.fit_rms_s*1e3).toFixed(1)} ms, beam ${(r.dwell_s*1e3).toFixed(0)} ms`,g.w/2,g.h-6);}
+function csAnCurve(g,c,w){const m={l:52,r:6,t:6,b:16},W=g.w-m.l-m.r,H=g.h-m.t-m.b,x=g.x,n=c.median_hz.length;
+  const lo=Math.min(...c.p25_hz),hi=Math.max(...c.p75_hz),sp=(hi-lo)||1,X=i=>m.l+i/(n-1)*W,Y=f=>m.t+H*(1-(f-lo)/sp);
+  x.strokeStyle=g.line;x.strokeRect(m.l,m.t,W,H);x.fillStyle=g.dim;x.textAlign='right';
+  x.fillText((hi/1e3).toFixed(0)+' kHz',m.l-2,m.t+8);x.fillText((lo/1e3).toFixed(0)+' kHz',m.l-2,m.t+H);
+  x.textAlign='left';x.fillText('start of pulse',m.l,g.h-4);x.textAlign='right';x.fillText(csAnUs(w),m.l+W,g.h-4);
+  x.globalAlpha=0.25;x.fillStyle=g.acc;x.beginPath();c.p75_hz.forEach((f,i)=>x.lineTo(X(i),Y(f)));
+  for(let i=n-1;i>=0;i--)x.lineTo(X(i),Y(c.p25_hz[i]));x.closePath();x.fill();x.globalAlpha=1;
+  x.strokeStyle=g.acc;x.lineWidth=1.5;x.beginPath();c.median_hz.forEach((f,i)=>i?x.lineTo(X(i),Y(f)):x.moveTo(X(i),Y(f)));x.stroke();x.lineWidth=1;}
+function csAnRender(){const a=csAnState.a,iq=csAnState.iq,box=csEl('an');csAnState.draw=[];box.innerHTML='';
+  if(!a){box.hidden=true;return;}box.hidden=false;
+  const head=document.createElement('div');head.className='an-head';
+  head.innerHTML=`<b>${esc(a.grade||'not graded')}</b>${a.grade_snr_db!=null?` ${Number(a.grade_snr_db).toFixed(1)} dB`:''} · ${esc(a.family||'no label')}`
+    +(a.family_old&&a.family_old!==a.family?` <span class="note" style="margin:0">(the old report said: ${esc(a.family_old)})</span>`:'');
+  box.appendChild(head);
+  const notes=[a.source?`From the ${a.source}${a.from_capture?` of capture #${a.from_capture}, which this event fell inside`:''}.`+(a.source.startsWith('re-measured')?' Its SNR is on a new scale, not comparable with the old report.':''):'This event has no characterise report.'];
+  if(a.filter_shaped)notes.push('The old label is not reliable: the width was only the capture\'s own filter.');
+  if(a.timing_only)notes.push('Touches a timing-only band: timing, width and level only.');
+  const nt=document.createElement('div');nt.className='an-note';nt.textContent=notes.join(' ');box.appendChild(nt);
+  const p=a.pulses;
+  if(!p){if(a.source)csAnNone(box,'The report found no pulse train in this capture, so there are no pulse figures.');return;}
+  const grid=document.createElement('div');grid.className='an-grid';box.appendChild(grid);
+  const live=a.has_iq?iq:null,pv=live&&live.t?live:null;
+  const tl=csAnFig(`Pulses over the capture: ${p.count} found, ${p.count_good} good, strongest ${(p.snr_db_max||0).toFixed(1)} dB, median ${(p.snr_db_median||0).toFixed(1)} dB, duty ${(100*(p.duty_overall||0)).toFixed(2)} %`
+    +(pv&&pv.t.length<pv.count?` (the strongest ${pv.t.length} drawn)`:'')+(p.rotation?'; dashed: the rotation period':''),true);
+  if(pv)csAnPlot(tl,g=>csAnTimeline(g,pv,p));
+  else csAnNone(tl,!a.has_iq?`Pulse times are not in the report: ${a.iq_note}.`:(live&&live.note?live.note:'Finding the pulses in the capture…'));
+  grid.appendChild(tl);
+  const pr=csAnFig(pv&&pv.pri?`Intervals between pulses: ${pv.pri.intervals}, log time, height the square root of the count; orange: the PRIs found`:'PRIs found, log time, height the square root of the count'+(p.pri&&!pv?' (levels from the report; every interval needs the IQ)':''));
+  if(p.pri&&p.pri.length)csAnPlot(pr,g=>csAnPri(g,p,pv));else csAnNone(pr,'The report found no repeating interval.');
+  grid.appendChild(pr);
+  const wd=csAnFig(`Pulse width at each level below the peak; median ${csAnUs(p.width_s)}`+(p.width_iqr_s?`, middle half ${csAnUs(p.width_iqr_s[0])} to ${csAnUs(p.width_iqr_s[1])}`:''));
+  if(p.width_at_db_s&&Object.keys(p.width_at_db_s).length)csAnPlot(wd,g=>csAnWidth(g,p));else csAnNone(wd,'The report kept no width by level.');
+  grid.appendChild(wd);
+  const ro=csAnFig('Beam passes');
+  if(p.rotation&&p.rotation.period_s)csAnPlot(ro,g=>csAnRot(g,p.rotation));
+  else csAnNone(ro,`No rotation measured: it takes 3 passes of the beam, and the report found ${p.bursts||0}.`);
+  grid.appendChild(ro);
+  const cv=csAnFig('Frequency across the pulse: median, shaded middle half'+(pv&&pv.curve?` of the strongest ${pv.curve.pulses}`:''));
+  if(a.timing_only)csAnNone(cv,'Not shown: this capture touches a timing-only band.');
+  else if(pv&&pv.curve)csAnPlot(cv,g=>csAnCurve(g,pv.curve,p.width_s));
+  else if(a.chirp)csAnNone(cv,`The report kept its ends only, ${(a.chirp.start_hz/1e3).toFixed(0)} to ${(a.chirp.end_hz/1e3).toFixed(0)} kHz; the curve needs the IQ${a.has_iq?' (reading it…)':''}.`);
+  else csAnNone(cv,'No frequency figure: the report measured none for these pulses, usually because the pulses are too short or the capture too narrow.');
+  grid.appendChild(cv);
+  csAnState.draw.forEach(f=>f());}
+function csAnSet(a,iq){csAnState.a=a;csAnState.iq=iq;csAnRender();
+  if(!csAnState.ro&&window.ResizeObserver){csAnState.ro=new ResizeObserver(()=>csAnState.draw.forEach(f=>f()));csAnState.ro.observe(csEl('an'));}}
 async function csEvent(id){
   if(csAu.id!==id&&csEl('au-el'))csAuStop();
   cs.sel=id;
@@ -1925,6 +2024,7 @@ async function csEvent(id){
     csFact('exports',e.exports&&e.exports.length?esc(e.exports.join(', ')):null),
   ].join('');
   csEl('priv').hidden=!e.private;
+  csAnSet(e.analysis,null);
   csEl('iqbox').hidden=true;csEl('x-out').textContent='';
   csArShow(e);
   const more=[];
@@ -1940,12 +2040,18 @@ async function csEvent(id){
   csEl('iqbox').hidden=false;csAuSetup(e,r);csEl('wf-t').textContent='IQ waterfall: reading the capture…';
   try{const v=await (await fetch('/captures/iq?id='+id)).json();
     if(cs.sel!==id)return;
-    if(v.error){csEl('wf-t').textContent=v.error;return;}
+    if(v.error){csEl('wf-t').textContent=v.error;csAnSet(e.analysis,{note:v.error});return;}
     csPaint(csEl('wf'),v);csEnv(csEl('env'),v);csAu.view=v;csAuDraw();
     csEl('wf-t').textContent=`IQ waterfall of ${v.file}: max-hold per row (${v.seconds.toFixed(1)} s top to bottom, ${v.rows} rows), dB over each bin's median`;
     csEl('wf-l').textContent=`${v.f_lo_khz.toFixed(0)} kHz`;csEl('wf-c').textContent=`${v.centre_mhz.toFixed(4)} MHz`;
     csEl('wf-r').textContent=`+${v.f_hi_khz.toFixed(0)} kHz`;csEl('env-r').textContent=v.seconds.toFixed(1)+' s';
-  }catch(err){csEl('wf-t').textContent='could not read the capture: '+err;}
+    let an=v.analysis;
+    for(let i=0;an&&an.pending&&i<120;i++){      // the pulses are found behind the page; a radar capture takes seconds
+      await new Promise(r=>setTimeout(r,1500));
+      if(cs.sel!==id)return;
+      an=(await (await fetch('/captures/iq?id='+id)).json()).analysis;}
+    if(cs.sel===id)csAnSet(e.analysis,an&&an.pending?{note:'Still finding the pulses; open this event again in a moment.'}:an);
+  }catch(err){csAnSet(e.analysis,{note:'could not read the capture'});csEl('wf-t').textContent='could not read the capture: '+err;}
 }
 // ---- archive: zip, verify, then take out of the pool (capture_archive.py)
 const csMB=b=>(b/1e6).toFixed(b<1e7?1:0)+' MB';

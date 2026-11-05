@@ -10,7 +10,8 @@ the pool is capture_archive.py: zipped, verified, then moved, on an explicit con
              and which capture holds its IQ (its own, or the one it fell inside).
 - `fingerprint_view`  the 20 ms x ~1 kHz spectrogram every event has, private included.
 - `iq_view`  waterfall and envelope of an open capture, streamed slice by slice so an
-             860 MB file is never in memory at once. Cached per file.
+             860 MB file is never in memory at once. Cached per file. Its answer also carries
+             the analysis panel's pulses, worked out behind it.
 - `export`   WAV for SDR++ (16-bit stereo I/Q, `baseband_<Hz>Hz_...` name: SDR++'s
              file source takes the centre frequency from the first `[0-9]+Hz` in the
              name) or complex float32 `.cf32` with a SigMF meta for Inspectrum / URH /
@@ -30,6 +31,7 @@ import sqlite3
 import struct
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -496,7 +498,7 @@ def event(station: Station, event_id: int) -> dict:
                 pass
         out = {"row": shown, "private": private,
                "badges": badges(row, cfg), "recipe": None, "meta": None, "report": None,
-               "capture": None, "exports": [], "archive": None, "report_new": None}
+               "capture": None, "exports": [], "archive": None, "report_new": None, "analysis": None}
         if shown.get("remeasured"):
             try:
                 out["report_new"] = Path(shown["remeasured"]).read_text(encoding="utf-8")
@@ -513,6 +515,7 @@ def event(station: Station, event_id: int) -> dict:
         if private:
             return out                 # fingerprint only: no IQ, no report, no exports
         c = covering_capture(con, row)
+        out["analysis"] = analysis_summary(shown, row, c, cfg)
         if c is None:
             if row.get("iq_status") == SET_ASIDE and row.get("characterised"):
                 try:                   # the report stays in the pool when the IQ goes
@@ -638,8 +641,9 @@ def iq_view(station: Station, event_id: int) -> dict:
     st_ = data.stat()
     key = (str(data), st_.st_size, st_.st_mtime)
     with _IQ_LOCK:
-        if key in _IQ_CACHE:
-            return _IQ_CACHE[key]
+        cached = _IQ_CACHE.get(key)
+    if cached is not None:
+        return {**cached, "analysis": _iq_analysis(key, c, data, cfg)}
     meta = _meta(data)
     g = meta["global"]
     fs = float(g["core:sample_rate"])
@@ -680,7 +684,186 @@ def iq_view(station: Station, event_id: int) -> dict:
         if len(_IQ_CACHE) > 8:
             _IQ_CACHE.pop(next(iter(_IQ_CACHE)))
         _IQ_CACHE[key] = out
+    return {**out, "analysis": _iq_analysis(key, c, data, cfg)}
+
+
+# ---------------------------------------------------------------- the analysis panel
+#
+# `analysis_summary` takes what the characteriser stored, for any event with a report, wherever
+# its IQ is now: the reports keep medians and levels, never one figure per pulse.
+# `analysis_from_iq` goes back to a capture still in the pool for what only the IQ holds, with the
+# characteriser's own pulse finder on the band its report measured. A private event gets neither
+# (event and iq_view stop before they ask). A capture touching `recorder.timing_only_bands` gets
+# timing, width and level: no frequency figure, and no label that describes how a pulse moves.
+
+MAX_DOTS = 4000             # pulses on the timeline; beyond this the strongest are kept
+PRI_BINS = 240
+CURVE_POINTS = 48
+CURVE_PULSES = 200          # the strongest, as the report's own chirp figures use
+PULSE_KEYS = ("count", "count_good", "width_s", "width_iqr_s", "width_at_db_s", "snr_db_max", "snr_db_median",
+              "duty_overall", "duty_in_burst", "bursts", "staggered", "pri", "rotation")
+CHIRP_KEYS = ("start_hz", "end_hz", "sweep_hz", "fit_start_hz", "fit_end_hz", "rate_mhz_per_us", "end_to_mid_slope",
+              "swept", "linear", "pulses_fitted")
+
+
+def stored_report(row: dict, cfg: dict) -> tuple:
+    """(the characteriser's result, which report it is, its re-measure entry). The newer report
+    wins; an old one may be beside the capture or inside the archive zip it went to."""
+    e = cap.remeasured_index(cfg).get(str(row.get("id")))
+    if e and e.get("report"):
+        try:
+            d = json.loads(Path(e["report"]).with_suffix(".json").read_text(encoding="utf-8"))
+            return d.get("result") or {}, "re-measured report", e
+        except (OSError, ValueError):
+            pass
+    md = row.get("characterised")
+    if not md:
+        return None, None, e
+    js = Path(md).with_suffix(".json")
+    try:
+        return json.loads(js.read_text(encoding="utf-8")), "characterise report", e
+    except (OSError, ValueError):
+        pass
+    if row.get("archive_path"):
+        try:
+            with zipfile.ZipFile(row["archive_path"]) as z:
+                name = next((n for n in z.namelist() if Path(n).name == js.name), None)
+                if name:
+                    return json.loads(z.read(name)), "characterise report, read from its zip", e
+        except (OSError, ValueError, zipfile.BadZipFile):
+            pass
+    return None, None, e
+
+
+def _touches_timing_only(row: dict, rep: dict | None, e: dict | None, cfg: dict) -> bool:
+    """Any sign the capture touches a timing-only band: its index entry, the band its report
+    measured, the row's radio settings, or the event's own width."""
+    rep = rep or {}
+    return bool((e or {}).get("timing_only")
+                or cap.timing_only(rep.get("tuned_hz"), rep.get("sample_rate_hz"), cfg)
+                or cap.timing_only(row.get("tuned_hz"), row.get("store_rate_hz"), cfg)
+                or cap.timing_only(row.get("target_hz") or row.get("freq_hz"), max(row.get("bandwidth_hz") or 0, 1.0), cfg))
+
+
+def analysis_summary(shown: dict, row: dict, c: dict | None, cfg: dict) -> dict:
+    """The panel's stored half. `shown` is the display row, with its grade and any re-measured
+    label on top; `c` the capture holding its IQ, if that is still in the pool."""
+    owner = c or row
+    rep, source, e = stored_report(owner, cfg)
+    only = _touches_timing_only(owner, rep, e, cfg) or _touches_timing_only(row, None, None, cfg)
+    status = row.get("iq_status") or "not recorded"
+    if c is not None:
+        iq = None
+    elif status == "archived":
+        iq = "its IQ is inside an archive zip, and this page reads none from there; restore it to the pool to see them"
+    elif status == "set aside":
+        iq = "its IQ is set aside outside the pool: `marsad watch tidy --put-back` returns it"
+    else:
+        iq = f"no IQ was kept for this event ({status})"
+    out = {"grade": shown.get("grade"), "grade_snr_db": shown.get("grade_snr_db"), "grade_source": shown.get("grade_source"),
+           "family": shown.get("family"), "family_old": shown.get("family_old"), "filter_shaped": bool(shown.get("filter_shaped")),
+           "source": source, "from_capture": owner["id"] if c is not None and c["id"] != row["id"] else None,
+           "timing_only": only, "iq_note": iq, "has_iq": c is not None, "pulses": None, "chirp": None, "duration_s": None}
+    if only:
+        out["family_old"] = None
+        fam = (shown.get("family") or "").split(",")[0]           # "pulsed", without how each pulse moves
+        out["family"] = fam if fam == "pulsed" or fam.startswith("not pulsed") or fam in cap.EMPTY_FAMILIES else None
+    if not rep:
+        return out
+    out["duration_s"] = rep.get("duration_s")
+    p = rep.get("pulses")
+    if p:
+        out["pulses"] = {k: p.get(k) for k in PULSE_KEYS}
+        if p.get("chirp") and not only:
+            out["chirp"] = {k: p["chirp"].get(k) for k in CHIRP_KEYS}
     return out
+
+
+def _curve(pulses: list, fs: float) -> dict | None:
+    """Frequency across the pulse: the median over the strongest pulses, over the 50 % amplitude
+    extent each pulse's own width gives, from the phase step between neighbouring samples."""
+    rows = []
+    for q in sorted(pulses, key=lambda q: -q["snr_db"])[:CURVE_PULSES]:
+        _, y, widths = q["_y"]
+        lead, trail = widths[6]
+        a, b = int(np.ceil(lead)) + 1, int(np.floor(trail)) - 1
+        if b - a < 2 * CURVE_POINTS // 3:
+            continue
+        seg = y[a:b + 1]
+        f = np.angle(seg[1:] * np.conj(seg[:-1])) * fs / (2 * np.pi)
+        cut = np.array_split(f, CURVE_POINTS)
+        rows.append([float(np.median(x)) if x.size else np.nan for x in cut])
+    if len(rows) < 3:
+        return None
+    a = np.array(rows)
+    return {"pulses": len(rows), "median_hz": [round(float(v)) for v in np.nanmedian(a, axis=0)],
+            "p25_hz": [round(float(v)) for v in np.nanpercentile(a, 25, axis=0)],
+            "p75_hz": [round(float(v)) for v in np.nanpercentile(a, 75, axis=0)]}
+
+
+def _intervals(t: np.ndarray) -> np.ndarray:
+    """Pulse to pulse within a beam's pass: the characteriser's rule for where a pass ends."""
+    d = np.diff(t)
+    if not d.size:
+        return d
+    return d[d <= max(20 * float(np.median(d)), 0.1)]
+
+
+def analysis_from_iq(c: dict, data: Path, cfg: dict) -> dict:
+    """The panel's IQ half, for one capture in the pool. Says why when there is nothing to draw."""
+    from . import characterise as ch
+    rep, _, e = stored_report(c, cfg)
+    if not rep or not (rep.get("pulses") and rep.get("occupied")):
+        return {"note": "the report found no pulse train in this capture"}
+    only = _touches_timing_only(c, rep, e, cfg)
+    src = ch.open_iq(data)
+    taps = ch.band_taps(src.fs, rep["occupied"]["low_hz"], rep["occupied"]["high_hz"])
+    env, B = ch.pass_envelope(src, 0, src.n, taps)
+    pulses, _ = ch.find_pulses(src, 0, env, B, taps)
+    if not pulses:
+        return {"note": "the pulse finder found nothing in this capture this time"}
+    t = np.array([q["t"] for q in pulses])
+    snr = np.array([q["snr_db"] for q in pulses])
+    keep = np.sort(np.argsort(-snr)[:MAX_DOTS])
+    d = _intervals(t)
+    out = {"count": len(pulses), "seconds": src.n / src.fs, "strongest_t": float(t[int(np.argmax(snr))]),
+           "t": [round(float(v), 5) for v in t[keep]], "snr_db": [round(float(v), 1) for v in snr[keep]], "pri": None, "curve": None}
+    d = d[d > 0]
+    if d.size:
+        lo, hi = float(d.min()) * 0.9, float(d.max()) * 1.1
+        edges = np.geomspace(lo, hi, PRI_BINS + 1)
+        counts, _ = np.histogram(d, edges)
+        out["pri"] = {"lo_s": lo, "hi_s": hi, "counts": [int(v) for v in counts], "intervals": int(d.size)}
+    if not only:
+        out["curve"] = _curve(pulses, src.fs)
+    return out
+
+_AN_CACHE: dict = {}
+_AN_BUSY: set = set()
+_AN_RUN = threading.Lock()         # one capture at a time: a radar capture takes seconds
+
+
+def _iq_analysis(key: tuple, c: dict, data: Path, cfg: dict) -> dict:
+    """The IQ half when it is ready, else {"pending": True} and it is worked out behind the page,
+    so finding a radar's pulses does not hold the waterfall up. The page asks again."""
+    def work():
+        with _AN_RUN:
+            try:
+                v = analysis_from_iq(c, data, cfg)
+            except (Exception, SystemExit) as exc:   # the waterfall is fine; only this figure is lost
+                v = {"note": f"could not read the pulses: {exc}"}
+        with _IQ_LOCK:
+            if len(_AN_CACHE) > 8:
+                _AN_CACHE.pop(next(iter(_AN_CACHE)))
+            _AN_CACHE[key] = v
+            _AN_BUSY.discard(key)
+    with _IQ_LOCK:
+        if key in _AN_CACHE:
+            return _AN_CACHE[key]
+        if key not in _AN_BUSY:
+            _AN_BUSY.add(key)
+            threading.Thread(target=work, daemon=True).start()
+    return {"pending": True}
 
 
 # ---------------------------------------------------------------- listening

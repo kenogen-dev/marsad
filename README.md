@@ -218,6 +218,8 @@ status. **Nothing is deleted**: the holding folder is yours to delete when you a
 archived captures, a capture a recorder is writing or that other events are filed inside, anything touching
 `recorder.timing_only_bands`, and surveys in `recorder.tidy_exclude_surveys` (a list of names or parts of names).
 
+Every open event on the Captures tab has an analysis panel above its facts: strength and label, pulses over the capture, the intervals with the PRIs marked, width by level, beam passes, and the frequency across the pulse. Figures the report does not hold are read from the capture in the background, and a figure that cannot be drawn says why. A private event has no panel. A capture touching `recorder.timing_only_bands` shows timing, width and level.
+
 ## Backing up
 
 Your surveys, captures and notes live on one drive until you copy them.
