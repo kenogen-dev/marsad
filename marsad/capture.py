@@ -51,6 +51,10 @@ BLOCK_S = 0.02            # spectrogram row: ~20 ms, the fingerprint's time reso
 FP_RES_HZ = 1000.0        # spectrogram bin: ~1 kHz
 MIN_GROUP_BINS = 4        # detector sub-bands are at least this many bins, so noise cannot fire it
 MAX_GROUPS = 32
+# The tuner's own bump at the tuned frequency (DC). Measured on an R860 fingerprint: the DC bin
+# ~9 dB over the floor, its neighbours ~4, two bins away nothing. Bins this close to DC never
+# judge a level (event, keep, grade, peak); they are still stored in the fingerprint.
+DC_GUARD_HZ = 2500.0
 CALIBRATE_BLOCKS = 25     # 0.5 s of floor before anything can trigger
 FLOOR_ROWS = 250          # quiet rows the floor is the median of (~5 s)
 FLOOR_CAP = 2.0           # no bin's floor above 2x (3 dB) the band's typical bin: a steady carrier cannot hide itself
@@ -813,6 +817,7 @@ class Session:
             c = int(np.argmin(np.abs(f - sig_off)))
             self.wb = np.arange(max(0, c - 2), min(self.nfft, c + 2))
         self.f_rel = f[self.wb] - sig_off          # Hz relative to the signal
+        self.judge = judge_mask(self.f_rel, -sig_off, self.rate / self.nfft)
         groups = max(1, min(MAX_GROUPS, len(self.wb) // MIN_GROUP_BINS))
         self.edges = np.linspace(0, len(self.wb), groups + 1).astype(int)
         self.win = np.hanning(self.nfft).astype(np.float32)
@@ -890,15 +895,11 @@ class Session:
             self.floor = np.maximum(fl, 1e-12)
 
     def _stat(self, Pw: np.ndarray) -> float:
-        cs = np.cumsum(np.concatenate([np.zeros((Pw.shape[0], 1)), Pw], axis=1), axis=1)
-        sub = cs[:, self.edges[1:]] - cs[:, self.edges[:-1]]
-        fc = np.concatenate([[0.0], np.cumsum(self.floor)])
-        fl = fc[self.edges[1:]] - fc[self.edges[:-1]]
-        return float(10 * np.log10(np.max(sub / fl)))
+        return group_level(Pw, self.floor, self.edges, self.judge)
 
     def _open_event(self, t_s: float):
         self.ev = {"start_s": t_s, "rows": [], "stats": [], "active": 0, "quiet_run": 0,
-                   "floor": self.floor.copy()}
+                   "floor": self.floor.copy(), "judge": self.judge}
 
     def _close_event(self):
         if self.pending is not None and self.pending["ev"] is self.ev:
@@ -1083,15 +1084,45 @@ class Session:
                 "events": len(self.events), "captures": self.captures, "below_keep": self.below_keep}
 
 
+# ---------------------------------------------------------------- judging a level
+
+def judge_mask(f_rel_hz: np.ndarray, dc_rel_hz: float, bin_hz: float) -> np.ndarray:
+    """True for the bins that may judge a level: all but those within DC_GUARD_HZ (at least
+    1.5 bins) of the tuned frequency. Frequencies are relative to the signal."""
+    guard = max(DC_GUARD_HZ, 1.5 * bin_hz)
+    keep = np.abs(np.asarray(f_rel_hz, float) - dc_rel_hz) > guard
+    return keep if keep.any() else np.ones(len(keep), bool)
+
+
+def group_level(P: np.ndarray, floor: np.ndarray, edges: np.ndarray, use: np.ndarray | None = None) -> float:
+    """The detector's level, dB: the strongest sub-band's power over its floor, from the
+    loudest frame. Bins left out by `use` count in neither power nor floor; a sub-band left
+    with none of its bins reads 0."""
+    P = np.atleast_2d(P)
+    if use is not None:
+        P = np.where(use, P, 0.0)
+        floor = np.where(use, floor, 0.0)
+    cs = np.cumsum(np.concatenate([np.zeros((P.shape[0], 1)), P], axis=1), axis=1)
+    sub = cs[:, edges[1:]] - cs[:, edges[:-1]]
+    fc = np.concatenate([[0.0], np.cumsum(floor)])
+    fl = fc[edges[1:]] - fc[edges[:-1]]
+    ratio = np.where(fl > 0, sub / np.where(fl > 0, fl, 1.0), 0.0)
+    return float(10 * np.log10(max(float(np.max(ratio)), 1e-12)))
+
+
 # ---------------------------------------------------------------- the fingerprint
 
 def fingerprint_stats(ev: dict, threshold_db: float) -> None:
-    """Bandwidth, SNR, duty, peak frequency and burst timing from the 20 ms spectrogram."""
+    """Bandwidth, SNR, duty, peak frequency and burst timing from the 20 ms spectrogram.
+    Bins near the tuned frequency (ev["judge"] False) cannot be the peak or widen the band."""
     rows, stats, floor = ev["rows"], ev["stats"], ev["floor"]
     f = ev["f_rel_hz"]
     act = stats >= threshold_db
     use = rows[act] if act.any() else rows
     sig = use.mean(axis=0) - floor
+    judge = ev.get("judge")
+    if judge is not None:
+        sig = np.where(judge, sig, 0.0)
     edges = characterise.obw99(f, np.maximum(sig, 0.0), floor)
     ev["bandwidth_hz"] = (edges[1] - edges[0]) if edges else None
     ev["centre_rel_hz"] = 0.5 * (edges[0] + edges[1]) if edges else 0.0
