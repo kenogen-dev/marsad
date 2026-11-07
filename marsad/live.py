@@ -135,11 +135,15 @@ class Tailer:
         if rp.get("freq_low_mhz") is not None:
             self.lo = float(rp["freq_low_mhz"])
             self.hi = float(rp.get("freq_high_mhz_effective") or rp.get("freq_high_mhz"))
+        # Relay 010: every rtl_power run now has a stop file; Stop needs its name, and needs to
+        # know the run is over (kept apart, so the page's meta is as it was).
+        self._run_over = bool(d.get("finished_local"))
         return {"duration_s": d.get("duration_requested_s"),
                 "preset": d.get("preset"),
                 "integration_s": rp.get("integration_s"),
                 "gain_db": rp.get("gain_db"),
                 "receiver": d.get("receiver"),
+                "stop_file": d.get("stop_file"),
                 "tag": (d.get("csv") or "").split("_")[3] if d.get("csv") else None}
 
     def _downsample(self, pairs) -> list:
@@ -399,6 +403,10 @@ class Tailer:
                 "parsed_rows": self.rows,
                 "nonfinite_pct": round(100.0 * self.nonfinite / self.readings, 2) if self.readings else 0.0,
                 "bytes": self.offset,
+                # Stop is offered while the run is alive: a stop file, not over, and the CSV grew
+                # within two intervals (rtl_power writes once per -i, so 30 s is too short).
+                "can_stop": bool(self.sidecar.get("stop_file")) and not getattr(self, "_run_over", False)
+                            and (time.time() - self.last_growth) < max(30.0, 2.0 * float(integ or 0) + 10.0),
             }
 
 
@@ -634,15 +642,65 @@ class DatTailer(Tailer):
         return d
 
 
+_FACTS: dict = {}
+
+
+def run_facts(station: Station, path: Path) -> dict:
+    """The run's own facts for the desktop window's header (relay 009): tag, when it began, the
+    fingerprint and the engine, from its sidecar. Cached per sidecar and age; reads, never writes."""
+    side = path.with_suffix(".json")
+    try:
+        key = (str(side), side.stat().st_mtime)
+    except OSError:
+        key = (str(side), None)
+    if key not in _FACTS:
+        from . import hunt
+        info = hunt.report_info(station, path.stem)
+        try:
+            d = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {}
+        _FACTS[key] = {"tag": info.get("tag"), "started_local": d.get("started_local") or info.get("started"),
+                       "finished_local": d.get("finished_local"), "preset": d.get("preset"),
+                       "receiver": d.get("receiver"),
+                       "engine": d.get("engine") or ("rtl_power_fftw" if path.suffix.lower() == ".dat" else "rtl_power"),
+                       "fingerprint": info.get("fingerprint")}
+    return dict(_FACTS[key])
+
+
+def progress_payload(station: Station, tailer, live_name: str | None) -> dict:
+    """What /live/progress answers (relay 009): where the run is - sweeps done and expected, the
+    sweep in progress, time left, refused hops, whether Stop is offered - and the run's facts, with
+    no sweep rows at all, so the desktop window can ask several times a second for almost nothing.
+    The same numbers /data carries, read from the same tailer; nothing is computed afresh."""
+    d = tailer.payload(10 ** 12)                 # past the end: no rows, no stamps, no medians
+    for k in ("rows", "stamps", "medians", "partial", "hop_centres_mhz", "from"):
+        d.pop(k, None)
+    d.setdefault("engine", "rtl_power")
+    meta = d.get("meta") or {}
+    facts = run_facts(station, tailer.path)
+    if meta.get("fingerprint") and not facts.get("fingerprint"):
+        facts["fingerprint"] = meta["fingerprint"]
+    d["facts"] = facts
+    d["integration_s"] = meta.get("integration_s")
+    d["last_finish_age_s"] = (round(time.time() - tailer.last_finish, 2) if tailer.last_finish else None)
+    # rtl_power's reader keeps no finished_local in its meta (only the fftw one does), so the
+    # sidecar's own, read for the facts, is what says an rtl_power run is over.
+    d["finished"] = bool(meta.get("finished_local") or meta.get("ended") or facts.get("finished_local"))
+    d["now"] = time.time()
+    d["live"] = live_name
+    return d
+
+
 def stop_recording(station: Station, tailer) -> dict:
-    """The Scan tab's Stop for an rtl_power_fftw run: touch the stop file its
-    sidecar names, which `marsad run` polls twice a second; it then sends
-    Ctrl-Break and the program finishes its pass, writes it and exits, and the
+    """Stop for a run of either engine: touch the stop file its sidecar names, which
+    `marsad run` polls twice a second; it then sends Ctrl-Break, the program finishes
+    (rtl_power_fftw its pass, rtl_power its interval), writes and exits, and the
     recorder analyses and archives as usual. Refused in plain words otherwise."""
     sf = (tailer.sidecar or {}).get("stop_file") if tailer is not None else None
     if not sf:
         raise ValueError("this run cannot be stopped from here: it was started without a "
-                         "stop file (an older marsad run, or not an rtl_power_fftw run)")
+                         "stop file (a run started by an older marsad)")
     path = Path(sf)
     if not path.is_absolute():
         path = station.root / path
@@ -992,6 +1050,1101 @@ def roadmap_text(station: Station) -> str:
 TAILERS: dict = {}
 TAIL_LOCK = threading.Lock()
 LAST_REQUEST = [time.time()]      # any HTTP hit defers the idle shutdown
+
+# ---------------------------------------------------------------- the desktop window's chain drawings
+# chain_layout.json sits beside chain.json and holds only drawings: where parts sit, the
+# wires, splitters. chain.json stays the old format, so the web page keeps reading it;
+# the desktop window writes each path of a drawn rig there as an ordinary chain. This
+# service stores the drawing as it is given (checked for shape and size only) and saves
+# chain.json through chain.save, exactly as the web page's Save does.
+CHAIN_LAYOUT_FILE = "chain_layout.json"
+CHAIN_LAYOUT_MAX = 2 * 1024 * 1024
+
+
+def chain_layout_summary(station: Station) -> dict:
+    p = station.root / CHAIN_LAYOUT_FILE
+    layout = {"schema": 1, "rigs": {}}
+    if p.exists():
+        try:
+            layout = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{p.name} is unreadable: {exc}")
+    rec = station.data.get("recorder") or {}
+    serials = rec.get("serials") or {}
+    roles = rec.get("roles") or {}
+    return {"chain": chain.summary(station), "layout": layout,
+            "serials": {str(k): str(v) for k, v in serials.items()},
+            "roles": {str(k): str(v) for k, v in roles.items()}}
+
+
+def chain_layout_save(station: Station, form: dict) -> dict:
+    """{"chains": a chain.json document, "layout": the drawings}. chain.json is
+    saved first, through the same check the web page's Save uses; if it is refused,
+    nothing is written."""
+    layout = form.get("layout")
+    if not isinstance(layout, dict) or not isinstance(layout.get("rigs"), dict):
+        raise ValueError("the layout must have a 'rigs' object")
+    raw = json.dumps(layout, indent=1)
+    if len(raw) > CHAIN_LAYOUT_MAX:
+        raise ValueError("the layout is too large")
+    chain.save(station, form.get("chains"))
+    p = station.root / CHAIN_LAYOUT_FILE
+    tmp = p.with_name(p.name + ".part")
+    tmp.write_text(raw + "\n", encoding="utf-8")
+    tmp.replace(p)
+    return chain_layout_summary(station)
+# ---------------------------------------------------------------- starting scans (relay 010)
+#
+# The window's "Start a scan" and "Start recorder" panels. Everything here composes, checks
+# and launches; nothing here records, analyses or changes how a run is recorded. What is
+# launched is the ordinary `marsad run` / `marsad watch` command line, with full --chain and
+# --conditions, composed exactly as the old Scan Builder printed it (ported from
+# web/builder.html's command(), conditionsText() and flags(), and tested against them), with
+# every figure taken from the engine's own geometry (scan_geometry, rpf.geometry) and
+# fingerprint, never a second copy of the arithmetic.
+
+SAVED_SCANS_FILE = "saved_scans.json"     # the owner's saved scans and recorder sessions
+LAUNCH_LOG_DIR = "logs"                   # what each launched run prints, one file per launch
+SCAN_DUR_DEFAULT = {"LS": (16, "h"), "deep": (2, "h"), "custom": (2, "h")}   # builder.html DUR_DEFAULT
+ENCLOSURES_DEFAULT = ["open bench", "in shielded box", "in shielded box, seam taped"]
+SCAN_DEFAULTS = {"analyze": True, "useskip": True, "skipmin": 16, "thresh": 10, "floorwin": None,
+                 "crop": CROP, "fir": FIR, "tag": "", "target": None,
+                 "temp": "", "humid": "", "where": "inside", "sky": "", "notes": ""}
+TRADEOFF_INTEG = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300]
+TRADEOFF_TIME = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60]
+WATCH_FLAGS = (("threshold", "--threshold"), ("passes", "--passes"), ("ambush", "--ambush"),
+               ("cooldown", "--cooldown"), ("capture", "--capture"), ("keep_min_snr", "--keep-min-snr"))
+
+
+def jsnum(v) -> str:
+    """A number as JavaScript's String(Number) writes it: 29 not 29.0, 0.25, 1e-7."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    v = float(v)
+    if v.is_integer() and abs(v) < 1e21:
+        return str(int(v))
+    r = repr(v)
+    if "e" in r:
+        m, e = r.split("e")
+        e = int(e)
+        return f"{m}e{'+' if e > 0 else '-'}{abs(e)}"
+    return r
+
+
+def _num(v, d: int = 0) -> str:
+    """toLocaleString with fixed decimals (en): grouping commas, d places."""
+    return f"{float(v):,.{d}f}"
+
+
+def _secs(s: float) -> str:
+    if s < 90:
+        return _num(s, 1) + " s"
+    if s < 5400:
+        return _num(s / 60, 1) + " min"
+    return _num(s / 3600, 2) + " h"
+
+
+def _f(v, default=None):
+    if v in (None, ""):
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_num(v):
+    """29.0 -> 29, so JSON numbers from the window compare as the page's did."""
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return v
+
+
+def scan_presets(station: Station) -> dict:
+    """The presets as the Builder holds them (builder_config), each with its default duration."""
+    cfg = builder_config(station)
+    out = {}
+    for name in cfg["preset_order"]:
+        p = dict(cfg["presets"][name])
+        if not p.get("dur"):
+            p["dur"] = list(SCAN_DUR_DEFAULT.get(name, (1, "h")))
+        out[name] = p
+    return out
+
+
+def scan_from_preset(station: Station, name: str, rx: str | None = None) -> dict:
+    """A full scan setting (the Builder's read() shape) from a preset, as applyPreset() fills
+    the page: range, bin, gain, integration, engine settings, receiver and duration."""
+    presets = scan_presets(station)
+    if name not in presets:
+        raise ValueError(f"no preset called {name!r}")
+    p = presets[name]
+    fftw = p.get("engine") == rpf.ENGINE
+    rx = p.get("rx") or rx or station.default_receiver or next(iter(station.receivers), "")
+    s = {**SCAN_DEFAULTS, "preset": name, "engine": rpf.ENGINE if fftw else "rtl_power",
+         "lo": p["lo"], "hiReq": p["hi"], "bin": p.get("bin"), "gain": p["gain"], "integ": p.get("integ"),
+         "fbins": p.get("bins", rpf.DEFAULT_BINS), "ftime": p.get("time", rpf.DEFAULT_TIME_S),
+         "frate": p.get("rate", rpf.DEFAULT_RATE_HZ), "fover": p.get("overlap") if fftw else None,
+         "crop": p.get("crop", CROP) if fftw else CROP, "fir": FIR, "rx": rx,
+         "durVal": p["dur"][0], "unit": p["dur"][1], "floorwin": p.get("fw") or None}
+    return s
+
+
+def scan_settings(station: Station, form: dict) -> dict:
+    """The Builder's read(): every setting of one scan, numbers as numbers. Missing keys
+    come from the named preset, so a saved scan only has to hold what it set."""
+    base = scan_from_preset(station, form["preset"]) if form.get("preset") in scan_presets(station) else \
+        {**SCAN_DEFAULTS, "preset": "custom", "engine": "rtl_power", "lo": 100.0, "hiReq": 200.0,
+         "bin": 50, "gain": 29, "integ": 120, "fbins": rpf.DEFAULT_BINS, "ftime": rpf.DEFAULT_TIME_S,
+         "frate": rpf.DEFAULT_RATE_HZ, "fover": None, "rx": station.default_receiver or "",
+         "durVal": 2, "unit": "h"}
+    s = {**base, **{k: v for k, v in form.items() if v is not None or k in ("fover", "target", "floorwin")}}
+    s["preset"] = s["preset"] if s.get("preset") in scan_presets(station) else "custom"
+    for k in ("lo", "hiReq", "bin", "gain", "crop", "ftime", "durVal", "skipmin", "thresh"):
+        s[k] = _clean_num(_f(s.get(k), _f(base.get(k), 0.0)))
+    s["integ"] = _clean_num(_f(s.get("integ"), 1) or 1)
+    s["fir"] = _clean_num(_f(s.get("fir"), FIR))
+    s["fbins"] = int(_f(s.get("fbins"), rpf.DEFAULT_BINS))
+    s["frate"] = int(round(_f(s.get("frate"), rpf.DEFAULT_RATE_HZ)))
+    s["fover"] = None if s.get("fover") in (None, "") else _clean_num(_f(s["fover"]))
+    s["target"] = None if s.get("target") in (None, "") else _clean_num(_f(s["target"]))
+    s["floorwin"] = None if s.get("floorwin") in (None, "", 0) else _clean_num(_f(s["floorwin"]))
+    s["unit"] = s.get("unit") if s.get("unit") in ("m", "h") else "h"
+    s["engine"] = rpf.ENGINE if s.get("engine") == rpf.ENGINE else "rtl_power"
+    for k in ("analyze", "useskip", "dryfirst", "nonint"):
+        s[k] = bool(s.get(k))
+    for k in ("tag", "temp", "humid", "where", "sky", "notes", "device"):
+        s[k] = "" if s.get(k) is None else str(s[k]).strip() if k != "device" else str(s[k])
+    s["where"] = s["where"] or "inside"
+    s["rx"] = s.get("rx") if s.get("rx") in station.receivers else (station.default_receiver or "")
+    s["durS"] = s["durVal"] * (3600 if s["unit"] == "h" else 60)
+    s["hi"] = s["hiReq"] if s["engine"] == rpf.ENGINE else min(s["hiReq"], RTL_POWER_MAX_MHZ)
+    s["clamped"] = s["engine"] != rpf.ENGINE and s["hiReq"] > RTL_POWER_MAX_MHZ
+    return s
+
+
+def conditions_text(s: dict) -> str:
+    """builder.html conditionsText(): what --conditions records."""
+    bits = []
+    if s.get("sky"):
+        bits.append(s["sky"])
+    if s.get("temp", "") != "":
+        bits.append(f"{s['temp']}C {s.get('where') or 'inside'}")
+    if s.get("humid", "") != "":
+        bits.append(f"{s['humid']}% RH")
+    if s.get("notes"):
+        bits.append(s["notes"])
+    return ", ".join(bits)
+
+
+def _fftw_centre(station: Station, s: dict):
+    p = scan_presets(station).get(s["preset"]) or {}
+    if p.get("engine") == rpf.ENGINE and p.get("centre") is not None and s["lo"] == p["lo"] and s["hiReq"] == p["hi"]:
+        return p["centre"]
+    return None
+
+
+def scan_geometry_for(station: Station, s: dict, integ=None, ftime=None) -> dict:
+    """The engine's own geometry for these settings (what `marsad run --dry-run` prints),
+    with the keys the page's flags() reads. `integ` / `ftime` override, for the trade-off table."""
+    if s["engine"] == rpf.ENGINE:
+        t = s["ftime"] if ftime is None else ftime
+        over = s["fover"] if s["fover"] is not None else 100.0 * s["crop"]
+        retune = float(station.data.get("retune_ms_per_hop_fftw", rpf.RETUNE_MS_DEFAULT))
+        read = float(station.data.get("read_ms_per_buffer_fftw", rpf.READ_MS_DEFAULT))
+        g = rpf.geometry(s["lo"], s["hiReq"], s["frate"], s["fbins"], t, over, s["crop"], s["durS"],
+                         retune, _fftw_centre(station, s), read)
+        g.update(engine=rpf.ENGINE, listen=g["listen_per_hop_s"], overhead=g["overhead_per_hop_s"],
+                 passS=g["sweep_s"], hopMhz=g["hop_spacing_mhz"], hopWidthMhz=g["hop_mhz"])
+    else:
+        from .rtlpower import scan_geometry
+        i = s["integ"] if integ is None else integ
+        g = scan_geometry(s["lo"], s["hi"], s["bin"], i, s["durS"], s["crop"],
+                          retune_ms_per_hop=station.retune_ms_per_hop)
+        g.update(engine=None, hopMhz=g["hop_mhz"])
+    g.update(retune=g["retune_s_per_sweep"], listening=g["listening_frac"], binKhz=g["bin_khz_predicted"],
+             kept=g["kept_bins_per_hop"], mb=g["csv_mb"], perFreq=g["listen_per_freq_s"],
+             occStep=g["occupancy_step_pct"], ceilPerFreq=s["durS"] / max(1, g["hops"]),
+             centres=g["hop_centres_mhz"])
+    return g
+
+
+def time_split(g: dict, integ) -> dict | None:
+    """builder.html timeSplit(): kept / cropped / retuning shares; None when a sweep cannot
+    finish inside -i."""
+    if not g["engine"] and integ <= g["retune"]:
+        return None
+    kept = g["kept"] / g["fft"] if g["fft"] else 1
+    return {"kept": g["listening"] * kept, "cropped": g["listening"] * (1 - kept), "retune": 1 - g["listening"]}
+
+
+def scan_fingerprint(station: Station, s: dict) -> str:
+    """The fingerprint `marsad run` would write, by marsad's own function."""
+    if s["engine"] == rpf.ENGINE:
+        q = {"engine": rpf.ENGINE, "rx": s["rx"], "lo": s["lo"], "hi": s["hiReq"], "gain": s["gain"],
+             "bins": s["fbins"], "rate": s["frate"], "time": s["ftime"],
+             "overlap": s["fover"] if s["fover"] is not None else 100 * s["crop"], "crop": s["crop"]}
+    else:
+        q = {"engine": "rtl_power", "rx": s["rx"], "lo": s["lo"], "hi": s["hiReq"], "gain": s["gain"],
+             "bin": s["bin"], "integ": s["integ"], "crop": s["crop"], "fir": s["fir"]}
+    return builder_fingerprint(station, q)
+
+
+def _is_load(chain_text: str) -> bool:
+    """The page asked whether the chain starts with its "50 ohm load" module; here the
+    engine's own reading of a chain's source (record.source_is_load) decides."""
+    from .record import source_is_load
+    return source_is_load(chain_text) is True
+
+
+def _enclosure(chain_text: str, enclosures: list) -> str | None:
+    """The enclosure the chain text names, as the Builder's SDR module carried it."""
+    for e in sorted(enclosures, key=len, reverse=True):
+        if f"({e})" in chain_text:
+            return e
+    return None
+
+
+def scan_command(station: Station, g: dict, s: dict, chain_text: str) -> dict:
+    """builder.html command(): the `marsad run` line, the --dry-run line first when asked,
+    and the notes after it. Also `argv`, the same line as arguments for launching it."""
+    presets = scan_presets(station)
+    p = presets.get(s["preset"]) or {}
+    dur = jsnum(s["durVal"]) + s["unit"]
+    q = lambda t: '"' + t.replace('"', "'") + '"'
+    cli_preset = p.get("as") or s["preset"]
+    parts = [("marsad run",), (cli_preset,), (dur,)]       # display tokens; argv follows the same order
+    argv = ["run", cli_preset, dur]
+
+    def opt(flag, value=None, raw=None):
+        parts.append((flag + (" " + (raw if raw is not None else str(value)) if value is not None else ""),))
+        argv.append(flag)
+        if value is not None:
+            argv.append(str(value))
+
+    def mhz(v):
+        return jsnum(v if float(v).is_integer() else round(float(v), 6)) + "M"
+    if g["engine"]:
+        pf = p.get("engine") == rpf.ENGINE
+        if not pf:
+            opt("--engine", rpf.ENGINE)
+        single = pf and p.get("centre") is not None and s["lo"] == p.get("lo") and s["hiReq"] == p.get("hi")
+        if not single and (not pf or s["lo"] != p.get("lo") or s["hiReq"] != p.get("hi") or cli_preset == "custom"):
+            opt("--freq", mhz(s["lo"]) + ":" + mhz(s["hiReq"]))
+        if not pf or s["fbins"] != p.get("bins"):
+            opt("--bins", jsnum(s["fbins"]))
+        if not pf or s["ftime"] != p.get("time"):
+            opt("--time", jsnum(s["ftime"]))
+        if not pf or s["frate"] != p.get("rate"):
+            opt("--rate", jsnum(s["frate"]))
+        over = s["fover"] if s["fover"] is not None else 100 * s["crop"]
+        if not pf or over != p.get("overlap"):
+            opt("--overlap", jsnum(over))
+        if s["gain"] != p.get("gain"):
+            opt("--gain", jsnum(s["gain"]))
+    else:
+        if s["lo"] != p.get("lo") or s["hiReq"] != p.get("hi") or s["bin"] != p.get("bin") or cli_preset == "custom":
+            opt("--freq", mhz(s["lo"]) + ":" + mhz(s["hiReq"]) + ":" + jsnum(s["bin"]) + "k")
+        if s["gain"] != p.get("gain"):
+            opt("--gain", jsnum(s["gain"]))
+        if s["integ"] != p.get("integ"):
+            opt("--integration", jsnum(s["integ"]))
+    if not p.get("rx") or s["rx"] != p.get("rx"):
+        opt("--receiver", s["rx"])
+    if s["device"] != "":
+        opt("--device", s["device"])
+    if s["tag"]:
+        opt("--tag", s["tag"])
+    if chain_text:
+        opt("--chain", chain_text.replace('"', "'"), raw=q(chain_text))
+    cond = conditions_text(s)
+    if cond:
+        opt("--conditions", cond.replace('"', "'"), raw=q(cond))
+    if s["thresh"] != 10:
+        opt("--threshold", jsnum(s["thresh"]))
+    if s["floorwin"]:
+        opt("--floor-window", jsnum(s["floorwin"]))
+    if s["useskip"] and s["skipmin"] > 0:
+        opt("--skip-warmup", jsnum(s["skipmin"]))
+    if s["crop"] != 0.25:
+        opt("--crop", jsnum(s["crop"]))
+    if not g["engine"] and s["fir"] != 9:
+        opt("--fir", jsnum(s["fir"]))
+    if not s["analyze"]:
+        opt("--no-analyze")
+    if s["nonint"]:
+        opt("--non-interactive")
+    line = " ".join(t[0] for t in parts)
+    tuner = station.tuner_of(s["rx"])
+    load = _is_load(chain_text)
+    after = []
+    if not load:
+        after.append("marsad adsb-check --seconds 600 --gain " + ("29" if tuner == "e4000" else "40.2")
+                     + " --device " + (s["device"] or "0") + " --label " + q(s["tag"] or "run")
+                     + ("   # cold E4000: warm, its PLL gap can reach 1090 MHz" if tuner == "e4000" else ""))
+    after.append("# archived and flagged " + ("--terminated" if load else "--antenna")
+                 + " automatically from the chain above")
+    after.append("# compare: marsad compare-runs <before-tag> <after-tag>")
+    after.append("# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events "
+                 + (s["tag"] or "<tag>"))
+    if chain_text and cond and not s["nonint"]:
+        after.append("# --chain and --conditions together skip the station-notes questions; "
+                     "the 'Start anyway?' device prompt still asks")
+    text = (line + " --dry-run\n" if s["dryfirst"] else "") + line + "\n" + "\n".join(after)
+    return {"line": line, "text": text, "argv": argv, "after": after}
+
+
+def _station_notes(station: Station, s: dict, g: dict, chain_text: str, out: list) -> None:
+    """builder.html stationNotes(): station.json's builder_notes, matched as the page did.
+    A note keyed on a Builder chain module (`module_on`) matches when that module's name is
+    in the chain text, since the chain is now drawn, not ticked."""
+    modules = {m.get("id"): m.get("name", "") for m in station.data.get("chain_modules", [])}
+    tuner = station.tuner_of(s["rx"])
+    for n in station.data.get("builder_notes", []):
+        w = n.get("when") or {}
+        if w.get("rx") and s["rx"] != w["rx"]:
+            continue
+        if w.get("rx_not") and s["rx"] == w["rx_not"]:
+            continue
+        if w.get("tuner") and tuner != w["tuner"]:
+            continue
+        if w.get("preset") and s["preset"] != w["preset"]:
+            continue
+        if "engine" in w and bool(g["engine"]) != w["engine"]:
+            continue
+        if w.get("span") and not (s["lo"] < w["span"][1] and s["hiReq"] > w["span"][0]):
+            continue
+        if "includes" in w and not (s["lo"] <= w["includes"] <= s["hiReq"]):
+            continue
+        if w.get("exact") and not (s["lo"] == w["exact"][0] and s["hiReq"] == w["exact"][1]):
+            continue
+        if "hi_above" in w and not s["hiReq"] > w["hi_above"]:
+            continue
+        if "hi_at_most" in w and not s["hiReq"] <= w["hi_at_most"]:
+            continue
+        if "gain_above" in w and not s["gain"] > w["gain_above"]:
+            continue
+        if "gain_not" in w and s["gain"] == w["gain_not"]:
+            continue
+        if w.get("not_load") and _is_load(chain_text):
+            continue
+        if "skip_below" in w and s["useskip"] and s["skipmin"] >= w["skip_below"]:
+            continue
+        if w.get("chain_has") and not re.search(w["chain_has"], chain_text, re.I):
+            continue
+        if w.get("chain_lacks") and re.search(w["chain_lacks"], chain_text, re.I):
+            continue
+        if w.get("module_on") and not (modules.get(w["module_on"]) and modules[w["module_on"]] in chain_text):
+            continue
+        out.append([n.get("level") or "warn", n.get("title") or "Note", n.get("text") or ""])
+
+
+def scan_warnings(station: Station, g: dict, s: dict, chain_text: str) -> list:
+    """builder.html flags(): [level, title, text], level bad / warn / ok, on the engine's
+    own geometry. Same cases, same words."""
+    out = []
+    rcv = station.receivers.get(s["rx"]) or {}
+    min_f, max_f = rcv.get("range_mhz", [24, 1766])
+    ceil = RTL_POWER_MAX_MHZ
+    if s["hiReq"] <= s["lo"]:
+        out.append(["bad", "Range", "Stop must be above start."])
+    if s["lo"] < min_f or s["hiReq"] > max_f:
+        out.append(["bad", "Tuner", f"The {s['rx'].upper()} covers {jsnum(min_f)}–{jsnum(max_f)} MHz. "
+                                    "This range goes outside it."])
+    if s["clamped"] and not g["engine"]:
+        out.append(["warn", "Ceiling", f"rtl_power stops at {jsnum(ceil)} MHz, a signed 32-bit limit. The top is "
+                                       f"silently clamped from {_num(s['hiReq'], 3)}. A range entirely above it "
+                                       "writes no file and still exits 0."])
+    if g["engine"] and s["hiReq"] > ceil:
+        out.append(["ok", "Ceiling", f"Above rtl_power's {jsnum(ceil)} MHz limit: fine for rtl_power_fftw (64-bit "
+                                     "frequencies). Hops it refuses are dropped and named in the .log, and the Scan "
+                                     "page hatches them."])
+    if g["engine"] and s["fbins"] % 2:
+        out.append(["bad", "Bins", "rtl_power_fftw wants an even number of FFT bins."])
+    over = s["fover"] if s["fover"] is not None else 100 * s["crop"]
+    if g["engine"] and g["hops"] > 1 and s["crop"] > 0 and over < 100 * s["crop"] - 1e-9:
+        out.append(["bad", "Overlap", f"With crop {jsnum(s['crop'])} the hops must overlap by at least "
+                                      f"{_num(100 * s['crop'], 0)}% or the cropped edges leave gaps between hops."])
+    if g["engine"] and g["listening"] < 0.5:
+        out.append(["warn", "Dwell", f"Only {_num(g['listening'] * 100, 0)}% of the time is spent listening: "
+                                     f"{_num(g['overhead'] * 1000, 0)} ms of overhead per hop against "
+                                     f"{_num(g['listen'], 2)} s of listening. More seconds per hop fixes it."])
+    for a, b in rcv.get("gaps_mhz", []):
+        if s["lo"] < b and s["hiReq"] > a:
+            out.append(["warn", "PLL gap", f"{jsnum(a)}–{jsnum(b)} MHz is this receiver's lock gap (rtl_test -t "
+                                           "measures yours). Hops there record nothing useful; the analyser masks it."])
+    _station_notes(station, s, g, chain_text, out)
+    if g["engine"]:
+        pass                                   # no retune floor: the program waits for each hop
+    elif s["integ"] < g["retune"] * 1.2:
+        out.append(["bad", "Dwell", f"-i {jsnum(s['integ'])} is under the {_num(g['retune'], 1)} s retune floor for "
+                                    f"{g['hops']} hops. rtl_power misbehaves when a sweep outlasts the interval."])
+    elif g["listening"] < 0.5:
+        out.append(["bad", "Dwell", f"Only {_num(g['listening'] * 100, 0)}% of the time is spent listening — most "
+                                    "of the run is retuning. Fewer hops or a longer -i both fix it."])
+    elif g["listening"] < 0.75:
+        out.append(["warn", "Dwell", f"{_num(g['listening'] * 100, 0)}% listening: {_num(g['retune'], 1)} s of every "
+                                     f"{jsnum(s['integ'])} s sweep is retuning. Doubling -i would reach "
+                                     f"{_num(100 * (1 - g['retune'] / (s['integ'] * 2)), 0)}%. Over 80% is the "
+                                     "station norm for long runs."])
+    if not g["engine"] and g["fft"] and g["fft"] <= 32:
+        out.append(["warn", "FFT", f"A {g['fft']}-point FFT gives only {g['kept']} bins per hop after crop. Narrow "
+                                   "spur lines get averaged into the floor. Halving the bin request would give FFT "
+                                   f"{g['fft'] * 2} at the same hop count and dwell — finer bins cost disk, not time."])
+    if g["sweeps"] < 10:
+        out.append(["warn", "Sweeps", f"{g['sweeps']} sweeps is thin for a 20th-percentile floor."])
+    if s["useskip"] and s["skipmin"] * 60 >= s["durS"]:
+        out.append(["bad", "Warm-up", "The warm-up discard is as long as the run."])
+    if not g["engine"] and (s["crop"] != 0.25 or s["fir"] != 9):
+        out.append(["warn", "Convention", "Crop and FIR differ from 0.25 / 9. Nothing already archived uses these, so "
+                                          "this run will have no comparison set."])
+    if g["engine"] and s["crop"] != rpf.DEFAULT_CROP:
+        out.append(["warn", "Convention", f"Crop differs from {jsnum(rpf.DEFAULT_CROP)}, the station convention for "
+                                          "this engine too."])
+    if s["target"] is not None:
+        best = None
+        for c in g["centres"]:
+            d = abs(c - s["target"])
+            if best is None or d < best[0]:
+                best = (d, c)
+        if best and best[0] * 1000 < g["binKhz"] * 3:
+            out.append(["bad", "Hop centre", f"A hop centre sits at {_num(best[1], 4)} MHz, {_num(best[0] * 1000, 1)} "
+                                             "kHz from your target. The DC spike there will mask it — shift the start by "
+                                             f"about half a hop ({_num(g['hopMhz'] / 2, 3)} MHz)."])
+        elif best:
+            out.append(["ok", "Hop centre", f"Nearest hop centre is {_num(best[1], 4)} MHz, {_num(best[0], 3)} MHz clear."])
+    span = s["hiReq"] - s["lo"]
+    if s["analyze"] and span < 8 and not s["floorwin"]:
+        out.append(["warn", "Floor window", f"The analyser's 2 MHz rolling floor is a large share of a {_num(span, 1)} "
+                                            "MHz span. Set Floor MHz to something well under it."])
+    encl = station.data.get("enclosures") or ENCLOSURES_DEFAULT
+    enc = _enclosure(chain_text, encl)
+    if enc and re.search(r"(cage|box)-?off|open-?bench", s["tag"], re.I) and enc != encl[0]:
+        out.append(["warn", "Enclosure", f'The tag says the enclosure is off but the chain records "{enc}".'])
+    if enc == encl[0] and re.search(r"(cage|box)-?on", s["tag"], re.I):
+        out.append(["warn", "Enclosure", "The tag says the enclosure is on but the chain records the SDR on the open bench."])
+    if not chain_text:
+        out.append(["bad", "Chain", "Nothing is connected, so no --chain is emitted and marsad run falls back to "
+                                    "whatever station.json last remembered. That is exactly how two runs were "
+                                    "mislabelled. Check at least the source, the SDR and the PC."])
+    dev_cfg = rcv.get("device", 0)
+    if s["device"] != "" and _f(s["device"]) != dev_cfg:
+        out.append(["warn", "Device", f"--device {s['device']}, but station.json says the {s['rx'].upper()} "
+                                      f"enumerates as index {dev_cfg}. Fine if USB order has since changed — but "
+                                      "confirm with rtl_test first, because a wrong index silently records one "
+                                      "dongle's data under the other's name."])
+    load = _is_load(chain_text)
+    if load:
+        out.append(["ok", "Terminated", "A terminated run measures what each stage ADDS to the floor — never what it "
+                                        "lets through. Pair it with marsad adsb-check for the sensitivity half, or the "
+                                        "characterisation is incomplete."])
+    if load and not re.search(r"term", s["tag"], re.I):
+        out.append(["warn", "Tag", "The source is a 50 ohm load but the tag does not say so. archive.py reads the tag "
+                                   "to flag terminated runs, and a mislabelled one pollutes every later comparison."])
+    if not load and re.search(r"term", s["tag"], re.I):
+        out.append(["warn", "Tag", "The tag says terminated but the antenna is connected."])
+    return out
+
+
+def scan_facts(station: Station, s: dict) -> list:
+    """builder.html drawFacts(): the receiver's range, then station.json's known_mhz entries that
+    fall in the span, [kind, label, text]."""
+    rcv = station.receivers.get(s["rx"]) or {}
+    lo_t, hi_t = rcv.get("range_mhz", [24, 1766])
+    out = [["", f"{jsnum(lo_t)}–{jsnum(hi_t)} MHz", rcv.get("label", s["rx"])]]
+    for f in station.data.get("known_mhz", []):
+        a, b = f.get("a"), f.get("b")
+        if a is None or b is None or b < s["lo"] or a > s["hiReq"]:
+            continue
+        text = _num(a, 2 if a % 1 else 0) if a == b else f"{_num(a, 0)}–{_num(b, 0)}"
+        out.append([f.get("k") or "", text, f.get("t", "")])
+    return out
+
+
+def scan_cells(g: dict, s: dict) -> list:
+    """builder.html cells(): what the program will really do, [label, value, unit, key]."""
+    finish = dt.datetime.now() + dt.timedelta(seconds=s["durS"])
+    per = g["passS"] if g["engine"] else s["integ"]
+    skipped = min(g["sweeps"] - 1, math.ceil(s["skipmin"] * 60 / per)) if s["useskip"] else 0
+    when = ["Finishes", finish.strftime("%H:%M"), "today" if finish.date() == dt.date.today() else "tomorrow", False]
+    occ = _num(100 / max(1, g["sweeps"] - skipped), 2) + "%"
+    if g["engine"]:
+        spectra = math.ceil(g["sample_rate_hz"] * g["listen"] / g["fft"]) if g["fft"] else 0
+        return [
+            ["Hops", _num(g["hops"]), f"× {_num(g['hopWidthMhz'], 4)} MHz, spaced {_num(g['hopMhz'], 4)}", False],
+            ["Sample rate", _num(g["sample_rate_hz"] / 1e6, 6), "MS/s", False],
+            ["FFT bins", _num(g["fft"]), f"{g['kept']} kept per hop after crop", False],
+            ["Bin width", _num(g["binKhz"], 4), "kHz", False],
+            ["Bins logged", _num(g["bins"]), "", False],
+            ["Spectra per hop", _num(spectra), f"{_num(g['listen'], 3)} s listening, {g['reads_per_hop']} "
+                                               + ("read" if g["reads_per_hop"] == 1 else "reads"), False],
+            ["One pass", _secs(g["passS"]), f"{_num(g['overhead'] * 1000, 0)} ms overhead per hop", False],
+            ["Passes", _num(g["sweeps"]), f"{_num(g['sweeps'] - skipped)} after warm-up" if skipped
+             else "ends after the pass in which the duration elapses", False],
+            ["Listening", _num(g["listening"] * 100, 1) + "%", "of each pass", False],
+            ["Listen per frequency", _secs(g["perFreq"]), "ceiling " + _secs(g["ceilPerFreq"]), True],
+            ["Occupancy step", occ, "one pass", False],
+            ["File size", _num(g["mb"], 1), "MB (.dat)", False],
+            when]
+    return [
+        ["Hops", _num(g["hops"]), f"× {_num(g['hopMhz'], 4)} MHz", False],
+        ["Sample rate", _num(g["sample_rate_hz"] / 1e6, 6), "MS/s", False],
+        ["FFT size", _num(g["fft"]), f"{g['kept']} kept per hop", False],
+        ["Actual bin", _num(g["binKhz"], 4), "kHz", False],
+        ["Bins logged", _num(g["bins"]), "", False],
+        ["Sweeps", _num(g["sweeps"]), f"{_num(g['sweeps'] - skipped)} after warm-up" if skipped else "", False],
+        ["Listening", _num(g["listening"] * 100, 1) + "%", "of each sweep", False],
+        ["Listen per frequency", _secs(g["perFreq"]), "ceiling " + _secs(g["ceilPerFreq"]), True],
+        ["Occupancy step", occ, "one sweep", False],
+        ["CSV size", _num(g["mb"], 1), "MB", False],
+        ["Retune per sweep", _num(g["retune"], 2), "s", False],
+        when]
+
+
+def scan_tradeoff(station: Station, s: dict) -> list:
+    """builder.html tradeoff(): one row per integration (or seconds per hop), engine geometry."""
+    rows = []
+    if s["engine"] == rpf.ENGINE:
+        opts = sorted(set(TRADEOFF_TIME) | {s["ftime"]})
+        for t in opts:
+            g = scan_geometry_for(station, s, ftime=t)
+            rows.append({"value": t, "label": f"-t {jsnum(t)}", "ok": g["listening"] >= 0.5, "now": t == s["ftime"],
+                         "listening": g["listening"], "split": time_split(g, t), "sweeps": g["sweeps"],
+                         "per_freq": _secs(g["perFreq"]), "occ_step": g["occStep"], "mb": g["mb"]})
+        return rows
+    for i in sorted(set(TRADEOFF_INTEG) | {s["integ"]}):
+        g = scan_geometry_for(station, s, integ=i)
+        rows.append({"value": i, "label": f"-i {jsnum(i)}", "ok": i >= g["retune"] * 1.2, "now": i == s["integ"],
+                     "listening": g["listening"], "split": time_split(g, i), "sweeps": g["sweeps"],
+                     "per_freq": _secs(g["perFreq"]), "occ_step": g["occStep"], "mb": g["mb"]})
+    return rows
+
+
+def scan_plan(station: Station, form: dict) -> dict:
+    """POST /scan/plan: everything the setup panel shows for one scan: the engine's geometry
+    and fingerprint, the Builder's warnings, the trade-off table and the full command.
+    `base` (optional) is the saved scan or preset it came from: if a locked setting differs,
+    the fingerprint changes and `new_set` says so."""
+    s = scan_settings(station, form.get("scan") or {})
+    chain_text = str(form.get("chain") if form.get("chain") is not None else "").strip()
+    g = scan_geometry_for(station, s)
+    fp = scan_fingerprint(station, s)
+    base_fp = None
+    if isinstance(form.get("base"), dict):
+        try:
+            base_fp = scan_fingerprint(station, scan_settings(station, form["base"]))
+        except (ValueError, KeyError, TypeError, ZeroDivisionError, SystemExit):
+            base_fp = None
+    cmd = scan_command(station, g, s, chain_text)
+    geo = {k: g[k] for k in ("hops", "hop_mhz", "sample_rate_hz", "fft", "bin_khz_predicted", "kept_bins_per_hop",
+                             "bins", "sweeps", "retune_s_per_sweep", "listening_frac", "listen_per_freq_s",
+                             "occupancy_step_pct", "csv_mb", "hop_centres_mhz")}
+    if g["engine"]:
+        geo["covered_mhz"] = g.get("covered_mhz")
+        geo["hop_spacing_mhz"] = g["hop_spacing_mhz"]
+    return {"settings": s, "engine": s["engine"], "geometry": geo, "fingerprint": fp, "base_fingerprint": base_fp,
+            "new_set": bool(base_fp and base_fp != fp),
+            "warnings": scan_warnings(station, g, s, chain_text), "cells": scan_cells(g, s),
+            "facts": scan_facts(station, s),
+            "split": time_split(g, s["integ"]), "tradeoff": scan_tradeoff(station, s),
+            "conditions": conditions_text(s), "command": cmd["text"], "line": cmd["line"],
+            # relay 001: rtl_power's real listening share is about 6 % whatever -i is; the
+            # engine still reports its dwell model, so the window marks the figure under review.
+            "listening_under_review": s["engine"] == "rtl_power"}
+
+
+# ---- checks before starting
+
+def detect_receivers(station: Station) -> dict:
+    """The dongles plugged in, by rtl_eeprom (probe.detect_receivers). A module-level name so
+    the tests replace it: no test ever opens a radio."""
+    return probe.detect_receivers(station)
+
+
+def radio_in_use(station: Station) -> dict:
+    """Rule 7: one program per radio. `marsad run` refuses to start while any radio program
+    is running (record.check_device_free), so the window does too, naming it, and naming
+    which radio it holds where a recording or a recorder says so."""
+    busy = host.running_sdr_programs()
+    held = []
+    if station.surveys.exists():
+        for f in list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat")):
+            if recording_active(f):
+                try:
+                    rx = json.loads(f.with_suffix(".json").read_text()).get("receiver")
+                except (OSError, ValueError):
+                    rx = None
+                held.append(f"{(rx or 'a radio').upper()} is recording {f.name}")
+    try:
+        from . import catalogue
+        for d in catalogue.live_recorders(station):
+            if d.get("running"):
+                held.append(f"{str(d.get('receiver') or d.get('serial') or 'a radio').upper()} is held by "
+                            f"marsad watch ({d.get('mode') or 'recorder'})")
+    except Exception:  # noqa: BLE001 - a broken status file must not hide the process check
+        pass
+    if busy is None:
+        return {"blocked": False, "programs": None, "held": held,
+                "text": "Could not check for running radio programs. Make sure SDR++ and other radio programs are closed."}
+    if busy:
+        return {"blocked": True, "programs": busy, "held": held,
+                "text": "In use: " + ", ".join(busy) + " is running" + (f" ({'; '.join(held)})" if held else "")
+                        + ". Only one program can use a radio at a time, and marsad run refuses to start while one "
+                          "is running. Close it, or wait for the run to finish."}
+    return {"blocked": False, "programs": [], "held": held, "text": "No other radio program is running."}
+
+
+def find_radio(station: Station, rx: str) -> dict:
+    """Rule 8: the radio by its serial (recorder.serials), today's USB index from that."""
+    from . import capture as cap, watch
+    cfg = cap.settings(station)
+    try:
+        r = watch.resolve_receiver(station, rx, cfg, detect=lambda st: detect_receivers(st))
+    except SystemExit as exc:
+        return {"found": False, "rx": rx, "serial": cap.serial_of(cfg, rx), "text": str(exc).strip().split("\n  Nothing")[0]}
+    return {"found": True, "rx": rx, "serial": r["serial"], "device": r["device"],
+            "text": f"{rx.upper()} found by serial {r['serial']} at USB index {r['device']}."}
+
+
+def chain_for(station: Station, rx: str) -> dict:
+    """Rule 6: the chain this radio's run records, and whether "still built as drawn?" is due:
+    the same tests record.confirm_default_chain makes before it would ask."""
+    d = station.defaults
+    try:
+        rig = chain.rig_text_for(station, rx)
+    except SystemExit as exc:
+        return {"ok": False, "text": "", "source": "none", "due": False, "used_at": None,
+                "problem": str(exc).strip()}
+    text = rig if rig is not None else (d.get("chain_order") or "")
+    used = d.get("chain_used_at")
+    if rig is not None:
+        static = chain.texts_are_static(station, (d.get("chain_by_serial") or {}).values())
+        source = f"the rig used for runs, path to the {rx.upper()}"
+    else:
+        static = chain.default_is_static(station, text) if text else False
+        source = "the saved default chain"
+    return {"ok": bool(text), "text": text, "source": source, "used_at": used, "static": bool(static),
+            "due": bool(text and used and not static),
+            "problem": None if text else "No chain is saved for this radio. Draw it on the Chain screen and use it for runs."}
+
+
+def scan_checks(station: Station, rx: str, detect: bool = True) -> dict:
+    """Everything checked before a start, in plain words. Detection asks the dongles their
+    serials (rtl_eeprom), so it is skipped while another radio program runs."""
+    use = radio_in_use(station)
+    if use["blocked"]:
+        radio = {"found": None, "rx": rx, "text": "Not checked while another radio program is running."}
+    elif not detect:
+        radio = {"found": None, "rx": rx, "text": "Not checked yet: Start asks it its serial, or Check again does now."}
+    else:
+        radio = find_radio(station, rx)
+    return {"in_use": use, "radio": radio, "chain": chain_for(station, rx)}
+
+
+# ---- launching outside every process tree (rule 1)
+
+def marsad_argv(station: Station, args: list) -> list:
+    """`marsad --station ROOT <args>` as an argument list for this install. A module-level
+    name so a test can launch a harmless stand-in through the very same path."""
+    return host.self_command("--station", str(station.root), *args, prefer_venv=station.venv_python)
+
+
+_LAUNCHER = ("import json,os,subprocess,sys;a=json.load(open(sys.argv[1],encoding='utf-8'));"
+             "e=dict(os.environ,PYTHONUNBUFFERED='1');f=open(a['log'],'ab');"
+             "sys.exit(subprocess.call(a['argv'],cwd=a['cwd'],env=e,stdin=subprocess.DEVNULL,stdout=f,"
+             "stderr=subprocess.STDOUT))")
+
+
+def launch_outside(station: Station, argv: list, label: str) -> dict:
+    """Start `argv` so that nothing this service or the window does can end it.
+
+    On Windows the run is created by WMI (Win32_Process.Create, the method a session used to
+    keep runs alive across desktop-app restarts): its parent is the WMI host, not this
+    service, and it is in none of this service's job objects, so killing or restarting the
+    service, or closing the window, leaves it running. It gets its own hidden console, which
+    is what lets Stop send Ctrl-Break to rtl_power. A small Python wrapper sends what the run
+    prints to logs/<stamp>_<label>.log. Elsewhere: a new session, detached."""
+    import subprocess
+    import sys as _sys
+    from .config import source_root
+    logs = station.root / LAUNCH_LOG_DIR
+    logs.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", label)[:60] or "run"
+    log = logs / f"{stamp}_{safe}.log"
+    spec = logs / f"{stamp}_{safe}.launch.json"
+    cwd = str(source_root() or station.root)
+    spec.write_text(json.dumps({"argv": [str(a) for a in argv], "cwd": cwd, "log": str(log)}, indent=1),
+                    encoding="utf-8")
+    py = argv[0] if str(argv[0]).lower().endswith(("python.exe", "pythonw.exe", "python", "python3")) else _sys.executable
+    wrapper = [str(py), "-c", _LAUNCHER, str(spec)]
+    if not host.IS_WINDOWS:
+        p = subprocess.Popen(wrapper, cwd=cwd, start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"pid": p.pid, "log": str(log), "spec": str(spec)}
+    ps = (r"$ErrorActionPreference='Stop';"
+          r"$si=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[UInt16]0};"
+          r"$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+          r"@{CommandLine=$env:MARSAD_LAUNCH_CMD;CurrentDirectory=$env:MARSAD_LAUNCH_CWD;ProcessStartupInformation=$si};"
+          r"Write-Output ('{0} {1}' -f $r.ReturnValue,$r.ProcessId)")
+    import os as _os
+    import shutil as _sh
+    exe = _sh.which("powershell.exe") or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    env = dict(_os.environ, MARSAD_LAUNCH_CMD=subprocess.list2cmdline(wrapper), MARSAD_LAUNCH_CWD=cwd)
+    r = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, text=True,
+                       env=env, timeout=60, stdin=subprocess.DEVNULL,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    m = re.search(r"(\d+)\s+(\d+)", r.stdout or "")
+    if r.returncode != 0 or not m or m.group(1) != "0":
+        raise RuntimeError("Windows would not start the run outside the service "
+                           f"(WMI said: {(r.stdout or '').strip() or (r.stderr or '').strip()[:300]}). Nothing was started.")
+    return {"pid": int(m.group(2)), "log": str(log), "spec": str(spec)}
+
+
+def _dry_run(station: Station, args: list) -> dict:
+    """The engine's own dry run of exactly this command: parses for real, prints the geometry
+    and the filename, opens no radio."""
+    import subprocess
+    from .config import source_root
+    argv = marsad_argv(station, [*args, "--dry-run"])
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=120, cwd=source_root() or None,
+                           stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"the dry run could not be started: {exc}")
+    return {"exit_code": r.returncode, "output": ((r.stdout or "") + (r.stderr or "")).rstrip()}
+
+
+def _remember_conditions(station: Station, s: dict) -> None:
+    doc = saved_doc(station)
+    doc["conditions_last"] = {k: s.get(k, "") for k in ("temp", "humid", "where", "sky", "notes")}
+    _saved_write(station, doc)
+
+
+def scan_start(station: Station, form: dict) -> dict:
+    """POST /scan/start. `dry_run`: the engine's dry run of the complete command. Otherwise:
+    every check again on the server (a radio in use refuses; the radio must be found by
+    serial; a chain due for "still built as drawn?" needs `chain_confirmed`; a "bad" warning
+    needs `problems_confirmed`), then the run is launched outside every process tree."""
+    s = scan_settings(station, form.get("scan") or {})
+    s["nonint"], s["dryfirst"] = True, False          # nobody answers prompts in a launched run
+    dry = bool(form.get("dry_run"))
+    chk = scan_checks(station, s["rx"], detect=not dry or bool(form.get("detect")))
+    if form.get("chain") not in (None, ""):
+        chain_text = str(form["chain"]).strip()
+    else:
+        chain_text = chk["chain"]["text"]
+    if chk["radio"].get("found"):
+        s["device"] = str(chk["radio"]["device"])
+    g = scan_geometry_for(station, s)
+    warnings = scan_warnings(station, g, s, chain_text)
+    cmd = scan_command(station, g, s, chain_text)
+    if dry:
+        out = _dry_run(station, cmd["argv"])
+        return {"dry_run": True, "line": cmd["line"], "argv": cmd["argv"], **out, "checks": chk}
+    if chk["in_use"]["blocked"]:
+        raise ValueError(chk["in_use"]["text"] + " Nothing was started.")
+    if not chk["radio"].get("found"):
+        raise ValueError(chk["radio"]["text"] + " Nothing was started.")
+    if not chain_text:
+        raise ValueError((chk["chain"].get("problem") or "No chain to record.") + " Nothing was started.")
+    if chk["chain"]["due"] and form.get("chain") in (None, "") and not form.get("chain_confirmed"):
+        raise ValueError("Is the rig still built as drawn? Confirm the chain first. Nothing was started.")
+    bad = [w for w in warnings if w[0] == "bad"]
+    if bad and not form.get("problems_confirmed"):
+        raise ValueError("Problems to confirm first: " + "; ".join(w[1] for w in bad) + ". Nothing was started.")
+    _remember_conditions(station, s)
+    got = launch_outside(station, marsad_argv(station, cmd["argv"]), f"run_{s['preset']}_{s['tag'] or 'scan'}")
+    return {"started": True, "line": cmd["line"], "argv": cmd["argv"], **got, "checks": chk}
+
+
+# ---- saved scans and recorder sessions (rule 4: archived, never deleted)
+
+def saved_doc(station: Station) -> dict:
+    p = station.root / SAVED_SCANS_FILE
+    doc = {"schema": 1, "scans": {}, "watches": {}, "conditions_last": {}}
+    if p.exists():
+        try:
+            got = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(got, dict):
+                for k in ("scans", "watches", "conditions_last"):
+                    if isinstance(got.get(k), dict):
+                        doc[k] = got[k]
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{SAVED_SCANS_FILE} is unreadable: {exc}")
+    return doc
+
+
+def _saved_write(station: Station, doc: dict) -> None:
+    p = station.root / SAVED_SCANS_FILE
+    tmp = p.with_name(p.name + ".part")
+    tmp.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
+_LAST_RAN: dict = {}
+
+
+def last_runs(station: Station) -> dict:
+    """{fingerprint: (started, survey name)} for the newest recording of each fingerprint,
+    from the sidecars in surveys/ (cached per sidecar and age). "Last ran" for a saved scan
+    is the newest recording in its comparison set."""
+    out: dict = {}
+    if not station.surveys.exists():
+        return out
+    for side in station.surveys.glob("*.json"):
+        try:
+            key = (str(side), side.stat().st_mtime)
+        except OSError:
+            continue
+        if key not in _LAST_RAN:
+            fp = None
+            try:
+                d = json.loads(side.read_text(encoding="utf-8"))
+                eng = d.get("engine") or "rtl_power"
+                sec = d.get(eng) or {}
+                if eng == rpf.ENGINE:
+                    actual = (sec.get("rate_hz") or 0) / max(1, sec.get("bins") or 1) / 1e3
+                else:
+                    actual = csv_bin_khz(sec["freq_low_mhz"], sec["freq_high_mhz"], sec["bin_khz"], sec["crop"])
+                fp = fingerprint(d, actual)
+                _LAST_RAN[key] = (fp, d.get("started_local"), side.stem)
+            except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError):
+                _LAST_RAN[key] = (None, None, side.stem)
+        fp, started, stem = _LAST_RAN[key]
+        if fp and started and (fp not in out or started > out[fp][0]):
+            out[fp] = (started, stem)
+    return out
+
+
+def _scan_entry(station: Station, name: str, settings: dict, kind: str, runs: dict, extra: dict) -> dict:
+    s = scan_settings(station, settings)
+    try:
+        fp = scan_fingerprint(station, s)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError):
+        fp = None
+    last = runs.get(fp) if fp else None
+    return {"name": name, "kind": kind, "settings": {k: v for k, v in s.items() if k not in ("durS", "hi", "clamped")},
+            "range": f"{jsnum(s['lo'])}–{jsnum(s['hiReq'])} MHz", "engine": s["engine"], "rx": s["rx"],
+            "duration": jsnum(s["durVal"]) + s["unit"], "fingerprint": fp,
+            "last_ran": last[0] if last else None, "last_survey": last[1] if last else None, **extra}
+
+
+def saved_list(station: Station) -> dict:
+    """GET /scan/saved: the owner's saved scans (archived ones apart), the station presets as
+    starting points, the recorder sessions, and the last conditions answers."""
+    doc = saved_doc(station)
+    runs = last_runs(station)
+    scans = [_scan_entry(station, n, v.get("settings") or {}, "saved", runs,
+                         {"archived": bool(v.get("archived")), "updated": v.get("updated")})
+             for n, v in doc["scans"].items()]
+    presets = [_scan_entry(station, n, {"preset": n}, "preset", runs, {"note": p.get("note", ""), "archived": False})
+               for n, p in scan_presets(station).items()]
+    watches = [{"name": n, "settings": v.get("settings") or {}, "archived": bool(v.get("archived")),
+                "updated": v.get("updated")} for n, v in doc["watches"].items()]
+    cond = {"temp": "", "humid": "", "where": "inside", "sky": "", "notes": "", **doc["conditions_last"]}
+    return {"scans": sorted(scans, key=lambda e: e["name"].lower()), "presets": presets,
+            "watches": sorted(watches, key=lambda e: e["name"].lower()), "conditions_last": cond,
+            "receivers": scan_receivers(station)}
+
+
+def scan_receivers(station: Station) -> dict:
+    from . import capture as cap
+    cfg = cap.settings(station)
+    out = {}
+    for name, r in station.receivers.items():
+        tuner = (r.get("tuner") or "e4000").lower()
+        out[name] = {"label": r.get("label", name), "tuner": tuner, "range": r.get("range_mhz", [24, 1766]),
+                     "gaps": r.get("gaps_mhz", []), "gains": TUNER_GAINS.get(tuner, TUNER_GAINS["e4000"]),
+                     "serial": cap.serial_of(cfg, name)}
+    return out
+
+
+def saved_change(station: Station, form: dict) -> dict:
+    """POST /scan/saved: save (create or update), rename, duplicate, archive or restore one
+    saved scan (`kind` "scan") or recorder session (`kind` "watch"). Nothing is ever deleted:
+    archiving hides an entry from the list and restore brings it back."""
+    kind = "watches" if form.get("kind") == "watch" else "scans"
+    action = str(form.get("action") or "save")
+    name = str(form.get("name") or "").strip()
+    if not name or len(name) > 80:
+        raise ValueError("a saved scan needs a name of 1 to 80 characters")
+    doc = saved_doc(station)
+    items = doc[kind]
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    if action == "save":
+        settings = form.get("settings")
+        if not isinstance(settings, dict):
+            raise ValueError("nothing to save")
+        if kind == "scans":
+            s = scan_settings(station, settings)
+            settings = {k: v for k, v in s.items() if k not in ("durS", "hi", "clamped", "device", "dryfirst", "nonint")}
+        prev = items.get(name) or {}
+        items[name] = {**prev, "settings": settings, "updated": now, "archived": False,
+                       "created": prev.get("created") or now}
+    elif action in ("rename", "duplicate"):
+        new = str(form.get("new_name") or "").strip()
+        if name not in items:
+            raise ValueError(f"no saved entry called {name!r}")
+        if not new or len(new) > 80:
+            raise ValueError("the new name needs 1 to 80 characters")
+        if new in items:
+            raise ValueError(f"there is already one called {new!r}")
+        items[new] = {**json.loads(json.dumps(items[name])), "updated": now}
+        if action == "duplicate":
+            items[new]["created"] = now
+        else:
+            del items[name]
+    elif action in ("archive", "restore"):
+        if name not in items:
+            raise ValueError(f"no saved entry called {name!r}")
+        items[name]["archived"] = action == "archive"
+        items[name]["updated"] = now
+    else:
+        raise ValueError(f"unknown action {action!r}")
+    _saved_write(station, doc)
+    return saved_list(station)
+
+
+# ---- recorder sessions (marsad watch), Part 4
+
+def watch_settings(station: Station, form: dict) -> dict:
+    from . import capture as cap, watch
+    cfg = cap.settings(station)
+    w = {"mode": "fixed" if form.get("mode") == "fixed" else "survey"}
+    for k, _ in WATCH_FLAGS:
+        v = form.get(k)
+        w[k] = None if v in (None, "") else _clean_num(_f(v))
+    if w["mode"] == "survey":
+        sur, rec = watch.survey_roles(station, cfg, form.get("surveyor") or None, form.get("recorder") or None)
+        scan = dict(form.get("scan") or {})
+        scan["rx"] = sur
+        w.update(scan=scan_settings(station, scan), surveyor=sur, recorder=rec,
+                 recorder_gain=None if form.get("recorder_gain") in (None, "") else _clean_num(_f(form["recorder_gain"])))
+    else:
+        for k in ("passes", "ambush"):
+            w[k] = None                       # survey-only triggers
+        rx = form.get("receiver") if form.get("receiver") in station.receivers else station.default_receiver
+        w.update(receiver=rx, freq=str(form.get("freq") or "").strip(), width=str(form.get("width") or "").strip(),
+                 gain=None if form.get("gain") in (None, "") else _clean_num(_f(form["gain"])),
+                 durVal=_clean_num(_f(form.get("durVal"), 1)), unit=form.get("unit") if form.get("unit") in ("m", "h") else "h")
+    return w
+
+
+def watch_command(station: Station, w: dict, chains: dict) -> dict:
+    """`marsad watch survey|fixed ...` with each radio's own chain. The survey half is the
+    same `marsad run` options the Builder writes (watch passes them to its survey child),
+    less --device (watch finds both radios by serial) and --non-interactive (watch adds it),
+    and less --threshold, which `marsad watch` takes as its own trigger level."""
+    q = lambda t: '"' + t.replace('"', "'") + '"'
+    toks = []
+
+    def opt(flag, value=None, quote=False):
+        toks.append((flag, None if value is None else str(value), quote))
+    if w["mode"] == "survey":
+        s = dict(w["scan"], device="", nonint=False, dryfirst=False, thresh=10)
+        g = scan_geometry_for(station, s)
+        run = scan_command(station, g, s, chains.get(w["surveyor"], ""))
+        head = ["watch", "survey", run["argv"][1], run["argv"][2]]
+        rest = run["argv"][3:]
+        if w["surveyor"] != (station.data.get("recorder", {}).get("roles", {}).get("surveyor")):
+            opt("--surveyor", w["surveyor"])
+        if w["recorder"] != (station.data.get("recorder", {}).get("roles", {}).get("recorder")):
+            opt("--recorder", w["recorder"])
+        if w.get("recorder_gain") is not None:
+            opt("--recorder-gain", jsnum(w["recorder_gain"]))
+        if chains.get(w["recorder"]):
+            opt("--recorder-chain", chains[w["recorder"]].replace('"', "'"), quote=True)
+    else:
+        head = ["watch", "fixed", "--freq", w["freq"], "--receiver", w["receiver"],
+                "--duration", jsnum(w["durVal"]) + w["unit"]]
+        rest = []
+        if w.get("width"):
+            opt("--width", w["width"])
+        if w.get("gain") is not None:
+            opt("--gain", jsnum(w["gain"]))
+        if chains.get(w["receiver"]):
+            opt("--chain", chains[w["receiver"]].replace('"', "'"), quote=True)
+    for k, flag in WATCH_FLAGS:
+        if w.get(k) is not None:
+            opt(flag, jsnum(w[k]))
+    argv = list(head) + list(rest)
+    for flag, value, _ in toks:
+        argv += [flag] + ([value] if value is not None else [])
+    shown, i = [], 0
+    while i < len(argv):                         # display: quote the values that carry spaces, as the Builder does
+        a = argv[i]
+        if a.startswith("--") and i + 1 < len(argv) and not argv[i + 1].startswith("--") and \
+                a in ("--chain", "--conditions", "--recorder-chain"):
+            shown.append(f"{a} {q(argv[i + 1])}")
+            i += 2
+            continue
+        shown.append(a)
+        i += 1
+    return {"argv": argv, "line": "marsad " + " ".join(shown)}
+
+
+def watch_plan(station: Station, form: dict, detect: bool = False) -> dict:
+    """POST /watch/plan: the command, the survey's plan (survey mode), and the checks for
+    every radio involved, each chain from its own path."""
+    w = watch_settings(station, form.get("watch") or {})
+    radios = [w["surveyor"], w["recorder"]] if w["mode"] == "survey" else [w["receiver"]]
+    chains = {r: (form.get("chains") or {}).get(r) or chain_for(station, r)["text"] for r in radios}
+    use = radio_in_use(station)
+    checks = {"in_use": use, "radios": {}}
+    for r in radios:
+        checks["radios"][r] = {"chain": chain_for(station, r),
+                               "radio": ({"found": None, "rx": r, "text": "Not checked yet."} if not detect or use["blocked"]
+                                         else find_radio(station, r))}
+    cmd = watch_command(station, w, chains)
+    out = {"settings": w, "line": cmd["line"], "argv": cmd["argv"], "checks": checks, "chains": chains}
+    if w["mode"] == "survey":
+        sp = scan_plan(station, {"scan": w["scan"], "chain": chains[w["surveyor"]]})
+        out["survey"] = {k: sp[k] for k in ("fingerprint", "warnings", "cells", "geometry")}
+    return out
+
+
+def watch_start(station: Station, form: dict) -> dict:
+    """POST /watch/start: dry run (the engine's own `--dry-run`, which opens no radio), or the
+    checks again for both radios and a launch outside every process tree."""
+    dry = bool(form.get("dry_run"))
+    plan = watch_plan(station, form, detect=not dry)
+    if dry:
+        return {"dry_run": True, "line": plan["line"], "argv": plan["argv"], **_dry_run(station, plan["argv"]),
+                "checks": plan["checks"]}
+    ch = plan["checks"]
+    if ch["in_use"]["blocked"]:
+        raise ValueError(ch["in_use"]["text"] + " Nothing was started.")
+    for r, c in ch["radios"].items():
+        if not c["radio"].get("found"):
+            raise ValueError(c["radio"]["text"] + " Nothing was started.")
+        if not plan["chains"].get(r):
+            raise ValueError(f"No chain for the {r.upper()}. Nothing was started.")
+        if c["chain"]["due"] and not (form.get("chains") or {}).get(r) and not form.get("chain_confirmed"):
+            raise ValueError(f"Is the rig still built as drawn ({r.upper()})? Confirm the chains first. Nothing was started.")
+    w = plan["settings"]
+    if w["mode"] == "survey":
+        _remember_conditions(station, w["scan"])
+        if any(x[0] == "bad" for x in plan["survey"]["warnings"]) and not form.get("problems_confirmed"):
+            raise ValueError("The survey has problems to confirm first. Nothing was started.")
+    got = launch_outside(station, marsad_argv(station, plan["argv"]), f"watch_{w['mode']}")
+    return {"started": True, "line": plan["line"], "argv": plan["argv"], **got, "checks": ch}
+
+
+SCAN_POST_ROUTES = {
+    "/scan/plan": scan_plan,
+    "/scan/check": lambda st, f: scan_checks(st, str(f.get("rx") or st.default_receiver or ""),
+                                             detect=bool(f.get("detect", True))),
+    "/scan/start": scan_start,
+    "/scan/saved": saved_change,
+    "/watch/plan": lambda st, f: watch_plan(st, f, detect=bool(f.get("detect"))),
+    "/watch/start": watch_start,
+}
+
+
 FOLLOWERS: dict = {}              # recording name -> the Hunt panel's line follower
 
 
@@ -1126,8 +2279,12 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                     chain.save(station, form)
                     out = chain.summary(station)
                 elif u.path == "/chain/use":
-                    chain.use(station, str(form.get("name") or ""))
+                    rig = form.get("rig")      # the desktop window's split rigs only
+                    chain.use(station, str(form.get("name") or ""),
+                              rig=[str(n) for n in rig] if isinstance(rig, list) else None)
                     out = chain.summary(station)
+                elif u.path == "/chain/layout/save":
+                    out = chain_layout_save(station, form)
                 elif u.path == "/captures/export":
                     # Refused on the server for anything private (catalogue.export says why).
                     from . import catalogue
@@ -1182,6 +2339,13 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                         out = backup.start_verify(form)
                     else:
                         out = backup.listing(form.get("file"))
+                elif u.path in SCAN_POST_ROUTES:
+                    # Relay 010: the window's Start panels. The engine's own refusals
+                    # (SystemExit with a sentence) come back as that sentence.
+                    try:
+                        out = SCAN_POST_ROUTES[u.path](station, form)
+                    except SystemExit as exc:
+                        raise ValueError(str(exc).strip() or "refused")
                 elif u.path == "/scan/stop":
                     name = str(form.get("file") or "")
                     t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)
@@ -1220,6 +2384,16 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 fw = float(pr.get("floor_window") or cfg["floor_window_mhz"])
                 pk = t.peaks(cfg["peak_threshold_db"], fw, cfg["spur_families"], cfg["readout_families"])
                 body = json.dumps({**t.payload(since), "peaks": pk, "live": live_name}).encode()
+            elif u.path == "/live/progress":
+                # The desktop window's light question (relay 009): no rows, asked often.
+                name = (q.get("file") or [None])[0]
+                cur = live["tail"]
+                live_name = live["path"].name if live["path"] else None
+                t = cur if (not name or name == live_name) else TAILERS.get(name)
+                if t is None:
+                    body = json.dumps({"file": None, "live": live_name, "total": 0, "now": time.time()}).encode()
+                else:
+                    body = json.dumps(progress_payload(station, t, live_name)).encode()
             elif u.path == "/other":
                 # The second-radio panel: whatever is being recorded besides `main`.
                 main_name = (q.get("main") or [""])[0] or (live["path"].name if live["path"] else None)
@@ -1242,6 +2416,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 body = json.dumps(dict(backup.JOB)).encode()
             elif u.path == "/config":
                 body = json.dumps(cfg).encode()
+            elif u.path == "/scan/saved":
+                try:
+                    body = json.dumps(saved_list(station)).encode()
+                except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/builder/fingerprint":
                 try:
                     body = json.dumps({"fingerprint": builder_fingerprint(
@@ -1265,6 +2444,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 except ValueError as exc:
                     body = json.dumps({"error": str(exc), "chains": {}, "current": None,
                                        "parts": chain.part_types(station)}).encode()
+            elif u.path == "/chain/layout":
+                try:
+                    body = json.dumps(chain_layout_summary(station)).encode()
+                except ValueError as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/probe/receivers":
                 # Opens each dongle briefly, so never while a recording holds one.
                 if runner.running() or host.running_sdr_programs():

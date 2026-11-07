@@ -1261,7 +1261,10 @@ def main_fixed(station, cfg, args, detect, launch, exe) -> int:
     if not in_range(station, role, freq):
         raise SystemExit(f"  {freq / 1e6:.4f} MHz is outside what the {role} can tune.")
     band = cap.band_tier(freq, cfg)
-    chain = args.chain or station.defaults.get("chain_order", "")
+    from . import chain as chain_mod
+    # A typed --chain wins; else a split rig used for runs gives this radio's own path
+    # (and refuses, before any radio opens, if it has none); else the saved default.
+    chain = args.chain or chain_mod.rig_text_for(station, role) or station.defaults.get("chain_order", "")
     width = parse_freq_hz(args.width) if args.width else None
     tuner = station.tuner_of(role)
     gain = args.gain if args.gain is not None else (cfg.get("gain_db") or {}).get(role, 29.7)
@@ -1305,17 +1308,26 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
     _, dur = parse_duration(args.duration)
     args.surveyor, args.recorder = survey_roles(station, cfg, args.surveyor, args.recorder)
     gain = args.recorder_gain if args.recorder_gain is not None else (cfg.get("gain_db") or {}).get(args.recorder, 29.7)
-    rchain = args.recorder_chain or "(recorder chain not given)"
+    from . import chain as chain_mod, record
+    rchain = args.recorder_chain or chain_mod.rig_text_for(station, args.recorder) or "(recorder chain not given)"
+    rest = list(rest)
+    if station.defaults.get("chain_by_serial") and "--chain" not in rest             and not any(a.startswith("--chain=") for a in rest):
+        # The survey child would record the saved default, which in a split rig is not
+        # necessarily the surveyor's path. Pick it here, with the child's own staleness
+        # check, and hand it over as --chain.
+        ns = argparse.Namespace(chain=None, chain_as_saved="--chain-as-saved" in rest or args.dry_run,
+                                non_interactive=True)
+        rest += ["--chain", record.confirm_default_chain(station, ns, args.surveyor)]
     if "--device" in rest or any(a.startswith("--device=") for a in rest):
         raise SystemExit("  --device is chosen by serial here; leave it out.")
     if args.dry_run:
-        from . import record
         record.build_parser(station).parse_args([args.preset, args.duration, *rest])   # what the child would refuse
         print(f"  would detect {args.surveyor} (SN {cap.serial_of(cfg, args.surveyor) or 'by tuner'}) and "
               f"{args.recorder} (SN {cap.serial_of(cfg, args.recorder) or 'by tuner'}) with rtl_eeprom,")
         print(f"  run: marsad run {args.preset} {args.duration} --device <{args.surveyor} index> "
               f"--non-interactive --stop-file <...> {' '.join(rest)}")
         print(f"  and record on the {args.recorder} at gain {gain:g}")
+        print(f"  recorder chain: {rchain}")
         print(f"  settings: {settings_line(cfg, survey=True)}")
         freq = rest[rest.index("--freq") + 1] if "--freq" in rest[:-1] else pre.get("freq")
         last = last_watch_rate(station, args.preset, freq)

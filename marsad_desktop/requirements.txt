@@ -1,0 +1,6 @@
+# The desktop window's own environment (.venv-desktop), kept apart from the station's .venv.
+# The window imports marsad.chain (stdlib only) from the folder above. Live Scan (relay 009) draws with
+# pyqtgraph through OpenGL and keeps its waterfall in numpy, the versions relay 001 measured.
+PySide6-Essentials==6.12.0
+numpy==2.5.4
+pyqtgraph==0.14.0

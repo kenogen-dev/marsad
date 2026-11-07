@@ -553,7 +553,7 @@ def record(args, station: Station, preset: dict) -> int:
         print(f"    window      {window}")
     print(f"    receiver    {receiver}")
     chain_src = ("--chain" if args.chain else "saved default")
-    print(f"    chain       ({chain_src}) {args.chain or station.defaults.get('chain_order') or '(none)'}")
+    print(f"    chain       {rec.chain_line(station, args, receiver, chain_src)}")
     print(f"    writing     surveys/{raw_path.name}  (+ .log with the program's own messages)")
     free_gb = shutil.disk_usage(station.surveys).free / 1e9
     print(f"    disk free   {free_gb:.1f} GB")
@@ -570,7 +570,7 @@ def record(args, station: Station, preset: dict) -> int:
         return 0
 
     try:
-        chain_text = rec.confirm_default_chain(station, args)
+        chain_text = rec.confirm_default_chain(station, args, receiver)
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled. Nothing was recorded.")
     rec.check_device_free(args.non_interactive)

@@ -320,7 +320,7 @@ def build_parser(station: Station, prog: str = "marsad run") -> argparse.Argumen
     return p
 
 
-def confirm_default_chain(station: Station, args) -> str | None:
+def confirm_default_chain(station: Station, args, receiver: str | None = None) -> str | None:
     """Guard against recording a stale default chain. Returns the chain text to use.
 
     A run without --chain copies station.json's default, which is how a run ends up
@@ -332,13 +332,18 @@ def confirm_default_chain(station: Station, args) -> str | None:
     """
     if args.chain:
         return args.chain
+    from . import chain as chain_mod
     d = station.defaults
-    text = d.get("chain_order") or ""
+    # A split rig used for runs: this radio's own path (refuses if it has none).
+    rig_text = chain_mod.rig_text_for(station, receiver)
+    text = rig_text if rig_text is not None else (d.get("chain_order") or "")
     used = d.get("chain_used_at")
     if not text or not used or args.chain_as_saved:
         return text
-    from . import chain as chain_mod
-    if chain_mod.default_is_static(station, text):
+    if rig_text is not None:
+        if chain_mod.texts_are_static(station, d["chain_by_serial"].values()):
+            return text
+    elif chain_mod.default_is_static(station, text):
         return text
     print(f"\n  The chain about to be recorded is the saved default, already used by a run "
           f"at {str(used).replace('T', ' ')}:\n    {text}")
@@ -350,6 +355,21 @@ def confirm_default_chain(station: Station, args) -> str | None:
         "  Is the rig still built like this? Re-run with --chain-as-saved to say yes, pass\n"
         "  --chain \"...\" for the rig as it is now, or tick 'static' on the Chain tab.\n"
         "  Nothing was recorded.")
+
+
+def chain_line(station: Station, args, receiver: str | None, chain_src: str) -> str:
+    """The pre-run summary's chain line: '(source) text'. With a split rig used for
+    runs it names the radio's path, or says plainly that the radio has none."""
+    if not args.chain and station.defaults.get("chain_by_serial"):
+        from . import chain as chain_mod
+        key = chain_mod.radio_key(station, receiver)
+        try:
+            text = chain_mod.rig_text_for(station, receiver)
+        except SystemExit:
+            return (f"NONE: the rig used for runs has no path ending at the {receiver} radio "
+                    f"({key}); a real run would refuse to start")
+        return f"(rig used for runs, path to the {receiver} radio, {key}) {text}"
+    return f"({chain_src}) {args.chain or station.defaults.get('chain_order') or '(none)'}"
 
 
 def show_presets(station: Station) -> None:
@@ -658,6 +678,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
     if csv_path.exists():
         raise SystemExit(f"{csv_path.name} already exists. Use --tag to distinguish this run.")
 
+    # Every rtl_power run can be stopped from the window or the Scan page, as every
+    # rtl_power_fftw run already can (rpf.record): the recorder polls this file and asks
+    # rtl_power to finish, then the run carries on exactly as after Ctrl-C (partial CSV
+    # kept, analysed, archived). --stop-file (the Probe tab, the recorder) wins.
+    stop_file = args.stop_file or (station.reports / f"{stem}.stop")
     cmd = [str(rtl_power or "rtl_power"), "-f", freq, "-g", f"{gain:g}", "-i", str(integration),
            "-c", str(args.crop), "-F", str(args.fir), "-e", dur_text]
     if args.device:
@@ -691,7 +716,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
     chain_src = ("--chain" if args.chain else
                  "saved default" + (f", used by a run at {str(station.defaults.get('chain_used_at')).replace('T', ' ')}"
                                      if station.defaults.get("chain_used_at") else ""))
-    print(f"    chain       ({chain_src}) {args.chain or station.defaults.get('chain_order') or '(none)'}")
+    print(f"    chain       {chain_line(station, args, receiver, chain_src)}")
     print(f"    writing     surveys/{csv_path.name}")
     free_gb = shutil.disk_usage(station.surveys).free / 1e9
     print(f"    disk free   {free_gb:.1f} GB")
@@ -710,7 +735,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         return 0
 
     try:
-        chain_text = confirm_default_chain(station, args)
+        chain_text = confirm_default_chain(station, args, receiver)
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled. Nothing was recorded.")
     if rtl_power is None:
@@ -745,6 +770,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         "duration_requested_s": dur_s,
         "command_line": subprocess.list2cmdline(cmd),
         "command": cmd,
+        "stop_file": str(stop_file),
         "rtl_power": {
             "freq_spec": freq,
             "freq_low_mhz": lo,
@@ -785,12 +811,15 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
     print()
     t0 = time.time()
     interrupted = False
+    stop_file.parent.mkdir(parents=True, exist_ok=True)
+    stop_file.unlink(missing_ok=True)       # a stale flag must not stop this run at once
     try:
-        rc = run_with_progress(cmd, dur_s, csv_path, stop_file=args.stop_file)
+        rc = run_with_progress(cmd, dur_s, csv_path, stop_file=stop_file)
     except KeyboardInterrupt:
         interrupted, rc = True, 130
         print("\n  Interrupted. Keeping the partial CSV.")
     elapsed = time.time() - t0
+    stop_file.unlink(missing_ok=True)
 
     sidecar.update({
         "finished_local": dt.datetime.now().isoformat(timespec="seconds"),

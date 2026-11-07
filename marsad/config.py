@@ -39,7 +39,8 @@ DEFAULT_FILE = Path(__file__).resolve().parent / "station.default.json"
 LEGACY_DEFAULT_KEYS = ("antenna_shape", "whip_length_mm", "lna", "filter", "chain_order")
 # chain_used_at: when a run last recorded the default chain_order. A later run
 # without --chain must confirm the rig is still built like that (record.py).
-DEFAULT_KEYS = LEGACY_DEFAULT_KEYS + ("chain_used_at",)
+# chain_by_serial: with a split rig used for runs, {radio serial: its path text}.
+DEFAULT_KEYS = LEGACY_DEFAULT_KEYS + ("chain_used_at", "chain_by_serial")
 
 
 def _strip_notes(d):

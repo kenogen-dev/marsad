@@ -216,19 +216,79 @@ def save(station: Station, data) -> dict:
     return new
 
 
-def use(station: Station, name: str) -> dict:
+def radio_key(station: Station, receiver: str | None) -> str | None:
+    """The key a radio's path is filed under in a split rig: its serial from
+    recorder.serials (radios are found by serial, not position), else its name."""
+    if not receiver:
+        return None
+    serial = ((station.data.get("recorder") or {}).get("serials") or {}).get(receiver)
+    return str(serial) if serial else f"receiver {receiver}"
+
+
+def use(station: Station, name: str, rig: list | None = None) -> dict:
     """Make `name` the current chain and write its text into station.json as the
-    default chain_order, so a plain `marsad run` records it too."""
+    default chain_order, so a plain `marsad run` records it too.
+
+    `rig` (the window's split rigs): every chain of one rig, one per radio. Then
+    each run records the path ending at the radio it uses: station.json also gets
+    chain_by_serial, {radio key: that path's text}. Without `rig` (one path, or the
+    web page) chain_by_serial is cleared and everything is as it always was."""
     data = load(station)
     if name not in data["chains"]:
         raise ValueError(f"no chain called {name!r}")
+    by_serial = None
+    names = [str(n) for n in (rig or []) if n]
+    if len(set(names)) > 1:
+        by_serial = {}
+        for n in names:
+            if n not in data["chains"]:
+                raise ValueError(f"no chain called {n!r}")
+            rx = receiver_of(data["chains"][n]["parts"])
+            key = radio_key(station, rx)
+            if key is None:
+                raise ValueError(f"the path {n!r} names no radio, so no run could pick it")
+            if key in by_serial:
+                raise ValueError(f"two paths of this rig end at the same radio ({rx})")
+            by_serial[key] = chain_text(data["chains"][n]["parts"])
     data["current"] = name
     _write(path_of(station), data)
     # Choosing a chain is a fresh statement that the rig is built like this, so
     # the command line's "used, unconfirmed" stamp is cleared with it.
-    station.save_defaults({"chain_order": chain_text(data["chains"][name]["parts"]),
-                           "chain_used_at": None})
+    defaults = {"chain_order": chain_text(data["chains"][name]["parts"]), "chain_used_at": None}
+    if by_serial or "chain_by_serial" in station.defaults:
+        defaults["chain_by_serial"] = by_serial
+    station.save_defaults(defaults)
     return data
+
+
+def rig_text_for(station: Station, receiver: str | None) -> str | None:
+    """With a split rig current, the text of the path ending at this receiver's radio.
+
+    None when no split rig is current (the run then does what it always did).
+    SystemExit, in plain words, when one is current and none of its paths ends at
+    this radio: a run must never quietly record another radio's rig."""
+    by = station.defaults.get("chain_by_serial")
+    if not by:
+        return None
+    key = radio_key(station, receiver)
+    if key in by:
+        return by[key]
+    raise SystemExit(
+        f"\n  The rig used for runs has no path ending at the {receiver or 'chosen'} radio "
+        f"({key or 'no receiver named'}).\n  Its paths end at: {', '.join(by)}.\n"
+        "  Draw that radio's path and press Use for runs, or pass --chain \"...\" for the rig "
+        "as it is.\n  Nothing was recorded.")
+
+
+def texts_are_static(station: Station, texts) -> bool:
+    """True when every text belongs to a chain marked static (a split rig's paths)."""
+    try:
+        data = load(station)
+    except ValueError:
+        return False
+    want = list(texts)
+    return bool(want) and all(any(c.get("static") and chain_text(c["parts"]) == t
+                                  for c in data["chains"].values()) for t in want)
 
 
 def default_is_static(station: Station, text: str) -> bool:
@@ -283,5 +343,6 @@ def summary(station: Station) -> dict:
         c["needs_confirm"] = needs_confirm(c)
     data["parts"] = part_types(station)
     data["receivers"] = list(station.receivers)
+    data["runs_record"] = station.defaults.get("chain_by_serial") or None
     data["file"] = str(path_of(station))
     return data

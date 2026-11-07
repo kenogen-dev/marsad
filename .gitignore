@@ -2,6 +2,9 @@
 station.json
 station.local.json
 chain.json
+chain_layout.json
+saved_scans.json
+logs/
 ROOM_RF.md
 TOOL_ROADMAP.md
 surveys/
@@ -11,6 +14,7 @@ occupancy.db
 
 # Python environment and caches
 .venv/
+.venv-desktop/
 __pycache__/
 *.pyc
 .pytest_cache/

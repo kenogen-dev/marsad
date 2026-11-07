@@ -1,0 +1,305 @@
+{
+ "ceiling_mhz": 2147.483648,
+ "rtl_max_sample_hz": 2800000.0,
+ "retune_ms": 47.0,
+ "crop": 0.25,
+ "fir": 9,
+ "fftw": {
+  "retune_ms": 59.0,
+  "read_ms": 16.0,
+  "base_buf": 16384,
+  "buf_bytes": 1638400,
+  "default_rate": 2400000,
+  "default_bins": 128,
+  "default_time": 1.0,
+  "default_crop": 0.25,
+  "scale_offset_db": -26.2
+ },
+ "receivers": {
+  "radio-a": {
+   "label": "made-up radio A",
+   "tuner": "e4000",
+   "range": [
+    52,
+    2200
+   ],
+   "gaps": [
+    [
+     1100,
+     1250
+    ]
+   ],
+   "device": 0,
+   "gains": [
+    -1.0,
+    1.5,
+    4.0,
+    6.5,
+    9.0,
+    11.5,
+    14.0,
+    16.5,
+    19.0,
+    21.5,
+    24.0,
+    29.0,
+    34.0,
+    42.0
+   ]
+  },
+  "radio-b": {
+   "label": "made-up radio B",
+   "tuner": "r820t",
+   "range": [
+    24,
+    1766
+   ],
+   "gaps": [],
+   "device": 1,
+   "gains": [
+    0.0,
+    0.9,
+    1.4,
+    2.7,
+    3.7,
+    7.7,
+    8.7,
+    12.5,
+    14.4,
+    15.7,
+    16.6,
+    19.7,
+    20.7,
+    22.9,
+    25.4,
+    28.0,
+    29.7,
+    32.8,
+    33.8,
+    36.4,
+    37.2,
+    38.6,
+    40.2,
+    42.1,
+    43.4,
+    43.9,
+    44.5,
+    48.0,
+    49.6
+   ]
+  }
+ },
+ "presets": {
+  "band1": {
+   "lo": 300.0,
+   "hi": 420.0,
+   "bin": 25.0,
+   "gain": 29,
+   "integ": 30,
+   "rx": "radio-a",
+   "fw": 0,
+   "note": "made-up band one"
+  },
+  "wideish": {
+   "lo": 1300.0,
+   "hi": 2200.0,
+   "bin": 50.0,
+   "gain": 29,
+   "integ": 30,
+   "rx": "radio-a",
+   "fw": 0,
+   "note": "made-up wide band"
+  },
+  "narrow": {
+   "lo": 432.0,
+   "hi": 436.0,
+   "bin": 5.0,
+   "gain": 29,
+   "integ": 2,
+   "rx": "radio-a",
+   "fw": 0.3,
+   "note": "made-up narrow band"
+  },
+  "custom": {
+   "lo": 500.0,
+   "hi": 600.0,
+   "bin": 50.0,
+   "gain": 29.7,
+   "integ": 120,
+   "rx": "radio-b",
+   "fw": 0,
+   "note": "made-up custom"
+  },
+  "upper": {
+   "engine": "rtl_power_fftw",
+   "lo": 2150.0,
+   "hi": 2190.0,
+   "centre": null,
+   "bins": 128,
+   "rate": 2400000,
+   "time": 1.0,
+   "overlap": 25.0,
+   "crop": 0.25,
+   "bin": 18.75,
+   "integ": 1.0,
+   "gain": 29,
+   "rx": "radio-a",
+   "fw": 0,
+   "note": "made-up fftw range"
+  },
+  "line": {
+   "engine": "rtl_power_fftw",
+   "lo": 999.3,
+   "hi": 1001.7,
+   "centre": 1000.5,
+   "bins": 2048,
+   "rate": 2400000,
+   "time": 60.0,
+   "overlap": 0.0,
+   "crop": 0.25,
+   "bin": 1.171875,
+   "integ": 60.0,
+   "gain": 40.2,
+   "rx": "radio-b",
+   "fw": 0,
+   "note": "made-up single hop"
+  }
+ },
+ "preset_order": [
+  "band1",
+  "wideish",
+  "narrow",
+  "custom",
+  "upper",
+  "line"
+ ],
+ "known": [
+  {
+   "a": 315.0,
+   "b": 330.0,
+   "t": "a made-up band"
+  },
+  {
+   "a": 360.5,
+   "b": 360.5,
+   "t": "a made-up line",
+   "k": "spur"
+  },
+  {
+   "a": 2147.484,
+   "b": 2147.484,
+   "t": "rtl_power's 2^31 Hz ceiling",
+   "k": "bad"
+  }
+ ],
+ "chain_modules": [
+  {
+   "id": "src",
+   "name": "Antenna",
+   "on": true,
+   "fixed": true
+  },
+  {
+   "id": "notch",
+   "name": "FM notch",
+   "on": false
+  },
+  {
+   "id": "lna",
+   "name": "LNA",
+   "on": false
+  },
+  {
+   "id": "coax",
+   "name": "Coax",
+   "on": true
+  },
+  {
+   "id": "sdr",
+   "name": "",
+   "on": true,
+   "fixed": true
+  },
+  {
+   "id": "usb",
+   "name": "USB cable",
+   "on": true
+  },
+  {
+   "id": "pc",
+   "name": "PC",
+   "on": true,
+   "fixed": true
+  }
+ ],
+ "chain_off": {},
+ "enc_default": {},
+ "enclosures": [
+  "open bench",
+  "in shielded box",
+  "in shielded box, seam taped"
+ ],
+ "notes": [
+  {
+   "when": {
+    "rx": "radio-b",
+    "span": [
+     300,
+     400
+    ]
+   },
+   "level": "warn",
+   "title": "Made-up note",
+   "text": "radio B is deaf in this made-up span"
+  },
+  {
+   "when": {
+    "gain_above": 40,
+    "tuner": "e4000"
+   },
+   "level": "ok",
+   "title": "Gain note",
+   "text": "made-up gain remark"
+  },
+  {
+   "when": {
+    "chain_has": "attenuator"
+   },
+   "level": "warn",
+   "title": "Pad note",
+   "text": "a made-up pad remark"
+  }
+ ],
+ "readout_families": [
+  14.4,
+  28.8,
+  24,
+  25,
+  100
+ ],
+ "spur_families": [
+  [
+   28.8,
+   "28.8 MHz SDR clock harmonic"
+  ],
+  [
+   480.0,
+   "USB 2.0 (480 Mb/s) harmonic"
+  ],
+  [
+   24.0,
+   "24 MHz crystal harmonic"
+  ],
+  [
+   25.0,
+   "25 MHz clock harmonic"
+  ],
+  [
+   100.0,
+   "100 MHz PCIe clock harmonic"
+  ]
+ ],
+ "peak_threshold_db": 10.0,
+ "floor_window_mhz": 2.0,
+ "cmd_prefix": "marsad run"
+}

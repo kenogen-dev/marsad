@@ -1,0 +1,153 @@
+{
+ "_comment": "A made-up station for checking the window's scan setup against the old Scan Builder (relay 010). Nothing here is real.",
+ "default_receiver": "radio-a",
+ "receivers": {
+  "radio-a": {
+   "label": "made-up radio A",
+   "tuner": "e4000",
+   "range_mhz": [
+    52,
+    2200
+   ],
+   "gaps_mhz": [
+    [
+     1100,
+     1250
+    ]
+   ],
+   "device": 0
+  },
+  "radio-b": {
+   "label": "made-up radio B",
+   "tuner": "r820t",
+   "range_mhz": [
+    24,
+    1766
+   ],
+   "gaps_mhz": [],
+   "device": 1
+  }
+ },
+ "presets": {
+  "band1": {
+   "freq": "300M:420M:25k",
+   "gain": 29,
+   "integration": 30,
+   "receiver": "radio-a",
+   "note": "made-up band one"
+  },
+  "wideish": {
+   "freq": "1300M:2200M:50k",
+   "gain": 29,
+   "integration": 30,
+   "receiver": "radio-a",
+   "note": "made-up wide band"
+  },
+  "narrow": {
+   "freq": "432M:436M:5k",
+   "gain": 29,
+   "integration": 2,
+   "receiver": "radio-a",
+   "floor_window": 0.3,
+   "note": "made-up narrow band"
+  },
+  "custom": {
+   "freq": "500M:600M:50k",
+   "gain": 29.7,
+   "integration": 120,
+   "receiver": "radio-b",
+   "note": "made-up custom"
+  },
+  "upper": {
+   "engine": "rtl_power_fftw",
+   "freq": "2150M:2190M",
+   "gain": 29,
+   "bins": 128,
+   "time": 1,
+   "rate": 2400000,
+   "overlap": 25,
+   "receiver": "radio-a",
+   "note": "made-up fftw range"
+  },
+  "line": {
+   "engine": "rtl_power_fftw",
+   "freq": "1000.5M",
+   "gain": 40.2,
+   "bins": 2048,
+   "time": 60,
+   "rate": 2400000,
+   "overlap": 0,
+   "receiver": "radio-b",
+   "note": "made-up single hop"
+  }
+ },
+ "builder_notes": [
+  {
+   "when": {
+    "rx": "radio-b",
+    "span": [
+     300,
+     400
+    ]
+   },
+   "level": "warn",
+   "title": "Made-up note",
+   "text": "radio B is deaf in this made-up span"
+  },
+  {
+   "when": {
+    "gain_above": 40,
+    "tuner": "e4000"
+   },
+   "level": "ok",
+   "title": "Gain note",
+   "text": "made-up gain remark"
+  },
+  {
+   "when": {
+    "chain_has": "attenuator"
+   },
+   "level": "warn",
+   "title": "Pad note",
+   "text": "a made-up pad remark"
+  }
+ ],
+ "enclosures": [
+  "open bench",
+  "in shielded box",
+  "in shielded box, seam taped"
+ ],
+ "recorder": {
+  "serials": {
+   "radio-a": "00000011",
+   "radio-b": "00000022"
+  },
+  "roles": {
+   "surveyor": "radio-a",
+   "recorder": "radio-b"
+  }
+ },
+ "defaults": {
+  "chain_order": "made-up antenna > Coax > radio-a > USB > PC",
+  "chain_used_at": null
+ },
+ "known_mhz": [
+  {
+   "a": 315.0,
+   "b": 330.0,
+   "t": "a made-up band"
+  },
+  {
+   "a": 360.5,
+   "b": 360.5,
+   "t": "a made-up line",
+   "k": "spur"
+  },
+  {
+   "a": 2147.484,
+   "b": 2147.484,
+   "t": "rtl_power's 2^31 Hz ceiling",
+   "k": "bad"
+  }
+ ]
+}

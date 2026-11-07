@@ -1,0 +1,3867 @@
+[
+ {
+  "name": "preset as saved",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "tag, conditions, analysis options",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "made-up-tag",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 10,
+   "thresh": 8,
+   "floorwin": 0.5,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "21.5",
+   "humid": "40",
+   "where": "outside",
+   "sky": "overcast",
+   "notes": "fan on, \"quoted\" word",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag made-up-tag --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --conditions \"overcast, 21.5C outside, 40% RH, fan on, 'quoted' word\" --threshold 8 --floor-window 0.5 --skip-warmup 10 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"made-up-tag\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events made-up-tag",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "overcast, 21.5C outside, 40% RH, fan on, \"quoted\" word",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "dry-run line first, interactive",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "t1",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": true,
+   "nonint": false,
+   "temp": "18",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag t1 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --conditions \"18C inside\" --skip-warmup 16 --dry-run\nmarsad run band1 1h --device 0 --tag t1 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --conditions \"18C inside\" --skip-warmup 16\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"t1\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events t1\n# --chain and --conditions together skip the station-notes questions; the 'Start anyway?' device prompt still asks",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "18C inside",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "locked settings changed (custom range)",
+  "scan": {
+   "preset": "band1",
+   "lo": 310.5,
+   "hiReq": 415.25,
+   "bin": 12.5,
+   "gain": 34,
+   "integ": 60,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --freq 310.5M:415.25M:12.5k --gain 34 --integration 60 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 50,
+   "bins": 9600,
+   "sweeps": 60,
+   "listening": 0.9608333333333333,
+   "binKhz": 10.911458333333334
+  }
+ },
+ {
+  "name": "non-standard crop and FIR",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.3,
+   "fir": 4,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --crop 0.3 --fir 4 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Convention",
+    "Crop and FIR differ from 0.25 / 9. Nothing already archived uses these, so this run will have no comparison set."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 62,
+   "bins": 5580,
+   "sweeps": 120,
+   "listening": 0.9028666666666667,
+   "binKhz": 21.601382488479263
+  }
+ },
+ {
+  "name": "no analysis, no warm-up",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": false,
+   "useskip": false,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --no-analyze --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "other receiver, device mismatch",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29.7,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-b",
+   "device": "3",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "10 dB attenuator",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-b (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-b",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --gain 29.7 --receiver radio-b --device 3 --chain \"made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 40.2 --device 3 --label \"run\"\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Made-up note",
+    "radio B is deaf in this made-up span"
+   ],
+   [
+    "warn",
+    "Pad note",
+    "a made-up pad remark"
+   ],
+   [
+    "warn",
+    "Device",
+    "--device 3, but station.json says the RADIO-B enumerates as index 1. Fine if USB order has since changed — but confirm with rtl_test first, because a wrong index silently records one dongle's data under the other's name."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "24–1766 MHz",
+    "made-up radio B"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "ceiling clamped",
+  "scan": {
+   "preset": "wideish",
+   "lo": 1300,
+   "hiReq": 2200,
+   "bin": 50,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run wideish 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Ceiling",
+    "rtl_power stops at 2147.483648 MHz, a signed 32-bit limit. The top is silently clamped from 2,200.000. A range entirely above it writes no file and still exits 0."
+   ],
+   [
+    "bad",
+    "Dwell",
+    "Only 37% of the time is spent listening — most of the run is retuning. Fewer hops or a longer -i both fix it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "bad",
+    "2,147.48",
+    "rtl_power's 2^31 Hz ceiling"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 404,
+   "bins": 19392,
+   "sweeps": 120,
+   "listening": 0.36706666666666665,
+   "binKhz": 43.70274587458746
+  }
+ },
+ {
+  "name": "outside the tuner",
+  "scan": {
+   "preset": "band1",
+   "lo": 30,
+   "hiReq": 120,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --freq 30M:120M:25k --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Tuner",
+    "The RADIO-A covers 52–2200 MHz. This range goes outside it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 43,
+   "bins": 4128,
+   "sweeps": 120,
+   "listening": 0.9326333333333333,
+   "binKhz": 21.802325581395348
+  }
+ },
+ {
+  "name": "stop below start",
+  "scan": {
+   "preset": "band1",
+   "lo": 420,
+   "hiReq": 300,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --freq 420M:300M:25k --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Range",
+    "Stop must be above start."
+   ],
+   [
+    "warn",
+    "FFT",
+    "A 1-point FFT gives only 1 bins per hop after crop. Narrow spur lines get averaged into the floor. Halving the bin request would give FFT 2 at the same hop count and dwell — finer bins cost disk, not time."
+   ],
+   [
+    "warn",
+    "Floor window",
+    "The analyser's 2 MHz rolling floor is a large share of a -120.0 MHz span. Set Floor MHz to something well under it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 1,
+   "bins": 1,
+   "sweeps": 120,
+   "listening": 0.9984333333333333,
+   "binKhz": 0.0013333333333333333
+  }
+ },
+ {
+  "name": "PLL gap",
+  "scan": {
+   "preset": "band1",
+   "lo": 1050,
+   "hiReq": 1300,
+   "bin": 50,
+   "gain": 29,
+   "integ": 120,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --freq 1050M:1300M:50k --integration 120 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "PLL gap",
+    "1100–1250 MHz is this receiver's lock gap (rtl_test -t measures yours). Hops there record nothing useful; the analyser masks it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 120,
+   "bins": 5760,
+   "sweeps": 30,
+   "listening": 0.953,
+   "binKhz": 43.40277777777777
+  }
+ },
+ {
+  "name": "under the retune floor",
+  "scan": {
+   "preset": "wideish",
+   "lo": 1300,
+   "hiReq": 2147,
+   "bin": 50,
+   "gain": 29,
+   "integ": 10,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run wideish 1h --freq 1300M:2147M:50k --integration 10 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Dwell",
+    "-i 10 is under the 19.0 s retune floor for 404 hops. rtl_power misbehaves when a sweep outlasts the interval."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 404,
+   "bins": 19392,
+   "sweeps": 360,
+   "listening": 0,
+   "binKhz": 43.677805280528055
+  }
+ },
+ {
+  "name": "dwell under half",
+  "scan": {
+   "preset": "wideish",
+   "lo": 1300,
+   "hiReq": 2147,
+   "bin": 50,
+   "gain": 29,
+   "integ": 26,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run wideish 1h --freq 1300M:2147M:50k --integration 26 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Dwell",
+    "Only 27% of the time is spent listening — most of the run is retuning. Fewer hops or a longer -i both fix it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 404,
+   "bins": 19392,
+   "sweeps": 138,
+   "listening": 0.2696923076923077,
+   "binKhz": 43.677805280528055
+  }
+ },
+ {
+  "name": "dwell under three quarters",
+  "scan": {
+   "preset": "wideish",
+   "lo": 1300,
+   "hiReq": 2147,
+   "bin": 50,
+   "gain": 29,
+   "integ": 50,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run wideish 1h --freq 1300M:2147M:50k --integration 50 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Dwell",
+    "62% listening: 19.0 s of every 50 s sweep is retuning. Doubling -i would reach 81%. Over 80% is the station norm for long runs."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 404,
+   "bins": 19392,
+   "sweeps": 72,
+   "listening": 0.62024,
+   "binKhz": 43.677805280528055
+  }
+ },
+ {
+  "name": "tiny FFT",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 200,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --freq 300M:420M:200k --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "FFT",
+    "A 16-point FFT gives only 12 bins per hop after crop. Narrow spur lines get averaged into the floor. Halving the bin request would give FFT 32 at the same hop count and dwell — finer bins cost disk, not time."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 696,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 172.41379310344826
+  }
+ },
+ {
+  "name": "thin sweeps",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 600,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 60,
+   "unit": "m",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 60m --integration 600 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Sweeps",
+    "6 sweeps is thin for a 20th-percentile floor."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 6,
+   "listening": 0.9954566666666667,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "warm-up as long as the run",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 10,
+   "unit": "m",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 10m --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Warm-up",
+    "The warm-up discard is as long as the run."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 20,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "target on a hop centre",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": 301.25,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Hop centre",
+    "Nearest hop centre is 301.0345 MHz, 0.216 MHz clear."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "target clear of hop centres",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": 301,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Hop centre",
+    "A hop centre sits at 301.0345 MHz, 34.5 kHz from your target. The DC spike there will mask it — shift the start by about half a hop (1.034 MHz)."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "narrow span, no floor window",
+  "scan": {
+   "preset": "narrow",
+   "lo": 432,
+   "hiReq": 436,
+   "bin": 5,
+   "gain": 29,
+   "integ": 2,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run narrow 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Floor window",
+    "The analyser's 2 MHz rolling floor is a large share of a 4.0 MHz span. Set Floor MHz to something well under it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 2,
+   "bins": 1536,
+   "sweeps": 1800,
+   "listening": 0.953,
+   "binKhz": 2.6041666666666665
+  }
+ },
+ {
+  "name": "narrow span, floor window set",
+  "scan": {
+   "preset": "narrow",
+   "lo": 432,
+   "hiReq": 436,
+   "bin": 5,
+   "gain": 29,
+   "integ": 2,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": 0.3,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run narrow 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --floor-window 0.3 --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 2,
+   "bins": 1536,
+   "sweeps": 1800,
+   "listening": 0.953,
+   "binKhz": 2.6041666666666665
+  }
+ },
+ {
+  "name": "terminated, tag silent",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "box-test",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "50 ohm load",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "DC block",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag box-test --chain \"50 ohm load > DC block > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\n# archived and flagged --terminated automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events box-test",
+  "flags": [
+   [
+    "ok",
+    "Terminated",
+    "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with marsad adsb-check for the sensitivity half, or the characterisation is incomplete."
+   ],
+   [
+    "warn",
+    "Tag",
+    "The source is a 50 ohm load but the tag does not say so. archive.py reads the tag to flag terminated runs, and a mislabelled one pollutes every later comparison."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "50 ohm load > DC block > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "terminated, tag says so",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "term-box",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "50 ohm load",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "DC block",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag term-box --chain \"50 ohm load > DC block > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\n# archived and flagged --terminated automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events term-box",
+  "flags": [
+   [
+    "ok",
+    "Terminated",
+    "A terminated run measures what each stage ADDS to the floor — never what it lets through. Pair it with marsad adsb-check for the sensitivity half, or the characterisation is incomplete."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "50 ohm load > DC block > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "antenna but tag says terminated",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "term-oops",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag term-oops --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"term-oops\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events term-oops",
+  "flags": [
+   [
+    "warn",
+    "Tag",
+    "The tag says terminated but the antenna is connected."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "tag says enclosure off, chain enclosed",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "cage-off-1",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag cage-off-1 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"cage-off-1\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events cage-off-1",
+  "flags": [
+   [
+    "warn",
+    "Enclosure",
+    "The tag says the enclosure is off but the chain records \"in shielded box\"."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "tag says enclosure on, chain open bench",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "box-on-2",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --tag box-on-2 --chain \"made-up antenna > Coax > radio-a (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"box-on-2\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events box-on-2",
+  "flags": [
+   [
+    "warn",
+    "Enclosure",
+    "The tag says the enclosure is on but the chain records the SDR on the open bench."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Coax > radio-a (open bench) > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "nothing connected",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 29,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": false,
+    "id": "src"
+   },
+   {
+    "name": "PC",
+    "on": false
+   }
+  ],
+  "command": "marsad run band1 1h --device 0 --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Chain",
+    "Nothing is connected, so no --chain is emitted and marsad run falls back to whatever station.json last remembered. That is exactly how two runs were mislabelled. Check at least the source, the SDR and the PC."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "station note on receiver and span",
+  "scan": {
+   "preset": "custom",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 50,
+   "gain": 29.7,
+   "integ": 120,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-b",
+   "device": "1",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "10 dB attenuator",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-b (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-b",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run custom 1h --freq 300M:420M:50k --device 1 --chain \"made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 40.2 --device 1 --label \"run\"\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Made-up note",
+    "radio B is deaf in this made-up span"
+   ],
+   [
+    "warn",
+    "Pad note",
+    "a made-up pad remark"
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "24–1766 MHz",
+    "made-up radio B"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 2784,
+   "sweeps": 30,
+   "listening": 0.9772833333333333,
+   "binKhz": 43.103448275862064
+  }
+ },
+ {
+  "name": "station note on gain",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 25,
+   "gain": 42,
+   "integ": 30,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --gain 42 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Gain note",
+    "made-up gain remark"
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 58,
+   "bins": 5568,
+   "sweeps": 120,
+   "listening": 0.9091333333333333,
+   "binKhz": 21.551724137931032
+  }
+ },
+ {
+  "name": "custom preset",
+  "scan": {
+   "preset": "custom",
+   "lo": 500,
+   "hiReq": 600,
+   "bin": 50,
+   "gain": 29.7,
+   "integ": 120,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": null,
+   "durVal": 2,
+   "unit": "h",
+   "rx": "radio-b",
+   "device": "1",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 7200
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "10 dB attenuator",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-b (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-b",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run custom 2h --freq 500M:600M:50k --device 1 --chain \"made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 40.2 --device 1 --label \"run\"\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Pad note",
+    "a made-up pad remark"
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "24–1766 MHz",
+    "made-up radio B"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC",
+  "geometry": {
+   "hops": 48,
+   "bins": 2304,
+   "sweeps": 60,
+   "listening": 0.9812,
+   "binKhz": 43.40277777777777
+  }
+ },
+ {
+  "name": "fftw preset as saved",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": 25,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 22,
+   "bins": 2112,
+   "sweeps": 150,
+   "listening": 0.9165902841429882,
+   "binKhz": 18.75
+  }
+ },
+ {
+  "name": "fftw settings changed",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 34,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 256,
+   "ftime": 0.5,
+   "frate": 2048000,
+   "fover": 30,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "f1",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --bins 256 --time 0.5 --rate 2048000 --overlap 30 --gain 34 --device 0 --tag f1 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"f1\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events f1",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 28,
+   "bins": 5376,
+   "sweeps": 224,
+   "listening": 0.8695652173913044,
+   "binKhz": 8
+  }
+ },
+ {
+  "name": "fftw odd bins",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 127,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": 25,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --bins 127 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ],
+   [
+    "bad",
+    "Bins",
+    "rtl_power_fftw wants an even number of FFT bins."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 22,
+   "bins": 2134,
+   "sweeps": 150,
+   "listening": 0.9165917494575027,
+   "binKhz": 18.89763779527559
+  }
+ },
+ {
+  "name": "fftw overlap below crop",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": 10,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --overlap 10 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ],
+   [
+    "bad",
+    "Overlap",
+    "With crop 0.25 the hops must overlap by at least 25% or the cropped edges leave gaps between hops."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 19,
+   "bins": 1824,
+   "sweeps": 174,
+   "listening": 0.9165902841429882,
+   "binKhz": 18.75
+  }
+ },
+ {
+  "name": "fftw short dwell",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 128,
+   "ftime": 0.05,
+   "frate": 2400000,
+   "fover": 25,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --time 0.05 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ],
+   [
+    "warn",
+    "Dwell",
+    "Only 46% of the time is spent listening: 59 ms of overhead per hop against 0.05 s of listening. More seconds per hop fixes it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 22,
+   "bins": 2112,
+   "sweeps": 1501,
+   "listening": 0.458847988259753,
+   "binKhz": 18.75
+  }
+ },
+ {
+  "name": "fftw non-standard crop",
+  "scan": {
+   "preset": "upper",
+   "lo": 2150,
+   "hiReq": 2190,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.3,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": 30,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run upper 1h --overlap 30 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --crop 0.3 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "ok",
+    "Ceiling",
+    "Above rtl_power's 2147.483648 MHz limit: fine for rtl_power_fftw (64-bit frequencies). Hops it refuses are dropped and named in the .log, and the Scan page hatches them."
+   ],
+   [
+    "warn",
+    "Convention",
+    "Crop differs from 0.25, the station convention for this engine too."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 24,
+   "bins": 2160,
+   "sweeps": 138,
+   "listening": 0.9165902841429882,
+   "binKhz": 18.75
+  }
+ },
+ {
+  "name": "fftw from an rtl_power preset",
+  "scan": {
+   "preset": "band1",
+   "lo": 300,
+   "hiReq": 420,
+   "bin": 18.75,
+   "gain": 29,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 128,
+   "ftime": 1,
+   "frate": 2400000,
+   "fover": 25,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-a",
+   "device": "0",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "Notch",
+    "on": true
+   },
+   {
+    "name": "LNA",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-a (in shielded box)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-a",
+    "enc": "in shielded box"
+   },
+   {
+    "name": "USB",
+    "on": true
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run band1 1h --engine rtl_power_fftw --freq 300M:420M --bins 128 --time 1 --rate 2400000 --overlap 25 --device 0 --chain \"made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 29 --device 0 --label \"run\"   # cold E4000: warm, its PLL gap can reach 1090 MHz\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [],
+  "facts": [
+   [
+    "",
+    "52–2200 MHz",
+    "made-up radio A"
+   ],
+   [
+    "",
+    "315–330",
+    "a made-up band"
+   ],
+   [
+    "spur",
+    "360.50",
+    "a made-up line"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > Notch > LNA > Coax > radio-a (in shielded box) > USB > PC",
+  "geometry": {
+   "hops": 67,
+   "bins": 6432,
+   "sweeps": 50,
+   "listening": 0.9165902841429882,
+   "binKhz": 18.75
+  }
+ },
+ {
+  "name": "fftw single hop as saved",
+  "scan": {
+   "preset": "line",
+   "lo": 999.3,
+   "hiReq": 1001.7,
+   "bin": 18.75,
+   "gain": 40.2,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 2048,
+   "ftime": 60,
+   "frate": 2400000,
+   "fover": 0,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-b",
+   "device": "1",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "10 dB attenuator",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-b (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-b",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run line 1h --device 1 --chain \"made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 40.2 --device 1 --label \"run\"\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "warn",
+    "Pad note",
+    "a made-up pad remark"
+   ],
+   [
+    "warn",
+    "Floor window",
+    "The analyser's 2 MHz rolling floor is a large share of a 2.4 MHz span. Set Floor MHz to something well under it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "24–1766 MHz",
+    "made-up radio B"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC",
+  "geometry": {
+   "hops": 1,
+   "bins": 1536,
+   "sweeps": 58,
+   "listening": 0.9545175616195035,
+   "binKhz": 1.171875
+  }
+ },
+ {
+  "name": "fftw single hop moved",
+  "scan": {
+   "preset": "line",
+   "lo": 999,
+   "hiReq": 1002,
+   "bin": 18.75,
+   "gain": 40.2,
+   "integ": 1,
+   "crop": 0.25,
+   "fir": 9,
+   "engine": "rtl_power_fftw",
+   "fbins": 2048,
+   "ftime": 60,
+   "frate": 2400000,
+   "fover": 0,
+   "durVal": 1,
+   "unit": "h",
+   "rx": "radio-b",
+   "device": "1",
+   "tag": "",
+   "target": null,
+   "analyze": true,
+   "useskip": true,
+   "skipmin": 16,
+   "thresh": 10,
+   "floorwin": null,
+   "dryfirst": false,
+   "nonint": true,
+   "temp": "",
+   "humid": "",
+   "where": "inside",
+   "sky": "",
+   "notes": "",
+   "durS": 3600
+  },
+  "modules": [
+   {
+    "name": "made-up antenna",
+    "on": true,
+    "id": "src"
+   },
+   {
+    "name": "10 dB attenuator",
+    "on": true
+   },
+   {
+    "name": "Coax",
+    "on": true
+   },
+   {
+    "name": "radio-b (open bench)",
+    "on": true,
+    "id": "sdr",
+    "base": "radio-b",
+    "enc": "open bench"
+   },
+   {
+    "name": "PC",
+    "on": true
+   }
+  ],
+  "command": "marsad run line 1h --freq 999M:1002M --device 1 --chain \"made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC\" --skip-warmup 16 --non-interactive\nmarsad adsb-check --seconds 600 --gain 40.2 --device 1 --label \"run\"\n# archived and flagged --antenna automatically from the chain above\n# compare: marsad compare-runs <before-tag> <after-tag>\n# events (broadband steps, one-sweep lifts): in report.md; rerun with marsad events <tag>",
+  "flags": [
+   [
+    "bad",
+    "Overlap",
+    "With crop 0.25 the hops must overlap by at least 25% or the cropped edges leave gaps between hops."
+   ],
+   [
+    "warn",
+    "Pad note",
+    "a made-up pad remark"
+   ],
+   [
+    "warn",
+    "Floor window",
+    "The analyser's 2 MHz rolling floor is a large share of a 3.0 MHz span. Set Floor MHz to something well under it."
+   ]
+  ],
+  "facts": [
+   [
+    "",
+    "24–1766 MHz",
+    "made-up radio B"
+   ]
+  ],
+  "conditions": "",
+  "chain": "made-up antenna > 10 dB attenuator > Coax > radio-b (open bench) > PC",
+  "geometry": {
+   "hops": 2,
+   "bins": 3072,
+   "sweeps": 29,
+   "listening": 0.9545175616195035,
+   "binKhz": 1.171875
+  }
+ }
+]
