@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QFont, QPainter, QPen
+from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
@@ -118,7 +118,7 @@ class RadioChip(QFrame):
         colour = STATE_COLOUR.get(st, "muted")
         role = r.get("role")
         enabled = r.get("enabled", True)
-        key = (r["name"], role, st, r["doing"]["text"], enabled)
+        key = (r["name"], role, st, r["doing"]["text"], enabled, r["doing"].get("other_busy"))
         if key == self._key:                       # restyled only on a change: the strip refreshes often
             return
         self._key = key
@@ -135,6 +135,8 @@ class RadioChip(QFrame):
                          f"<span style='color:{rc}; font-weight:400'>· {ROLE_WORD[role]}</span>")
         short = {"ready": "ready", "absent": "not plugged in", "blocked": "blocked", "unknown": "not known",
                  "surveying": "surveying", "recording": "recording", "disabled": "disabled"}[st]
+        if st == "ready" and r["doing"].get("other_busy"):    # relay 012: free while the other radio works
+            short = "ready, other radio busy"
         if not enabled and busy:
             short += " · disabled for new work"
         self.state.setText(short)
@@ -323,9 +325,20 @@ class RadioCard(QFrame):
         self.v.addLayout(g)
         ch = r.get("chain") or {}
         self.v.addWidget(X.titled("Chain this radio records", "radio_chain"))
-        c = _label(ch.get("text") or ch.get("problem") or "(none)")
-        c.setFont(T.mono_font(8))
-        self.v.addWidget(c)
+        # relay 012: short on screen; the full text on hover, and Copy puts it on the clipboard
+        short = (ch.get("summary") or {}).get("short") or ch.get("problem") or "(none)"
+        row = QHBoxLayout()
+        c = _label(short)
+        c.setToolTip(ch.get("text") or "")
+        row.addWidget(c, 1)
+        if ch.get("text"):
+            cp = QToolButton()
+            cp.setObjectName("Tool")
+            cp.setText("Copy chain")
+            cp.setToolTip("Copy the full chain text this radio's runs record:\n" + ch["text"])
+            cp.clicked.connect(lambda *_, t=ch["text"]: QGuiApplication.clipboard().setText(t))
+            row.addWidget(cp, 0, Qt.AlignmentFlag.AlignTop)
+        self.v.addLayout(row)
         if ch.get("source"):
             self.v.addWidget(_label(f"from {ch['source']}" + (" · already used by a run: Start asks \"still built as "
                                                               "drawn?\"" if ch.get("due") else ""), muted=True))

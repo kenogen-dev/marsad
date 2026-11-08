@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import chain, host, hunt, probe, room, rpf
+from . import chain, host, hunt, probe, radio_use, room, rpf
 from .config import Station
 from .rtlpower import (CROP, FIR, RTL_MAX_SAMPLE_HZ, RTL_POWER_MAX_MHZ, TUNER_GAINS,
                        build_label, csv_bin_khz, fingerprint, parse_freq_spec)
@@ -664,7 +664,12 @@ def run_facts(station: Station, path: Path) -> dict:
                        "finished_local": d.get("finished_local"), "preset": d.get("preset"),
                        "receiver": d.get("receiver"),
                        "engine": d.get("engine") or ("rtl_power_fftw" if path.suffix.lower() == ".dat" else "rtl_power"),
-                       "fingerprint": info.get("fingerprint")}
+                       "fingerprint": info.get("fingerprint"),
+                       # relay 012: shown short in the window, full on hover / Show chain
+                       "chain": chain_summary(station, (d.get("chain") or {}).get("chain_order") or "",
+                                              d.get("receiver"), checked=False),
+                       "other_radios_busy": radio_use.describe(d.get("other_radios_busy")),
+                       "rig_reference": d.get("rig_reference")}
     return dict(_FACTS[key])
 
 
@@ -896,30 +901,10 @@ def newest_recording(station: Station):
     return max(files, key=lambda p: (started_at(p), _created(p), p.stat().st_mtime)) if files else None
 
 
-STILL_WRITING_S = 300.0      # a recording untouched this long is not being written any more
-
-
-def recording_active(path: Path, now: float | None = None) -> bool:
-    """Is this recording still being written? Its sidecar has no `finished_local` (the
-    recorder stamps that when the program exits), and the file grew recently: within
-    STILL_WRITING_S, or three of its write intervals for a slow scan (rtl_power writes
-    once per -i, rtl_power_fftw once per pass). A run killed without warning never gets
-    `finished_local`, so the clock is what retires it."""
-    now = time.time() if now is None else now
-    try:
-        age = now - path.stat().st_mtime
-    except OSError:
-        return False
-    every = 0.0
-    try:
-        d = json.loads(path.with_suffix(".json").read_text())
-        if d.get("finished_local"):
-            return False
-        eng = d.get(d.get("engine") or "rtl_power") or {}
-        every = float(eng.get("integration_s") or (d.get("geometry") or {}).get("sweep_s") or 0)
-    except (OSError, ValueError, TypeError):
-        pass
-    return age <= max(STILL_WRITING_S, 3 * every)
+# relay 012: the engine's one rule for "which radio is held" lives in radio_use; these names stay
+# here because the Scan tab and the tests use them.
+STILL_WRITING_S = radio_use.STILL_WRITING_S
+recording_active = radio_use.recording_active
 
 
 def other_recording(station: Station, main: str | None, now: float | None = None):
@@ -1763,10 +1748,18 @@ def detect_receivers(station: Station) -> dict:
     return probe.detect_receivers(station)
 
 
-def radio_in_use(station: Station) -> dict:
-    """Rule 7: one program per radio. `marsad run` refuses to start while any radio program
-    is running (record.check_device_free), so the window does too, naming it, and naming
-    which radio it holds where a recording or a recorder says so."""
+def radio_in_use(station: Station, rx: str | None = None) -> dict:
+    """Rule 7: one program per radio. With `rx`, the engine's own rule (radio_use.check, which
+    `marsad run` asks before recording): blocked only when that radio is held, or when a program
+    runs that cannot be placed on a radio; otherwise free, naming what holds the other radio.
+    Without `rx` (marsad watch's two-radio start, unchanged by relay 012): blocked while any radio
+    program runs, naming which radio it holds where a recording or a recorder says so."""
+    if rx:
+        res = radio_use.check(station, rx)
+        return {"blocked": not res["ok"], "programs": None if res["could_not_check"] else
+                sorted({e["program"] for e in res["mine"] + res["others"]} | set(res["unknown"])),
+                "held": [f"{radio_word(e['radio'])} {e['doing']} ({e['what']})" for e in res["mine"] + res["others"]],
+                "others": res["others"], "other_busy": bool(res["ok"] and res["others"]), "text": res["text"]}
     busy = host.running_sdr_programs()
     held = []
     if station.surveys.exists():
@@ -1808,6 +1801,49 @@ def find_radio(station: Station, rx: str) -> dict:
             "text": f"{radio_word(rx)} found by serial {r['serial']} at USB index {r['device']}."}
 
 
+def _rig_name(chain_name: str) -> str:
+    """A split rig's chain is named "rig (radio name)", and a radio's name can hold brackets of its
+    own; drop the one balanced bracket group at the end, nested or not."""
+    n = chain_name.rstrip()
+    if not n.endswith(")"):
+        return n
+    depth = 0
+    for i in range(len(n) - 1, -1, -1):
+        depth += {")": 1, "(": -1}.get(n[i], 0)
+        if depth == 0:
+            return n[:i].rstrip() or n
+    return n
+
+
+def chain_summary(station: Station, text: str, rx: str | None = None, due: bool = False,
+                  problem: str | None = None, checked: bool = True) -> dict:
+    """Relay 012: a chain in a few words for the window, "Window rig → radio-a · 9 parts · ✓": the rig's
+    name (the chain.json entry whose text this is, without its "(radio)" suffix), the radio it
+    reaches, the part count, and any open check. Display only: the record keeps the full text,
+    which comes back beside the summary as `full`."""
+    text = (text or "").strip()
+    if not text:
+        return {"short": "no chain" + (f" · {problem}" if problem else ""), "full": "", "name": None, "parts": 0}
+    name, parts = None, [p for p in (q.strip() for q in text.split(">")) if p]
+    try:                                      # read only: chain.load would seed a missing chain.json
+        doc = json.loads(chain.path_of(station).read_text(encoding="utf-8"))
+        for n, c in (doc.get("chains") or {}).items():
+            if chain.chain_text(c.get("parts") or []) == text:
+                # a split rig names each path "rig (radio name)": trim only that suffix
+                names = {str(q.get("name") or "") for q in c.get("parts") or [] if isinstance(q, dict)}
+                tail = n[len(_rig_name(n)):].strip()[1:-1].strip()
+                split = bool(tail) and (tail in names or re.sub(r" \d+$", "", tail) in names)
+                name, parts = (_rig_name(n) if split else n), c["parts"]
+                break
+    except (ValueError, OSError, KeyError, TypeError, AttributeError):
+        pass
+    to = radio_word(rx) if rx else (parts[-1] if isinstance(parts[-1], str) else chain.part_text(parts[-1]))
+    bits = [f"{name or 'Chain'} → {to}", f"{len(parts)} part{'s' if len(parts) != 1 else ''}"]
+    if checked:
+        bits.append("⚠ " + problem if problem else ("check due: still built as drawn?" if due else "✓"))
+    return {"short": " · ".join(bits), "full": text, "name": name, "parts": len(parts)}
+
+
 def chain_for(station: Station, rx: str) -> dict:
     """Rule 6: the chain this radio's run records, and whether "still built as drawn?" is due:
     the same tests record.confirm_default_chain makes before it would ask."""
@@ -1815,8 +1851,10 @@ def chain_for(station: Station, rx: str) -> dict:
     try:
         rig = chain.rig_text_for(station, rx)
     except SystemExit as exc:
-        return {"ok": False, "text": "", "source": "none", "due": False, "used_at": None,
-                "problem": str(exc).strip()}
+        out = {"ok": False, "text": "", "source": "none", "due": False, "used_at": None,
+               "problem": str(exc).strip()}
+        out["summary"] = chain_summary(station, "", rx, problem="no path to this radio")
+        return out
     text = rig if rig is not None else (d.get("chain_order") or "")
     used = d.get("chain_used_at")
     if rig is not None:
@@ -1825,17 +1863,19 @@ def chain_for(station: Station, rx: str) -> dict:
     else:
         static = chain.default_is_static(station, text) if text else False
         source = "the saved default chain"
-    return {"ok": bool(text), "text": text, "source": source, "used_at": used, "static": bool(static),
-            "due": bool(text and used and not static),
-            "problem": None if text else "No chain is saved for this radio. Draw it on the Chain screen and use it for runs."}
+    due = bool(text and used and not static)
+    return {"ok": bool(text), "text": text, "source": source, "used_at": used, "static": bool(static), "due": due,
+            "problem": None if text else "No chain is saved for this radio. Draw it on the Chain screen and use it for runs.",
+            "summary": chain_summary(station, text, rx, due=due, problem=None if text else "none saved")}
 
 
 def scan_checks(station: Station, rx: str, detect: bool = True) -> dict:
     """Everything checked before a start, in plain words. Detection asks the dongles their
     serials (rtl_eeprom), so it is skipped while another radio program runs."""
-    use = radio_in_use(station)
+    use = radio_in_use(station, rx)
     if use["blocked"]:
-        radio = {"found": None, "rx": rx, "text": "Not checked while another radio program is running."}
+        radio = {"found": None, "rx": rx, "text": "Not checked while this radio is in use, or while a program runs that "
+                                                  "cannot be placed on a radio."}
     elif not detect:
         radio = {"found": None, "rx": rx, "text": "Not checked yet: Start asks it its serial, or Check again does now."}
     else:
@@ -2199,7 +2239,9 @@ def watch_plan(station: Station, form: dict, detect: bool = False) -> dict:
     w = watch_settings(station, form.get("watch") or {})
     radios = [w["surveyor"], w["recorder"]] if w["mode"] == "survey" else [w["receiver"]]
     chains = {r: (form.get("chains") or {}).get(r) or chain_for(station, r)["text"] for r in radios}
-    use = radio_in_use(station)
+    # one program per radio (owner, 2026-11-07, after relay 012): a fixed watch uses one radio, so only that
+    # radio (and any program no record places) blocks it; survey + record needs both, so any program does
+    use = radio_in_use(station, w["receiver"]) if w["mode"] != "survey" else radio_in_use(station)
     checks = {"in_use": use, "radios": {}}
     for r in radios:
         checks["radios"][r] = {"chain": chain_for(station, r),
@@ -2487,8 +2529,12 @@ def radios_status(station: Station) -> dict:
             doing = {"state": "surveying", "text": f"surveying: {active[name]}"}
         elif present is False:
             doing = {"state": "absent", "text": "not plugged in"}
-        elif programs:
-            doing = {"state": "blocked", "text": f"{', '.join(programs)} is running: a scan cannot start until it ends"}
+        elif programs and not (use := radio_use.check(station, name))["ok"]:
+            doing = {"state": "blocked", "text": use["reason"]}
+        elif present and programs:
+            doing = {"state": "ready", "other_busy": True,
+                     "text": "ready, other radio busy: a scan can start here (the run records what the other radio "
+                             "was doing)"}
         elif present:
             doing = {"state": "ready", "text": "plugged in and idle"}
         else:

@@ -119,6 +119,7 @@ class Window(QMainWindow):
 
         self.chain.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
         self.live.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
+        self.live.open_rig_version.connect(self.open_rig_version)
         self.statusBar().setStyleSheet(f"color: {T.C['muted']}; border-top: 1px solid {T.C['lines']};")
         # A light check every 30 s: says whether the service answers, and keeps a
         # test service (started with an idle timeout) alive while the window is open.
@@ -126,6 +127,13 @@ class Window(QMainWindow):
         self.timer.timeout.connect(self._ping)
         self.timer.start(30000)
         QTimer.singleShot(0, self._first_load)
+
+    def open_rig_version(self, info: dict):
+        """Relay 012: from a run's facts, its rig as it was, read-only on the Chain screen."""
+        i = SCREENS.index("Chain")
+        self.group.button(i).setChecked(True)
+        self.stack.setCurrentIndex(i)
+        self.chain.open_version(info)
 
     def _first_load(self):
         self._ping()

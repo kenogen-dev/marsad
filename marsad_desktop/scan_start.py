@@ -538,14 +538,30 @@ class RangeStrip(QWidget):
 
 # ---------------------------------------------------------------- shared panels
 
+def chain_short(ch: dict, rx: str) -> str:
+    """Relay 012: the chain in a few words ("Window rig → radio-a · 9 parts · ✓"), from the service's
+    summary when it describes this text, else counted here (a chain typed for this run only)."""
+    text = (ch.get("text") or "").strip()
+    s = ch.get("summary") or {}
+    if s.get("short") and s.get("full", "") == text:
+        return s["short"]
+    n = len([p for p in text.split(">") if p.strip()])
+    return f"Chain → {_word(rx)} · {n} part{'s' if n != 1 else ''}" + (" · typed for this run" if text else "")
+
+
 class CommandPanel(QFrame):
-    """"Show command": the complete command, hidden until asked for, with a Copy button."""
+    """"Show command" and "Show chain": the complete command, and the full chain text each run records,
+    hidden until asked for, each with a Copy button. The window shows chains short everywhere else."""
 
     def __init__(self):
         super().__init__()
         self.setObjectName("TextPanel")
-        v = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.cmd_box = QWidget()
+        v = QVBoxLayout(self.cmd_box)
         v.setContentsMargins(T.SPACE * 1.5, T.SPACE * 1.25, T.SPACE * 1.5, T.SPACE * 1.5)
+        outer.addWidget(self.cmd_box, 1)
         h = QHBoxLayout()
         h.addWidget(label("Command", size=10, bold=True))
         h.addStretch(1)
@@ -562,11 +578,61 @@ class CommandPanel(QFrame):
                           "serial). Every run records it in its sidecar and scan_build.md.", muted=True, wrap=True)
         self.note.setFont(T.ui_font(8))
         v.addWidget(self.note)
+        self.chain_box = QWidget()
+        cv = QVBoxLayout(self.chain_box)
+        cv.setContentsMargins(T.SPACE * 1.5, T.SPACE * 1.25, T.SPACE * 1.5, T.SPACE * 1.5)
+        ch = QHBoxLayout()
+        ch.addWidget(label("Chain", size=10, bold=True))
+        ch.addStretch(1)
+        self.chain_copy = tool("Copy", "Copy the chain text to the clipboard")
+        self.chain_copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.chain_txt.toPlainText()))
+        ch.addWidget(self.chain_copy)
+        cv.addLayout(ch)
+        self.chain_txt = QPlainTextEdit()
+        self.chain_txt.setReadOnly(True)
+        self.chain_txt.setFont(T.mono_font(8.5))
+        self.chain_txt.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        cv.addWidget(self.chain_txt, 1)
+        n = label("The full text each run records, exactly as written to its sidecar. Elsewhere the window shows it "
+                  "short.", muted=True, wrap=True)
+        n.setFont(T.ui_font(8))
+        cv.addWidget(n)
+        outer.addWidget(self.chain_box, 1)
+        self.chain_box.hide()
         self.setMinimumWidth(320)
 
     def show_text(self, text: str):
         if self.text.toPlainText() != text:
             self.text.setPlainText(text)
+
+    def show_chain(self, chains: dict):
+        """chains: {radio: full text}; one radio shows the text alone, two each under its name."""
+        items = [(rx, t) for rx, t in chains.items() if t]
+        text = (items[0][1] if len(items) == 1 else
+                "\n\n".join(f"{_word(rx)}:\n{t}" for rx, t in items)) if items else "(no chain)"
+        if self.chain_txt.toPlainText() != text:
+            self.chain_txt.setPlainText(text)
+
+    def show_parts(self, command: bool, chain: bool):
+        self.cmd_box.setVisible(command)
+        self.chain_box.setVisible(chain)
+        self.setVisible(command or chain)
+
+
+def side_buttons(owner, head):
+    """Add "Show command" and "Show chain" to a dialog's header; both open owner.cmd (a CommandPanel)."""
+    owner.b_cmd = tool("Show command", "Open the complete command in a side panel")
+    owner.b_chain = tool("Show chain", "Open the full chain text each run records in the side panel, with Copy")
+    for b in (owner.b_cmd, owner.b_chain):
+        b.setCheckable(True)
+
+    def toggled(*_):
+        owner.b_cmd.setText("Hide command" if owner.b_cmd.isChecked() else "Show command")
+        owner.b_chain.setText("Hide chain" if owner.b_chain.isChecked() else "Show chain")
+        owner.cmd.show_parts(owner.b_cmd.isChecked(), owner.b_chain.isChecked())
+    owner.b_cmd.toggled.connect(toggled)
+    owner.b_chain.toggled.connect(toggled)
+    return owner.b_cmd, owner.b_chain
 
 
 class ChecksPanel(QFrame):
@@ -599,6 +665,8 @@ class ChecksPanel(QFrame):
         self.v.addWidget(self.problems)
         self.confirm.hide()
         self.problems.hide()
+        self.side = None                              # the dialog's CommandPanel, for Show chain
+        self.chains = {}
         self.blocked = True
         self.due = False
         self.bad = 0
@@ -606,18 +674,24 @@ class ChecksPanel(QFrame):
     def _clear(self):
         clear_layout(self.rows)
 
-    def _row(self, level, title, text):
+    def _row(self, level, title, text, tip: str = ""):
         w = QLabel(f"<span style='color:{T.C[LEVEL_COLOUR.get(level, 'muted')]}; font-weight:600'>{title}</span>"
                    f"&nbsp; <span style='color:{T.C['text2']}'>{text}</span>")
         w.setWordWrap(True)
         w.setTextFormat(Qt.TextFormat.RichText)
+        if tip:
+            w.setToolTip(tip)
         self.rows.addWidget(w)
+        return w
 
     def show_checks(self, radios: dict, in_use: dict | None, warnings: list, rig_checks: list,
                     pending: str | None = None):
         """radios: {rx: {"radio": ..., "chain": ...}}."""
         self._clear()
         self.blocked, self.due, self.bad = False, False, 0
+        self.chains = {rx: (c.get("chain") or {}).get("text") or "" for rx, c in radios.items()}
+        if self.side is not None:
+            self.side.show_chain(self.chains)
         if pending:
             self._row("warn", "Checking", pending)
         if in_use is not None:
@@ -646,7 +720,8 @@ class ChecksPanel(QFrame):
                     used = str(ch.get("used_at") or "").replace("T", " ")
                     extra = f" Already recorded by a run at {used}: is the rig still built as drawn?"
                 self._row("warn" if ch.get("due") else "ok", f"Chain ({_word(rx)})",
-                          f"from {ch.get('source')}: <span style='font-family:Consolas'>{ch['text']}</span>.{extra}")
+                          f"{chain_short(ch, rx)} <span style='color:{T.C['muted']}'>(from {ch.get('source')}; "
+                          f"hover or Show chain for the full text)</span>.{extra}", tip=ch["text"])
         for c in rig_checks:
             self._row("warn", "Chain check", f"{c.get('text')} (rig “{c.get('rig')}”)")
         for lvl, title, text in warnings:
@@ -1115,10 +1190,8 @@ class StartScanDialog(QDialog):
         self.b_back.clicked.connect(lambda: self.show_page(0))
         self.b_new = tool("New scan…", "The full setup: range, engine, every setting, the trade-off table")
         self.b_new.clicked.connect(self.new_scan)
-        self.b_cmd = tool("Show command", "Open the complete command in a side panel")
-        self.b_cmd.setCheckable(True)
-        self.b_cmd.toggled.connect(self._toggle_cmd)
-        for b in (self.b_back, self.b_new, self.b_cmd):
+        side_buttons(self, head)
+        for b in (self.b_back, self.b_new, self.b_cmd, self.b_chain):
             head.addWidget(b)
         mv.addLayout(head)
         self.pages = QStackedWidget()
@@ -1141,6 +1214,7 @@ class StartScanDialog(QDialog):
         self.cmd = CommandPanel()
         self.split.addWidget(self.cmd)
         self.cmd.hide()
+        self.checks_panel.side = self.cmd
         self.split.setStretchFactor(0, 4)
         self.split.setStretchFactor(1, 1)
         self.show_page(0)
@@ -1220,6 +1294,8 @@ class StartScanDialog(QDialog):
         self.cond.changed.connect(self._schedule)
         rv.addWidget(self.cond)
         chain_box, cv, ch = section("Chain for this run")
+        self.chain_short = label("", wrap=True)          # relay 012: short on screen, full on hover / Show chain
+        cv.addWidget(self.chain_short)
         self.chain_text = QLineEdit()
         self.chain_text.setFont(T.mono_font(8.5))
         self.chain_text.setPlaceholderText("from the rig used for runs (Chain screen)")
@@ -1227,9 +1303,11 @@ class StartScanDialog(QDialog):
         self.chain_edit = QCheckBox("Change the chain text for this run only (a 50 Ω load, a pad…)")
         self.chain_edit.toggled.connect(self._chain_edit)
         self.chain_text.textEdited.connect(self._schedule)
+        self.chain_text.textEdited.connect(lambda *_: self._show_chain_short())
         ch.addWidget(X.info("chain_text"))
         X.attach(self.chain_text, "chain_text")
         cv.addWidget(self.chain_text)
+        self.chain_text.hide()                            # shown only to type a chain for this run
         cv.addWidget(X.with_info(self.chain_edit, "chain_override"))
         rv.addWidget(chain_box)
         self.checks_panel = ChecksPanel()
@@ -1529,9 +1607,20 @@ class StartScanDialog(QDialog):
 
     def _chain_edit(self, on):
         self.chain_text.setReadOnly(not on)
+        self.chain_text.setVisible(on)
         if not on:
             self.chain_text.setText((self.checks.get("chain") or {}).get("text") or "")
+        self._show_chain_short()
         self._schedule()
+
+    def _show_chain_short(self):
+        rx = self.scan.get("rx") or ""
+        ch = dict(self.checks.get("chain") or {})
+        if self.chain_edit.isChecked():
+            ch = {"text": self._chain()}
+        self.chain_short.setText(chain_short(ch, rx) if ch.get("text") else
+                                 (ch.get("problem") or "No chain yet: the checks below fetch it."))
+        self.chain_short.setToolTip(ch.get("text") or "")
 
     def _current(self) -> dict:
         s = dict(self.scan)
@@ -1616,6 +1705,7 @@ class StartScanDialog(QDialog):
                 self.chain_text.setText((d.get("chain") or {}).get("text") or "")
                 self.chain_text.setCursorPosition(0)
                 self.chain_text.setToolTip(self.chain_text.text())
+            self._show_chain_short()
             self._show_checks()
             self._schedule()
         call(lambda: self.svc.check(rx, detect=detect), got)
@@ -1772,10 +1862,6 @@ class StartScanDialog(QDialog):
         else:
             self.s_integ.setValue(int(value))
 
-    def _toggle_cmd(self, on):
-        self.cmd.setVisible(on)
-        self.b_cmd.setText("Hide command" if on else "Show command")
-
     # saving
     def save_as(self):
         if not self.entry:
@@ -1892,11 +1978,9 @@ class StartWatchDialog(QDialog):
         head = QHBoxLayout()
         head.addWidget(label("Start recorder", size=13, bold=True))
         head.addStretch(1)
-        self.b_cmd = tool("Show command", "Open the complete command in a side panel")
-        self.b_cmd.setCheckable(True)
-        self.b_cmd.toggled.connect(lambda on: (self.cmd.setVisible(on),
-                                               self.b_cmd.setText("Hide command" if on else "Show command")))
+        side_buttons(self, head)
         head.addWidget(self.b_cmd)
+        head.addWidget(self.b_chain)
         mv.addLayout(head)
         body = QHBoxLayout()
         left = QFrame()
@@ -2060,6 +2144,7 @@ class StartWatchDialog(QDialog):
         self.cmd = CommandPanel()
         split.addWidget(self.cmd)
         self.cmd.hide()
+        self.checks_panel.side = self.cmd
         split.setStretchFactor(0, 4)
         for w in (self.w_scan, self.w_surveyor, self.w_recorder, self.w_unit, self.f_rx, self.f_unit):
             w.currentIndexChanged.connect(self._schedule)

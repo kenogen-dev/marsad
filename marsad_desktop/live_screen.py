@@ -558,6 +558,7 @@ class RecorderPanel(QFrame):
 # ---------------------------------------------------------------- the screen
 class LiveScreen(QWidget):
     status = Signal(str)
+    open_rig_version = Signal(dict)        # relay 012: {"ref": the run's rig_reference, "run": its tag}
 
     def __init__(self, svc: Service):
         super().__init__()
@@ -697,7 +698,17 @@ class LiveScreen(QWidget):
         self.facts = QLabel()
         self.facts.setFont(T.ui_font(8.5))
         self.facts.setProperty("muted", True)
-        rows.addWidget(self.facts)
+        frow = QHBoxLayout()
+        frow.setSpacing(8)
+        frow.addWidget(self.facts, 1)
+        self.btn_rig = QToolButton()              # relay 012: the drawing this run recorded, read-only in Chain
+        self.btn_rig.setObjectName("Tool")
+        self.btn_rig.setText("Open rig as it was")
+        self.btn_rig.clicked.connect(lambda: self.open_rig_version.emit(dict(self._rig_ref)))
+        self.btn_rig.hide()
+        self._rig_ref = {}
+        frow.addWidget(self.btn_rig, 0, Qt.AlignmentFlag.AlignTop)
+        rows.addLayout(frow)
         self.fp = QLabel()
         self.fp.setFont(T.mono_font(8.5))
         self.fp.setStyleSheet(f"color: {T.C['text2']};")
@@ -1541,6 +1552,7 @@ class LiveScreen(QWidget):
             self.tag.setText("No recording yet")
             self.facts.setText("When a scan starts, it shows here as it is written.")
             self.fp.setText("")
+            self.btn_rig.hide()
             self.engine_lbl.setText("")
             return
         self.tag.setText(f.get("tag") or p["file"])
@@ -1568,7 +1580,25 @@ class LiveScreen(QWidget):
             bits.append(L.hops_text(p.get("planned_hops"), p.get("tuned_hops"), p.get("refused_mhz")))
         if p.get("receiver") or f.get("receiver"):
             bits.append(f"radio {f.get('receiver')}")
-        self.facts.setText("   ·   ".join(b for b in bits if b))
+        ch = f.get("chain") or {}
+        if ch.get("full"):                                   # relay 012: short here, the full text on hover
+            bits.append(f"chain: {ch.get('short')}")
+        if f.get("other_radios_busy"):
+            bits.append(f"started while the other radio was busy: {f['other_radios_busy']}")
+        ref = f.get("rig_reference")
+        if isinstance(ref, dict) and not ref.get("rig"):
+            bits.append("no rig drawing recorded")
+        has_ref = isinstance(ref, dict) and bool(ref.get("rig")) and bool(ref.get("version"))
+        self._rig_ref = {"ref": ref, "run": f.get("tag") or p.get("file")} if has_ref else {}
+        if self.btn_rig.isVisible() != has_ref:
+            self.btn_rig.setVisible(has_ref)
+        if has_ref:
+            self.btn_rig.setToolTip(f"Open “{ref['rig']}” in Chain exactly as drawn when this run started "
+                                    f"(version {ref['version']}), read-only")
+        text = "   ·   ".join(b for b in bits if b)
+        if self.facts.text() != text:
+            self.facts.setText(text)
+            self.facts.setToolTip(("Chain, as recorded:\n" + ch["full"]) if ch.get("full") else "")
         self.fp.setText(f.get("fingerprint") or "fingerprint not known")
         label = "relative dB, not calibrated" + (" · fftw scale" if eng == "rtl_power_fftw" else "")
         if label != getattr(self, "_axis_label", None):     # rule 11; set only on a change (this runs 4 times a second)

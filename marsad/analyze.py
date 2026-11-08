@@ -444,7 +444,10 @@ def _conditions_rows(sc: dict) -> list[str]:
 
     Sidecars with no auto_conditions get no rows.
     """
-    return auto_cond.table_rows(sc.get("auto_conditions"))
+    from . import radio_use
+    from . import chain as chain_mod
+    return (auto_cond.table_rows(sc.get("auto_conditions")) + radio_use.table_rows(sc)
+            + chain_mod.rig_reference_rows(sc))
 
 
 def _sidecar_lines_fftw(sc: dict) -> list[str]:

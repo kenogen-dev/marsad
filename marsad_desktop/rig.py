@@ -1268,6 +1268,9 @@ def apply_rig(chain_doc: dict, layout: dict, rig_name: str, rig: dict, *, static
     clash = [n for n in new if n in doc["chains"] and n not in old_written]
     if clash:
         raise ValueError(f"a chain called {clash[0]!r} already exists; pick another rig name")
+    # read before a rename removes the old entry: its history and drawing must move with the rig
+    # (relay 012: every version a run has named is kept, renamed or not)
+    prev = copy.deepcopy((lay.get("rigs") or {}).get(old_rig_name))
     if renamed_from:
         old_list = list(old_written)
         for i, n in enumerate(new):
@@ -1282,7 +1285,6 @@ def apply_rig(chain_doc: dict, layout: dict, rig_name: str, rig: dict, *, static
         doc["chains"][n] = {"static": bool(was.get("static")) if static is None else bool(static),
                             "updated": was.get("updated"), "last_used": was.get("last_used"),
                             "parts": parts}
-    prev = (lay.get("rigs") or {}).get(old_rig_name)
     history = list((prev or {}).get("history") or [])
     if prev is not None:                       # relay 007: every Save keeps the drawing it replaces
         history.append(version_of(prev))

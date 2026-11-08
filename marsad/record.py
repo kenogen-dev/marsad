@@ -115,16 +115,32 @@ def run_with_progress(cmd: list, dur_s: float, csv_path: Path, every: float | No
 # ---------------------------------------------------------------------------
 # environment checks
 # ---------------------------------------------------------------------------
-def check_device_free(non_interactive: bool) -> None:
-    busy = host.running_sdr_programs()
-    if busy is None:
-        print("  Could not check for running radio programs; make sure SDR++ is closed.")
-        return
-    if not busy:
-        print("  SDR is free (no other radio program running).")
-        return
-    print("\n  *** Another program may be holding the SDR: " + ", ".join(busy))
-    print("  Only one program can use the receiver at a time. Close it first")
+def check_device_free(non_interactive: bool, station: Station | None = None,
+                      receiver: str | None = None) -> list:
+    """Rule 7, one program per radio: refuse only when the radio this run will use is held, or
+    when a program runs that marsad cannot place on a radio (radio_use.check). Returns what held
+    the other radio, for the sidecar's `other_radios_busy` ([] when nothing did)."""
+    from . import radio_use
+    if station is not None:
+        res = radio_use.check(station, receiver)
+    else:                                             # no station: the old rule, any program blocks
+        busy = host.running_sdr_programs()
+        res = {"ok": not busy, "could_not_check": busy is None, "others": [], "mine": [],
+               "unknown": list(busy or []),
+               "reason": "Another program may be holding the SDR: " + ", ".join(busy or [])}
+    if res["ok"]:
+        if res["could_not_check"]:
+            print("  Could not check for running radio programs; make sure SDR++ is closed.")
+        elif res["others"]:
+            print(f"  The {receiver} is free. Busy on the other radio: "
+                  + "; ".join(f"{e['radio']} {e['doing']} ({e['what']})" for e in res["others"]))
+            print("  Recorded in this run's sidecar (other_radios_busy): two dongles side by side")
+            print("  can raise each other's noise floor.")
+        else:
+            print("  SDR is free (no other radio program running).")
+        return radio_use.busy_record(res)
+    print("\n  *** " + res["reason"])
+    print("  Only one program can use a receiver at a time. Close it first")
     print("  (in SDR++: stop the radio, then quit) or this survey will fail,")
     print("  or record nothing useful.")
     # Without a terminal there is nobody to ask, so fail safe rather than
@@ -133,6 +149,21 @@ def check_device_free(non_interactive: bool) -> None:
         raise SystemExit("  Refusing to start. Re-run once it is closed.")
     if input("  Start anyway? [y/N] ").strip().lower() not in ("y", "yes"):
         raise SystemExit("  Stopped. Nothing was recorded.")
+    return radio_use.busy_record(res, forced=True)
+
+
+def rig_reference_for(station: Station, text: str | None) -> dict:
+    """The run's rig reference (chain.rig_reference); a broken layout file never stops a run."""
+    from . import chain as chain_mod
+    try:
+        return chain_mod.rig_reference(station, text or "")
+    except Exception as exc:  # noqa: BLE001
+        return {"rig": None, "why": f"chain_layout.json could not be read ({exc})"}
+
+
+def radio_use_rows(sidecar: dict) -> list[str]:
+    from . import chain as chain_mod, radio_use
+    return radio_use.table_rows(sidecar) + chain_mod.rig_reference_rows(sidecar)
 
 
 def eeprom_listing(out: str) -> list[tuple[int, str]]:
@@ -450,7 +481,8 @@ def write_scan_build(csv_path: Path, sidecar: dict, geom: dict,
         f"| Filter | {ch.get('filter')} |",
         f"| Chain | {ch.get('chain_order') or '(not recorded)'} |",
         f"| Conditions (typed) | {sidecar.get('conditions') or '(none recorded)'} |",
-        *conditions.table_rows(sidecar.get("auto_conditions")), "",
+        *conditions.table_rows(sidecar.get("auto_conditions")),
+        *radio_use_rows(sidecar), "",
         "## Analysis", "", "```",
         subprocess.list2cmdline(analyze_cmd) if analyze_cmd else "(not analysed at record time)",
         "```", "",
@@ -743,7 +775,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
             "rtl_power not found. Put the RTL-SDR Blog release in "
             f"{station.root / station.data.get('rtl_sdr_dir', 'rtl-sdr')} "
             "or on PATH, or set rtl_sdr_dir in station.json.")
-    check_device_free(args.non_interactive)
+    others_busy = check_device_free(args.non_interactive, station, receiver)
     device_check(station, args.device)
     warn_long_run(dur_s)
 
@@ -790,8 +822,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad run") ->
         "receiver": receiver,
         "chain": {k: chain.get(k) for k in ("antenna_shape", "whip_length_mm", "lna",
                                             "filter", "chain_order")},
+        # relay 012: the drawing behind the chain text (rig, path, version); the text stays the
+        # authority. Not part of the fingerprint.
+        "rig_reference": rig_reference_for(station, chain.get("chain_order")),
         "conditions": chain.get("conditions", ""),
         "auto_conditions": conditions.new_block(station.data, station.surveys, csv_path.stem),
+        # relay 012: what held the other radio at start. Only when something did, so a run with the
+        # other radio idle writes the same sidecar as before; never part of the fingerprint.
+        **({"other_radios_busy": others_busy} if others_busy else {}),
         "geometry": {k: (round(v, 6) if isinstance(v, float) else v)
                      for k, v in geom.items()
                      if k != "hop_centres_mhz" or geom["hops"] <= 16},

@@ -336,7 +336,8 @@ def write_scan_build(raw_path: Path, sidecar: dict, geom: dict, analyze_cmd,
         f"| Filter | {ch.get('filter')} |",
         f"| Chain | {ch.get('chain_order') or '(not recorded)'} |",
         f"| Conditions (typed) | {sidecar.get('conditions') or '(none recorded)'} |",
-        *conditions.table_rows(sidecar.get("auto_conditions")), "",
+        *conditions.table_rows(sidecar.get("auto_conditions")),
+        *rec.radio_use_rows(sidecar), "",
         "## Analysis", "", "```",
         subprocess.list2cmdline(analyze_cmd) if analyze_cmd else "(not analysed at record time)",
         "```", "",
@@ -573,7 +574,7 @@ def record(args, station: Station, preset: dict) -> int:
         chain_text = rec.confirm_default_chain(station, args, receiver)
     except (KeyboardInterrupt, EOFError):
         raise SystemExit("\n  Cancelled. Nothing was recorded.")
-    rec.check_device_free(args.non_interactive)
+    others_busy = rec.check_device_free(args.non_interactive, station, receiver)
     rec.device_check(station, args.device)
     rec.warn_long_run(dur_s)
     try:
@@ -619,8 +620,12 @@ def record(args, station: Station, preset: dict) -> int:
         "receiver": receiver,
         "chain": {k: chain.get(k) for k in ("antenna_shape", "whip_length_mm", "lna",
                                             "filter", "chain_order")},
+        # relay 012: the drawing behind the chain text (rig, path, version); the text stays the
+        # authority. Not part of the fingerprint.
+        "rig_reference": rec.rig_reference_for(station, chain.get("chain_order")),
         "conditions": chain.get("conditions", ""),
         "auto_conditions": conditions.new_block(station.data, station.surveys, raw_path.stem),
+        **({"other_radios_busy": others_busy} if others_busy else {}),    # relay 012, not fingerprinted
         "geometry": {k: (round(v, 6) if isinstance(v, float) else v)
                      for k, v in geom.items()
                      if k != "hop_centres_mhz" or geom["hops"] <= 16},

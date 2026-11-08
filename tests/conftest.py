@@ -105,3 +105,16 @@ def copy_station(src: Path, dest: Path):
     con.commit()
     con.close()
     return Station.load(dest)
+
+
+@pytest.fixture(autouse=True)
+def process_counts_follow_the_program_list(monkeypatch):
+    """Relay 012: the per-radio check counts SDR processes (host.sdr_program_counts). A test that
+    fakes running programs fakes host.running_sdr_programs; derive the counts from it, so one
+    stand-in drives both and no test reads this computer's real process list for the new check."""
+    from marsad import host
+
+    def counts(extra=()):
+        names = host.running_sdr_programs()
+        return None if names is None else {n: 1 for n in names}
+    monkeypatch.setattr(host, "sdr_program_counts", counts)

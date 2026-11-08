@@ -76,6 +76,26 @@ def running_sdr_programs() -> list[str] | None:
     return found
 
 
+def sdr_program_counts(extra: tuple = ()) -> dict[str, int] | None:
+    """How many of each SDR program are running: {"rtl_power_gainfix.exe": 1, ...}, counting
+    every process (running_sdr_programs lists each name once). None means can't tell."""
+    try:
+        if IS_WINDOWS:
+            names = windows_process_names()
+        else:
+            out = subprocess.run(["ps", "-eo", "comm="],
+                                 capture_output=True, text=True, timeout=30).stdout
+            names = [Path(line.strip()).name.lower() for line in out.splitlines() if line.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return None
+    wanted = {p.lower() + (".exe" if IS_WINDOWS else "") for p in (*SDR_PROGRAMS, *extra)}
+    counts: dict[str, int] = {}
+    for name in names:
+        if name in wanted:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def _windows_volume(path) -> str | None:
     """'C:\\' for a path, from the system's own idea of its volume."""
     import ctypes

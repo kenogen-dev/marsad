@@ -61,7 +61,7 @@ def test_stop_keeps_analyses_and_archives_a_partial_rtl_power_run(tmp_path, monk
         return real_popen(cmd, *a, **k)
     monkeypatch.setattr(record.subprocess, "Popen", popen)
     monkeypatch.setattr(Station, "rtl_power", lambda self: (Path("FAKE_RTL_POWER"), None))
-    monkeypatch.setattr(record, "check_device_free", lambda non_interactive: None)     # no radio
+    monkeypatch.setattr(record, "check_device_free", lambda *a, **k: [])           # no radio
     monkeypatch.setattr(record, "device_check", lambda st, device: None)              # no rtl_eeprom
     rc = []
     args = ["band1", "1h", "--tag", "stoptest", "--chain", "made-up antenna > Coax > radio-a > USB > PC",

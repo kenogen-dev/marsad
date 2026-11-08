@@ -346,3 +346,93 @@ def summary(station: Station) -> dict:
     data["runs_record"] = station.defaults.get("chain_by_serial") or None
     data["file"] = str(path_of(station))
     return data
+
+
+# ---------------------------------------------------------------- rig references (relay 012)
+#
+# The desktop window draws rigs in chain_layout.json beside chain.json; each Save keeps the drawing it
+# replaced in the rig's history. A run records, beside its chain text (which stays the authority), a
+# reference to the drawing that wrote that text: the rig's name, the path (the chain.json name the rig
+# wrote), and a version, a short hash of the drawing itself. The hash needs no counter or clock, so the
+# same drawing gives the same version wherever it is kept: current, or in history after later Saves,
+# or under a new name after a rename (history moves with the rig). Never part of the fingerprint.
+
+LAYOUT_FILE = "chain_layout.json"
+DRAWING_KEYS = ("nodes", "wires", "enclosures", "groups", "power", "power_wires")
+
+
+def drawing_version(rig: dict) -> str:
+    """A drawing's version: 12 hex digits of the sha256 of its drawing keys (nodes, wires and any
+    non-empty enclosures, groups, power, power wires), as the history keeps them."""
+    import hashlib
+    d = {k: rig.get(k) for k in DRAWING_KEYS if k in ("nodes", "wires") or rig.get(k)}
+    raw = json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def read_layout(station: Station) -> dict | None:
+    """chain_layout.json as saved, or None when there is none or it cannot be read. Reads only."""
+    p = station.root / LAYOUT_FILE
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) and isinstance(d.get("rigs"), dict) else None
+
+
+def rig_reference(station: Station, text: str) -> dict:
+    """What a run records about the drawing behind its chain text: {"rig", "path", "version",
+    "file"} when a drawn rig's path wrote exactly this text, else {"rig": None, "why": ...}.
+    An archived rig is used only when no current one wrote the text."""
+    text = (text or "").strip()
+    lay = read_layout(station)
+    if lay is None:
+        return {"rig": None, "why": "no drawn rig: chain_layout.json is absent or unreadable"}
+    found = []
+    for name, r in lay["rigs"].items():
+        if not isinstance(r, dict):
+            continue
+        for path, t in (r.get("chains") or {}).items():
+            if (t or "").strip() == text and text:
+                found.append((bool(r.get("archived")), str(name), str(path), r))
+    if not found:
+        return {"rig": None, "why": "the chain text matches no drawn rig (an old chain, or one typed with --chain)"}
+    found.sort(key=lambda f: (f[0], f[1].lower(), f[2]))
+    archived, name, path, r = found[0]
+    out = {"rig": name, "path": path, "version": drawing_version(r), "file": LAYOUT_FILE}
+    if archived:
+        out["archived"] = True
+    return out
+
+
+def find_drawing(layout: dict | None, version: str, rig: str | None = None) -> dict | None:
+    """The drawing with this version, looked for in the named rig first, then in every rig: its
+    current drawing and every kept version. {"rig", "where": "current" | "history", "saved", "drawing",
+    "chains"} or None when no kept drawing has it."""
+    rigs = (layout or {}).get("rigs") or {}
+    order = ([rig] if rig in rigs else []) + [n for n in rigs if n != rig]
+    for name in order:
+        r = rigs.get(name)
+        if not isinstance(r, dict):
+            continue
+        if isinstance(r.get("nodes"), list) and drawing_version(r) == version:
+            return {"rig": name, "where": "current", "saved": None, "drawing": copy.deepcopy(
+                {k: r[k] for k in DRAWING_KEYS if k in r}), "chains": dict(r.get("chains") or {})}
+        for h in r.get("history") or []:
+            d = (h or {}).get("rig")
+            if isinstance(d, dict) and drawing_version(d) == version:
+                return {"rig": name, "where": "history", "saved": h.get("saved"), "drawing": copy.deepcopy(d),
+                        "chains": dict(h.get("chains") or {})}
+    return None
+
+
+def rig_reference_rows(sidecar: dict | None) -> list[str]:
+    """A Markdown row for report.md and scan_build.md; none for runs from before relay 012."""
+    ref = (sidecar or {}).get("rig_reference")
+    if not isinstance(ref, dict):
+        return []
+    if not ref.get("rig"):
+        return [f"| Rig drawing | none recorded: {ref.get('why') or 'no drawn rig'} |"]
+    arch = " (archived)" if ref.get("archived") else ""
+    return [f"| Rig drawing | {ref['rig']}{arch}, path {ref.get('path')}, version {ref.get('version')} "
+            f"(in {ref.get('file') or LAYOUT_FILE}; the chain text above is the authority) |"]

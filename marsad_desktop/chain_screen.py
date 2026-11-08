@@ -3084,6 +3084,7 @@ class ChainScreen(QWidget):
         self.rig = R.new_rig()
         self.static_ = False
         self.read_only = False         # an archived rig is shown read-only until it is restored
+        self.version_view = None       # relay 012: {"run", "version", ...} while a run's rig is shown as it was
         self.renamed_from = None
         self._soft = False
         self.dirty = False
@@ -3525,6 +3526,11 @@ class ChainScreen(QWidget):
     def fill_rig_menu(self, m: QMenu):
         m.clear()
         d = self.display.get(self.rig_name or "", {})
+        if self.version_view:                     # a run's rig as it was: only the way back is offered
+            a = m.addAction(tool_icon("history"), "Back to the rig as it is now")
+            a.setToolTip("Leave this read-only view and open the rig's current drawing")
+            a.triggered.connect(lambda: self.open_rig(self.rig_name) if self.rig_name in self.display else self.reload())
+            return
         a = m.addAction(tool_icon("history"), "History…")
         a.setEnabled(bool(d.get("history")))
         a.setToolTip("Every Save keeps the version it replaces: look at them and restore one" if a.isEnabled()
@@ -3662,6 +3668,47 @@ class ChainScreen(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.restore_version(versions[lst.currentRow()])
+
+    def open_version(self, info: dict) -> bool:
+        """Relay 012, "Open rig as it was": the drawing a run recorded (its rig reference), found by version in
+        the rig's current drawing or its history, shown read-only and labelled with the run and the version.
+        Nothing is saved; the Rig menu's "Back to the rig as it is now" leaves."""
+        ref = (info or {}).get("ref") or {}
+        run = (info or {}).get("run") or "this run"
+        if self.dirty and not self._ask_unsaved():
+            return False
+        if not self.reload(keep=self.rig_name):
+            return False
+        found = engine_chain.find_drawing(self.layout_doc, str(ref.get("version") or ""), ref.get("rig"))
+        if not found:
+            self.show_notice(f"The drawing run {run} recorded (“{ref.get('rig')}”, version {ref.get('version')}) "
+                             "is not kept in chain_layout.json any more. The run's chain text, in its record, still "
+                             "says what was built.")
+            return False
+        name = found["rig"]
+        self.rig_name = name
+        self.rig = copy.deepcopy(found["drawing"])
+        self.rig.setdefault("nodes", [])
+        self.rig.setdefault("wires", [])
+        self.read_only = True
+        self.renamed_from = None
+        self.dirty = False
+        self.version_view = {"run": run, "version": ref.get("version"), "where": found["where"],
+                             "saved": found.get("saved")}
+        self._reset_history(saved=True)
+        if name in self.display:
+            self._show_in_pick(name)
+        self.scene.clearSelection()
+        self.redraw()
+        when = ("the rig's current drawing" if found["where"] == "current"
+                else f"a kept version, replaced {_when(found.get('saved'))}")
+        renamed = f" (recorded as “{ref.get('rig')}”)" if ref.get("rig") and ref.get("rig") != name else ""
+        self.show_notice(f"“{name}”{renamed} as it was for run {run}: version {ref.get('version')}, {when}. "
+                         "Read-only: look, select and copy; nothing here changes the rig. Rig menu → Back to the rig "
+                         "as it is now.")
+        self.status.emit(f"opened “{name}” as it was for {run}")
+        QTimer.singleShot(0, self._center)
+        return True
 
     def restore_version(self, version: dict) -> bool:
         """Put a kept version back on the grid and save it (a new Save: what it replaces is kept too)."""
@@ -4148,6 +4195,7 @@ class ChainScreen(QWidget):
 
     def open_rig(self, name: str):
         d = self.display[name]
+        self.version_view = None
         self.rig_name = name
         self.rig = copy.deepcopy(d["rig"])
         self.static_ = R.rig_state(d["chains"])["static"]
@@ -5512,7 +5560,7 @@ class ChainScreen(QWidget):
         group.start()
 
     def clear_grid(self):
-        if (not self.rig["nodes"] and not R.enclosures(self.rig) and not R.power_boxes(self.rig)) or self.animating:
+        if self.read_only or (not self.rig["nodes"] and not R.enclosures(self.rig) and not R.power_boxes(self.rig)) or self.animating:
             return
         self.rig = R.new_rig()
         self.changed()
@@ -5552,8 +5600,9 @@ class ChainScreen(QWidget):
         able(self.btn_redo, bool(self.redo_stack), "Redo (Ctrl+Y)", "Nothing to redo: undo something first")
         able(self.btn_tidy, bool(self.rig["nodes"]), "Arrange the rig: source on the left, branches one under "
              "another. Locked boxes stay; parts make way for a group. Undo puts it back.", "Nothing on the grid to tidy")
-        able(self.btn_clear, anything, "Take every part and wire off the grid. Undo brings them back; nothing is "
-             "saved until Save.", "The grid is already empty")
+        able(self.btn_clear, anything and not self.read_only, "Take every part and wire off the grid. Undo brings "
+             "them back; nothing is saved until Save.",
+             "Read-only: nothing here can be cleared" if self.read_only else "The grid is already empty")
         ro = "Archived rigs are read-only: restore it first (Rig menu)"
         able(self.btn_save, has_rig and not self.read_only, "Write this rig to chain.json through the service",
              ro if self.read_only else "Open a rig, or make one with New rig, first")
