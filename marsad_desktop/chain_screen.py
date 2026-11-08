@@ -2,9 +2,9 @@
 
 Drag a part from the list onto the grid. To wire, drag from a part's dot, or from
 one of the rings that appear round a part when the pointer is over it, onto another
-part; a wire leaves from whichever side faces the part it goes to. Cables (coax,
-jumpers, USB) live on the wires: drop one from the Cables list onto a wire, or click
-a wire to give it cables. Drag a part's
+part; a wire leaves from whichever side faces the part it goes to. Cables (Coax and
+USB, each with a length; relay 017) live on the wires: drop one from the Cables list onto a wire,
+or click a wire to give it cables; chokes drop onto cables and slide along them. Drag a part's
 bottom-right corner to resize it. Click a part to edit it; Delete takes the selected
 part or wire out of the drawing. Tidy arranges the rig; Undo and Redo step through
 every change. Boxes can be stacked (Arrange menu, right-click, Ctrl+] and friends) and
@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
 
 from marsad import chain as engine_chain
 
+from . import explain as E
 from . import geometry as G
 from . import rig as R
 from . import theme as T
@@ -56,9 +57,9 @@ UNDO_MAX = 200
 DERIVED = ("text", "tail", "receiver", "source", "needs_confirm")
 # The palette's order, as the design lists it; types not named here follow.
 PALETTE_ORDER = ["antenna", "probe", "load", "adapter", "dcblock", "attenuator", "bulkhead_sma",
-                 "coax", "filter", "lna", "jumper", R.SPLITTER, "sdr", "usb", "bulkhead_usb",
+                 "coax", "filter", "lna", R.SPLITTER, "sdr", "usb", "bulkhead_usb",
                  "isolator", R.HUB, "pc", "custom"]
-LENGTH_TYPES = {"coax", "jumper", "usb"}
+LENGTH_TYPES = {"coax", "jumper", "usb"}       # "jumper": only on parts saved before relay 017, never offered
 # Colour coding: what each kind of part does. Custom parts stay neutral. Relay 006: each section
 # of the Parts list has a hue of its own (SMA parts were sharing the cables' blue before).
 CATEGORY = {"antenna": "source", "probe": "source", "load": "source",
@@ -74,6 +75,7 @@ CATEGORY_NAMES = [("source", "Sources"), ("sma", "SMA adapters, blocks, pads, bu
                   ("enclosure", "Enclosures (drawing only)")]
 PORT_HIT = 11                  # px (scene), how near a connection point a press must be to start a wire
 BEND_HIT = 8                   # px (scene), how near a bend point or a wire's end handle a press must be (relay 015)
+BEAD_HIT = 9                   # px (scene), how near a choke's bead a press must be (relay 017)
 WIRE_END_AT = 22               # px along a selected wire from each end, where its end handle sits (relay 015)
 PIPE_W = 22                    # px, an adapter's pipe
 MATE_TOL = 22                  # px (scene), how near two connection points must be dropped to mate
@@ -128,6 +130,9 @@ SHORTCUTS = [
     ("Wiring", "Ctrl+click a wire", "Add a bend point there (on the grid when snap is on)", "mouse"),
     ("Wiring", "Drag a bend point", "Move it", "mouse"),
     ("Wiring", "Click a bend point, then Delete", "Remove it (the wire's menu: Remove point, Straighten)", "mouse"),
+    ("Cables", "Drop Coax or USB on a wire", "The wire carries that cable; give it a length on its card", "mouse"),
+    ("Cables", "Drop a Choke on a cable", "A ferrite bead on that cable, where it was dropped", "mouse"),
+    ("Cables", "Drag a choke", "Slide it along its cable (right-click it to remove it)", "mouse"),
     ("View", "Wheel", "Zoom round the pointer", "mouse"),
     ("View", "Shift + wheel", "Scroll up and down", "mouse"),
     ("View", "Space + drag   ·   middle-button drag", "Pan", "mouse"),
@@ -150,12 +155,15 @@ def palette_colour(cat: str | None, on: bool = True) -> QColor:
         return T.color("muted")
     if cat == R.POWER:
         return T.color("power")
-    if cat in ("coax", "jumper", "usb"):
+    if cat in ("coax", "jumper", "usb", R.CHOKE):
         return cable_colour(cat)
     return category_colour(cat)
 
 
 def cable_summary(c: dict) -> str:
+    """A cable's label on its wire: what the recorded text calls it (a new cable's name holds its length)."""
+    if c.get("auto"):
+        return R.cable_words(c)[0]
     bits = [str(c.get("name") or "").strip() or c.get("type", "cable")]
     if c.get("length") not in (None, ""):
         bits.append(str(c["length"]))
@@ -820,6 +828,8 @@ def kind_path(kind: str) -> QPainterPath:
             p.addEllipse(QRectF(2, 2, 12, 12)); p.addEllipse(QRectF(6, 6, 4, 4))
         else:
             p.moveTo(1, 12); p.cubicTo(5, 1, 11, 15, 15, 4)
+    elif kind == R.CHOKE:                       # relay 017: a ferrite bead on a cable
+        line((1, 8), (4.5, 8)); p.addRoundedRect(QRectF(4.5, 4, 7, 8), 2.5, 2.5); line((11.5, 8), (15, 8))
     elif kind == R.SPLITTER:
         line((1, 8), (7, 8)); line((7, 8), (14, 3)); line((7, 8), (14, 13))
     elif kind == "sdr":
@@ -1415,6 +1425,9 @@ class PartItem(QGraphicsObject):
         tw = max(20, box.right() - x0)
         a_type = R.antenna(self.node).get("type")
         kind = R.ANTENNA_TYPES.get(a_type, ("Antenna",))[0] if a_type else self.screen.kind_label(self.node)
+        lead = R.antenna(self.node).get("lead") if p["type"] == "antenna" else None
+        if lead:                                     # relay 017: the moulded lead is shown on the antenna
+            kind += f" · lead {lead['length']}" if lead.get("length") else " · built-in lead"
         name = p.get("name") or "(no name)"
         if p["type"] == "attenuator" and p.get("db") not in (None, "", 0):
             name = f"{p['db']} dB"
@@ -1866,7 +1879,7 @@ class EnclosureItem(QGraphicsObject):
 
 class WireItem(QGraphicsPathItem):
     """A wire between two connection points, drawn in the chosen style. The cables it
-    carries (coax, jumper, USB) are named in a label at its middle. Past the radio a
+    carries (Coax, USB) are named in a label at its middle, and their chokes are beads along it. Past the radio a
     wire is the USB side and is drawn dashed when that option is on.
 
     Relay 015: a wire can bend; drag a point anywhere (on the grid when snap is on); click one and press Delete to
@@ -1937,6 +1950,7 @@ class WireItem(QGraphicsPathItem):
             stub.lineTo(b[0], b[1])
             self.setPath(stub)
             self.label_text, self.label_rect = "", QRectF()
+            self.beads = []
             self.setToolTip("Mated directly, port to port (SMA parts screwed together). In the recorded text "
                             "it is the same as a wire with no cable. Click it, then Delete, to separate them."
                             + ("\nM to M or F to F: these won't screw together." if self.clash() else ""))
@@ -1958,6 +1972,44 @@ class WireItem(QGraphicsPathItem):
             self.label_rect = QRectF(mid.x() - w / 2, mid.y() - h / 2, w, h)
         else:
             self.label_rect = QRectF()
+        self.beads = self.bead_spots()
+
+    # -- chokes (relay 017): beads on the wire, one stretch per cable
+    def bead_spots(self) -> list:
+        """(cable index, choke index, point, angle in degrees) for every choke on this wire."""
+        cab = self.cables()
+        path = self.path()
+        length = path.length()
+        out = []
+        if not cab or length <= 0:
+            return out
+        for ci, c in enumerate(cab):
+            for k, ch in enumerate(c.get("chokes") or []):
+                pc = path.percentAtLength(R.choke_global(len(cab), ci, ch.get("at", 0.5)) * length)
+                out.append((ci, k, path.pointAtPercent(pc), path.angleAtPercent(pc)))
+        return out
+
+    def bead_at(self, pt: QPointF):
+        for ci, k, q, _a in getattr(self, "beads", []):
+            if QLineF(q, pt).length() <= BEAD_HIT:
+                return ci, k
+        return None
+
+    def along(self, pt: QPointF) -> float:
+        """How far along the wire (0..1, by length) the point nearest `pt` lies."""
+        path = self.path()
+        length = path.length()
+        if length <= 0:
+            return 0.5
+        best, best_d = 0.5, 1e18
+        steps = max(40, int(length / 4))
+        for s in range(steps + 1):
+            f = s / steps
+            q = path.pointAtPercent(path.percentAtLength(f * length))
+            d = (q.x() - pt.x()) ** 2 + (q.y() - pt.y()) ** 2
+            if d < best_d:
+                best, best_d = f, d
+        return best
 
     def label_point(self) -> QPointF:
         """The middle of the wire, or with bends the middle of its longest stretch, never on a corner."""
@@ -2015,6 +2067,8 @@ class WireItem(QGraphicsPathItem):
             r = r.united(self.label_rect.adjusted(-2, -2, 2, 2))
         for h in self._handle_rects():
             r = r.united(h)
+        for _ci, _k, q, _a in getattr(self, "beads", []):
+            r = r.united(QRectF(q.x() - BEAD_HIT, q.y() - BEAD_HIT, 2 * BEAD_HIT, 2 * BEAD_HIT))
         return r
 
     def shape(self):
@@ -2030,6 +2084,8 @@ class WireItem(QGraphicsPathItem):
             out.addRoundedRect(self.label_rect, 8, 8)
         for h in self._handle_rects():
             out.addEllipse(h)
+        for _ci, _k, q, _a in getattr(self, "beads", []):
+            out.addEllipse(q, BEAD_HIT, BEAD_HIT)
         return out
 
     def paint(self, qp: QPainter, opt, widget=None):
@@ -2049,6 +2105,20 @@ class WireItem(QGraphicsPathItem):
         qp.setPen(self.pen())
         qp.setBrush(Qt.BrushStyle.NoBrush)
         qp.drawPath(self.path())
+        cab = self.cables()
+        drag = self._drag[1:3] if self._drag and self._drag[0] == "choke" else None
+        for ci, k, q, ang in getattr(self, "beads", []):      # chokes: a bead lying along the wire
+            qp.save()
+            qp.translate(q)
+            qp.rotate(-ang)
+            hot = (ci, k) == drag
+            qp.setPen(QPen(T.qc("survey") if hot else T.qc("background"), 1.6))
+            qp.setBrush(cable_colour(cab[ci].get("type")).darker(130 if hot else 115))
+            qp.drawRoundedRect(QRectF(-7.5, -5, 15, 10), 4, 4)
+            qp.setPen(QPen(T.qc("background"), 1))
+            qp.drawLine(QPointF(-2.5, -3), QPointF(-2.5, 3))
+            qp.drawLine(QPointF(2.5, -3), QPointF(2.5, 3))
+            qp.restore()
         if self.label_text:
             first = self.cables()[0].get("type")
             edge = T.color("survey") if self.isSelected() else cable_colour(first)
@@ -2090,7 +2160,14 @@ class WireItem(QGraphicsPathItem):
 
     def hoverMoveEvent(self, ev):
         pt = ev.scenePos()
-        if self.end_at(pt):
+        hit = self.bead_at(pt)
+        if hit is not None:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            note = str((self.cables()[hit[0]]["chokes"][hit[1]]).get("note") or "").strip()
+            self.setToolTip(("A choke" + (f": {note}" if note else "") + ". Drag it along the cable to show where it "
+                             "sits; right-click to remove it. Drawing only, except that the cable's text says "
+                             "\"with choke\"."))
+        elif self.end_at(pt):
             self.setCursor(Qt.CursorShape.SizeAllCursor)
             self.setToolTip("Drag this end to another part to reconnect it")
         elif self.point_at(pt) is not None:
@@ -2118,6 +2195,14 @@ class WireItem(QGraphicsPathItem):
             super().mousePressEvent(ev)
             return
         pt = ev.scenePos()
+        bead = self.bead_at(pt)
+        if bead is not None and not ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._select_only(ev.modifiers())          # relay 017: a choke slides along its own cable
+            self.screen.sel_point = None
+            self._drag = ("choke", bead[0], bead[1], False)
+            self.update()
+            ev.accept()
+            return
         which = self.end_at(pt)
         if which:
             self._drag = ("end", which)
@@ -2154,6 +2239,19 @@ class WireItem(QGraphicsPathItem):
         if d[0] == "end":
             self.screen.drag_reconnect(pt)
             return
+        if d[0] == "choke":
+            _k, ci, k, _moved = d
+            cab = self.cables()
+            if ci >= len(cab) or k >= len(cab[ci].get("chokes") or []):
+                return
+            at = R.choke_local(len(cab), ci, self.along(pt))
+            if cab[ci]["chokes"][k].get("at") != at:
+                cab[ci]["chokes"][k]["at"] = at
+                self._drag = ("choke", ci, k, True)
+                self.screen.status.emit("sliding the choke along its cable (drawing only; Undo puts it back)")
+                self.refresh()
+                self.update()
+            return
         if d[0] == "body":
             _k, grab, at, orig, a, b, moved = d
             if not moved and (ev.screenPos() - at).manhattanLength() < CLICK_TOL * 2:
@@ -2186,6 +2284,10 @@ class WireItem(QGraphicsPathItem):
             return
         if d[0] == "end":
             self.screen.end_reconnect(ev.scenePos())
+        elif d[0] == "choke":
+            if d[3]:
+                self.screen.changed()
+            self.screen.select_wire(*self.key())
         elif d[0] == "point" and d[2]:
             self.screen.changed()
         elif d[0] == "body" and d[6]:
@@ -2846,18 +2948,28 @@ class PartsList(QListWidget):
                                 f"Drag onto the grid to add a {labels[t]['label']}. Drop it with a dot on another "
                                 "part's dot and the two mate directly, port to port, with no wire.")
             self._heading("PARTS")
+        if self.cables:
+            self._heading("CABLES · drop onto a wire")
         order = PALETTE_ORDER + [t for t in labels if t not in PALETTE_ORDER]
         for t in order:
-            if t not in labels or ((t in R.CABLE_TYPES) != self.cables) or (not self.cables and t in R.SMA_TYPES):
+            if (t not in labels or t in R.OLD_CABLE_TYPES or ((t in R.CABLE_TYPES) != self.cables)
+                    or (not self.cables and t in R.SMA_TYPES)):
                 continue
             if self.cables:
                 cat = t
-                tip = f"Drop onto a wire: the wire then carries a {labels[t]['label']}."
+                tip = (f"Drop onto a wire: the wire then carries a {labels[t]['label']}. Give it a length on its "
+                       "card; the recorded text says it, e.g. "
+                       + ("\"3 ft RG316 coax\"." if t == "coax" else "\"16 ft USB cable\"."))
             else:
                 cat = CATEGORY.get(t)
                 tip = labels[t].get("note") or f"Drag onto the grid to add a {labels[t]['label']}."
                 tip = tip[0].upper() + tip[1:] + ("" if tip.endswith(".") else ".")
             self._entry(labels[t]["label"], t, t, cat, tip)
+        if self.cables:
+            self._heading("ON CABLES · drop onto a cable")
+            self._entry("Choke", R.CHOKE, R.CHOKE, R.CHOKE,
+                        "A ferrite bead or loop that stops the cable's outside carrying noise. Drop it onto a cable, "
+                        "then slide it along the wire. The cable's text then says \"with choke\".")
         if self.cables and self.count():
             self.setFixedHeight(sum(self.sizeHintForRow(i) for i in range(self.count())) + 6)
 
@@ -3333,6 +3445,7 @@ class EditCard(QFrame):
         kind.setToolTip("The antenna's type: its shape on the grid follows, and it gets the settings that type has")
         kind.currentIndexChanged.connect(lambda i: self.screen.set_antenna(node["id"], type=kind.itemData(i) or None))
         self._field("Antenna type", kind)
+        self._lead_rows(node)
         if not a.get("type"):
             return
         _label, fields = R.ANTENNA_TYPES.get(a["type"], R.ANTENNA_TYPES["custom"])
@@ -3348,6 +3461,54 @@ class EditCard(QFrame):
             self._field(label, e)
         self._note("Antenna settings are drawing and Output only: they do not enter the recorded text. "
                    "Nominal gain is shown beside the estimate, not added into it.")
+
+    def _lead_rows(self, node: dict):
+        """Relay 017: the lead moulded into the antenna (what was drawn as a Pigtail): its length, connector and
+        note. It belongs to the antenna, so it is drawn on it and shown in Output, and never reaches the text."""
+        lead = R.antenna(node).get("lead") or {}
+        nid = node["id"]
+        box = QFrame()
+        box.setObjectName("CardBox")
+        g = QGridLayout(box)
+        g.setContentsMargins(10, 8, 10, 8)
+        g.setVerticalSpacing(4)
+        g.addWidget(E.titled("Built-in lead", "antenna_lead", muted=False), 0, 0, 1, 3)
+        n, u = R.split_length(lead.get("length"))
+        num = QLineEdit(n)
+        num.setPlaceholderText("Length, e.g. 2")
+        num.setToolTip("How long the moulded lead is: a number, then its unit")
+        unit = QComboBox()
+        for k in R.LENGTH_UNITS:
+            unit.addItem(k, k)
+        unit.setCurrentIndex(R.LENGTH_UNITS.index(u) if u in R.LENGTH_UNITS else 0)
+        num.textEdited.connect(lambda v: self.screen.set_lead(nid, "length", R.length_text(v.strip(), unit.currentData())))
+        unit.currentIndexChanged.connect(lambda i: self.screen.set_lead(
+            nid, "length", R.length_text(num.text().strip(), unit.itemData(i))))
+        lab = QLabel("Length")
+        lab.setProperty("muted", True)
+        g.addWidget(lab, 1, 0)
+        g.addWidget(num, 1, 1)
+        g.addWidget(unit, 1, 2)
+        con = QLineEdit(str(lead.get("connector") or ""))
+        con.setPlaceholderText("e.g. SMA male")
+        con.setToolTip("The connector at the lead's end")
+        con.textEdited.connect(lambda v: self.screen.set_lead(nid, "connector", v.strip() or None))
+        lab = QLabel("Connector")
+        lab.setProperty("muted", True)
+        g.addWidget(lab, 2, 0)
+        g.addWidget(con, 2, 1, 1, 2)
+        note = NoteEdit(str(lead.get("note") or ""), "Anything about the lead")
+        note.edited.connect(lambda v: self.screen.set_lead(nid, "note", v.strip() or None))
+        lab = QLabel("Note")
+        lab.setProperty("muted", True)
+        g.addWidget(lab, 3, 0, Qt.AlignmentFlag.AlignTop)
+        g.addWidget(note, 3, 1, 1, 2)
+        hint = QLabel("Drawing and Output only: the lead never enters the recorded text.")
+        hint.setWordWrap(True)
+        hint.setProperty("muted", True)
+        g.addWidget(hint, 4, 0, 1, 3)
+        g.setColumnStretch(1, 1)
+        self.lay.addWidget(box)
 
     def _sma_rows(self, node: dict):
         """An SMA part's kind: an adapter's shape, gender and turn (written into the recorded text
@@ -3404,6 +3565,20 @@ class EditCard(QFrame):
         head = ElidedLabel("Edit part · " + self.screen.labels.get(p["type"], {}).get("label", p["type"]))
         head.setFont(T.ui_font(10, QFont.Weight.DemiBold))
         self.lay.addWidget(head)
+        if R.old_word(p):                    # relay 017: a Jumper or Pigtail part, offered a conversion
+            it_ = next((x for x in R.old_words(self.screen.rig) if x["where"] == "part" and x["id"] == node["id"]),
+                       None)
+            if it_ is not None:
+                lab = QLabel(f"\"{'Pigtail' if it_['kind'] == 'pigtail' else 'Jumper'}\" is no longer used. "
+                             + ("This lead can become the antenna's built-in lead (drawing and Output only)."
+                                if it_.get("merge") else f"It can become: {it_['becomes']}"))
+                lab.setWordWrap(True)
+                self.lay.addWidget(lab)
+                btn = QPushButton("Merge into antenna" if it_.get("merge") else "Convert to Coax / USB cable")
+                btn.setToolTip("Changes this rig's recorded text, so the next run records it as changed. "
+                               "Undo puts it back.")
+                btn.clicked.connect(lambda _=False, x=it_: self.screen.convert_old_item(x))
+                self._row(btn, E.info("old_words"))
 
         def text_edit(key, label):
             e = QLineEdit(str(p.get(key) or ""))
@@ -3630,48 +3805,22 @@ class EditCard(QFrame):
             note.setProperty("muted", True)
             note.setWordWrap(True)
             self.lay.addWidget(note)
-        types = [t for t in R.CABLE_TYPES if t in self.screen.labels]
+        self._rec_labels = {}
         for i, c in enumerate(cables):
-            box = QFrame()
-            box.setObjectName("CardBox")
-            box.setStyleSheet(f"QFrame#CardBox {{ border: 1px solid {cable_colour(c.get('type')).name()};"
-                              f" border-radius: 8px; }}")
-            bl = QGridLayout(box)
-            bl.setContentsMargins(10, 8, 10, 8)
-            bl.setHorizontalSpacing(6)
-            bl.setVerticalSpacing(4)
-            kind = QComboBox()
-            for t in types:
-                kind.addItem(self.screen.labels[t]["label"], t)
-            kind.setCurrentIndex(max(0, types.index(c["type"]) if c.get("type") in types else 0))
-            kind.currentIndexChanged.connect(lambda k, i=i, kind=kind: self._cable_type(i, kind.itemData(k)))
-            rm = QPushButton("Remove")
-            rm.setToolTip("Take this cable off the wire")
-            rm.clicked.connect(lambda _=False, i=i: self._cable_remove(i))
-            bl.addWidget(kind, 0, 0)
-            bl.addWidget(rm, 0, 1)
-
-            def edit(key, hint, i=i, c=c):
-                e = QLineEdit(str(c.get(key) or ""))
-                e.setPlaceholderText(hint)
-                e.setToolTip(hint)
-                e.textEdited.connect(lambda v, i=i, k=key: self._cable_set(i, k, v))
-                return e
-
-            bl.addWidget(edit("name", "Name (goes into the recorded text)"), 1, 0)
-            bl.addWidget(edit("length", "Length"), 1, 1)
-            bl.addWidget(edit("detail", "Note (goes into the text in brackets)"), 2, 0, 1, 2)
-            bl.addWidget(self.number_edit(c.get("gain_db"), lambda v, i=i: self._cable_gain(i, v),
-                                          "Nominal loss, dB, e.g. -1.2 (drawing only: for the estimate)"), 3, 0, 1, 2)
-            bl.setColumnStretch(0, 3)
-            bl.setColumnStretch(1, 2)
-            self.lay.addWidget(box)
+            self.lay.addWidget(self._cable_box(i, c))
         add = QHBoxLayout()
-        for t in types:
-            btn = QPushButton("+ " + {"coax": "Coax", "jumper": "Jumper", "usb": "USB"}.get(t, t))
-            btn.setToolTip(f"Add a {self.screen.labels[t]['label']} to this connection, after any already on it")
+        for t in R.CABLE_TYPES:
+            btn = QPushButton("+ " + {"coax": "Coax", "usb": "USB"}[t])
+            btn.setToolTip(f"Add a {'Coax' if t == 'coax' else 'USB'} cable to this connection, after any already "
+                           "on it")
             btn.clicked.connect(lambda _=False, t=t: self._cable_add(t))
             add.addWidget(btn)
+        ch = QPushButton("+ Choke")
+        ch.setEnabled(bool(cables))
+        ch.setToolTip("Put a choke on this wire's last cable, half way along; drag the bead to move it"
+                      if cables else "A choke sits on a cable: add a Coax or USB cable first")
+        ch.clicked.connect(lambda: self._choke_add(len(self.wire.get("cables") or []) - 1))
+        add.addWidget(ch)
         self.lay.addLayout(add)
         out = QPushButton("Take wire out")
         out.setToolTip("Removes this wire (and its cables) from the drawing. Nothing is saved until Save.")
@@ -3681,12 +3830,226 @@ class EditCard(QFrame):
         self.show()
         self.raise_()
 
+    def _cable_box(self, i: int, c: dict) -> QFrame:
+        """One cable on the wire's card (relay 017). A cable drawn since is Coax or USB with a length and, for
+        coax, a type; its note reaches the text only when ticked. A cable saved before keeps its own name and
+        note as saved; one in the old words (Jumper, Pigtail) offers to convert, and changes nothing until then."""
+        box = QFrame()
+        box.setObjectName("CardBox")
+        box.setStyleSheet(f"QFrame#CardBox {{ border: 1px solid {cable_colour(c.get('type')).name()};"
+                          f" border-radius: 8px; }}")
+        bl = QGridLayout(box)
+        bl.setContentsMargins(10, 8, 10, 8)
+        bl.setHorizontalSpacing(6)
+        bl.setVerticalSpacing(4)
+        rm = QPushButton("Remove")
+        rm.setToolTip("Take this cable off the wire (its chokes go with it)")
+        rm.clicked.connect(lambda _=False, i=i: self._cable_remove(i))
+        row = 0
+
+        def label(text, key=None):
+            if key:
+                return E.titled(text, key)
+            lab = QLabel(text)
+            lab.setProperty("muted", True)
+            return lab
+
+        if c.get("auto"):
+            kind = QComboBox()
+            for t in R.CABLE_TYPES:
+                kind.addItem("Coax" if t == "coax" else "USB cable", t)
+            kind.setCurrentIndex(R.CABLE_TYPES.index(c["type"]) if c.get("type") in R.CABLE_TYPES else 0)
+            kind.currentIndexChanged.connect(lambda k, i=i, kind=kind: self._cable_type(i, kind.itemData(k)))
+            E.attach(kind, "cable_coax" if c.get("type") == "coax" else "cable_usb")
+            bl.addWidget(kind, row, 0, 1, 2)
+            bl.addWidget(E.info("cable_coax" if c.get("type") == "coax" else "cable_usb"), row, 2)
+            bl.addWidget(rm, row, 3)
+            row += 1
+            n, u = R.split_length(c.get("length"))
+            num = QLineEdit(n)
+            num.setPlaceholderText("e.g. 3")
+            num.setToolTip("The cable's length: a number, then its unit beside it")
+            unit = QComboBox()
+            for k in R.LENGTH_UNITS:
+                unit.addItem(k, k)
+            unit.setCurrentIndex(R.LENGTH_UNITS.index(u) if u in R.LENGTH_UNITS else 0)
+            num.textEdited.connect(lambda v, i=i, unit=unit: self._cable_length(i, v, unit.currentData()))
+            unit.currentIndexChanged.connect(lambda k, i=i, num=num, unit=unit:
+                                             self._cable_length(i, num.text(), unit.itemData(k)))
+            bl.addWidget(label("Length"), row, 0)
+            bl.addWidget(num, row, 1)
+            bl.addWidget(unit, row, 2, 1, 2)
+            row += 1
+            if c.get("type") == "coax":
+                ct = QLineEdit(str(c.get("coax_type") or ""))
+                ct.setPlaceholderText("e.g. RG316, RG58")
+                ct.setToolTip("The coax type, as printed on the cable. Free text; it goes into the recorded text.")
+                ct.textEdited.connect(lambda v, i=i: self._cable_set(i, "coax_type", v))
+                bl.addWidget(label("Coax type"), row, 0)
+                bl.addWidget(ct, row, 1, 1, 3)
+                row += 1
+            note = NoteEdit(str(c.get("note") or ""), "Connector genders, S-bend, maker…")
+            note.edited.connect(lambda v, i=i: self._cable_set(i, "note", v))
+            bl.addWidget(label("Note"), row, 0, Qt.AlignmentFlag.AlignTop)
+            bl.addWidget(note, row, 1, 1, 3)
+            row += 1
+            inc = QCheckBox("Include the note in the recorded text")
+            inc.setChecked(bool(c.get("note_in_text")))
+            inc.toggled.connect(lambda on, i=i: self._cable_note_in_text(i, on))
+            bl.addWidget(E.with_info(inc, "cable_note_in_text"), row, 0, 1, 4)
+            row += 1
+        else:
+            head = QLabel(R.cable_text(c))
+            head.setWordWrap(True)
+            head.setToolTip("As saved before November 2026: its text is kept exactly until you change it")
+            bl.addWidget(head, row, 0, 1, 3)
+            bl.addWidget(rm, row, 3)
+            row += 1
+            old = R.old_word(c)
+            if old:
+                bl.addWidget(self._old_offer(i, c, old), row, 0, 1, 4)
+                row += 1
+
+            def edit(key, hint, i=i, c=c):
+                e = QLineEdit(str(c.get(key) or ""))
+                e.setPlaceholderText(hint)
+                e.setToolTip(hint)
+                e.textEdited.connect(lambda v, i=i, k=key: self._cable_set(i, k, v))
+                return e
+
+            bl.addWidget(edit("name", "Name (goes into the recorded text)"), row, 0, 1, 3)
+            bl.addWidget(edit("length", "Length"), row, 3)
+            row += 1
+            bl.addWidget(edit("detail", "Note (goes into the text in brackets)"), row, 0, 1, 4)
+            row += 1
+            if not old:
+                use = QPushButton("Write from length and type")
+                use.setToolTip("Rewrite this cable the new way: Coax or USB with a length, its text made from those. "
+                               "Its saved text changes, so the next run records the rig as changed. Undo puts it back.")
+                use.clicked.connect(lambda _=False, i=i: self._cable_modernise(i))
+                bl.addWidget(use, row, 0, 1, 4)
+                row += 1
+        for k, ch in enumerate(c.get("chokes") or []):
+            r = QHBoxLayout()
+            r.setSpacing(4)
+            dot = QLabel()
+            dot.setPixmap(kind_pixmap(R.CHOKE, cable_colour(c.get("type")), 14, self.devicePixelRatioF()))
+            r.addWidget(dot)
+            e = QLineEdit(str(ch.get("note") or ""))
+            e.setPlaceholderText("Choke note, e.g. ferrite, 3 turns")
+            e.setToolTip("Drawing only: a choke's note never reaches the recorded text")
+            e.textEdited.connect(lambda v, i=i, k=k: self._choke_note(i, k, v))
+            r.addWidget(e, 1)
+            x = QPushButton("Remove")
+            x.setToolTip("Take this choke off the cable (drawing only)")
+            x.clicked.connect(lambda _=False, i=i, k=k: self._choke_remove(i, k))
+            r.addWidget(x)
+            bl.addLayout(r, row, 0, 1, 4)
+            row += 1
+        bl.addWidget(self.number_edit(c.get("gain_db"), lambda v, i=i: self._cable_gain(i, v),
+                                      "Nominal loss, dB, e.g. -1.2 (drawing only: for the estimate)"), row, 0, 1, 4)
+        row += 1
+        rec = QLabel()
+        rec.setObjectName("CableText")
+        rec.setProperty("muted", True)
+        rec.setWordWrap(True)
+        rec.setText("Recorded as: " + R.cable_text(c))
+        bl.addWidget(rec, row, 0, 1, 4)
+        self._rec_labels[i] = rec
+        bl.setColumnStretch(1, 3)
+        return box
+
+    def _old_offer(self, i: int, c: dict, old: str) -> QFrame:
+        """The gentle offer on a cable in the old words: what it would become, and one button. Nothing changes
+        until the owner presses it."""
+        f = QFrame()
+        f.setObjectName("OldWords")
+        f.setStyleSheet(f"QFrame#OldWords {{ border: 1px solid {T.C['lines']}; border-radius: 6px; }}")
+        v = QVBoxLayout(f)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(4)
+        item = next((x for x in R.old_words(self.screen.rig)
+                     if x["where"] == "cable" and x["wire"] == (self.wire["from"], self.wire["port"])
+                     and x["i"] == i), None)
+        word = "Pigtail" if old == "pigtail" else "Jumper"
+        merge = bool(item and item.get("merge"))
+        text = (f"\"{word}\" is no longer a cable type. "
+                + ("This lead is moulded into the antenna, so it can become the antenna's built-in lead "
+                   "(drawing and Output only). The recorded text then drops it."
+                   if merge else f"It can become: {item['becomes'] if item else ''}"))
+        lab = QLabel(text)
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        btn = QPushButton("Merge into antenna" if merge else "Convert to Coax / USB cable")
+        btn.setToolTip("Changes this rig's recorded text, so the next run records it as changed. Undo puts it back.")
+        btn.clicked.connect(lambda _=False, it=item: self.screen.convert_old_item(it))
+        r = QHBoxLayout()
+        r.addWidget(btn)
+        r.addWidget(E.info("old_words"))
+        r.addStretch(1)
+        v.addLayout(r)
+        return f
+
+    def _cable_redo_text(self, i):
+        c = self.wire["cables"][i]
+        R.sync_cable(c)
+        lab = self._rec_labels.get(i)
+        if lab is not None:
+            lab.setText("Recorded as: " + R.cable_text(c))
+
+    def _cable_length(self, i, number, unit):
+        c = self.wire["cables"][i]
+        n = str(number or "").strip().replace(",", ".")
+        ln = R.length_text(n, unit)
+        if ln:
+            c["length"] = ln
+        else:
+            c.pop("length", None)
+        self._cable_redo_text(i)
+        self.screen.changed(redraw=False, merge=("cable", self.wire["from"], self.wire["port"], i, "length"))
+        self.screen._refresh_wires()
+
+    def _cable_note_in_text(self, i, on):
+        c = self.wire["cables"][i]
+        if on:
+            c["note_in_text"] = True
+        else:
+            c.pop("note_in_text", None)
+        self._cable_redo_text(i)
+        self.screen.changed(redraw=False)
+
+    def _cable_modernise(self, i):
+        self.wire["cables"][i] = R.converted_cable(self.wire["cables"][i])
+        self._wire_changed()
+
+    def _choke_add(self, i):
+        if i < 0:
+            return
+        c = self.wire["cables"][i]
+        k = len(c.get("chokes") or [])            # spread out, clear of the cable's label in the middle
+        c.setdefault("chokes", []).append({"at": (0.3, 0.7, 0.15, 0.85, 0.5)[k % 5]})
+        R.sync_cable(c)
+        self._wire_changed()
+
+    def _choke_note(self, i, k, v):
+        ch = self.wire["cables"][i]["chokes"][k]
+        if v.strip():
+            ch["note"] = v
+        else:
+            ch.pop("note", None)
+        self.screen.changed(redraw=False, merge=("choke", self.wire["from"], self.wire["port"], i, k))
+
+    def _choke_remove(self, i, k):
+        R.remove_choke(self.screen.rig, self.wire["from"], self.wire["port"], i, k)
+        self._wire_changed()
+
     def _cable_set(self, i, key, value):
         c = self.wire["cables"][i]
-        if value in (None, "") and key == "length":
-            c.pop("length", None)
+        if value in (None, "") and key in ("length", "coax_type", "note"):
+            c.pop(key, None)
         else:
             c[key] = value
+        self._cable_redo_text(i)
         self.screen.changed(redraw=False, merge=("cable", self.wire["from"], self.wire["port"], i, key))
         self.screen._refresh_wires()
 
@@ -3700,6 +4063,11 @@ class EditCard(QFrame):
 
     def _cable_type(self, i, type_):
         c = self.wire["cables"][i]
+        if c.get("auto"):                        # relay 017: the text follows from the fields
+            c["type"] = type_
+            R.sync_cable(c)
+            self._wire_changed()
+            return
         old_label = self.screen.labels.get(c.get("type"), {}).get("label")
         if not c.get("name") or c.get("name") == old_label:
             c["name"] = self.screen.labels.get(type_, {}).get("label", type_)
@@ -4029,6 +4397,7 @@ class ChainScreen(QWidget):
         self.notice = QLabel()
         self.notice.setObjectName("Notice")
         self.notice.setWordWrap(True)
+        self.notice.linkActivated.connect(self._notice_link)       # relay 017: Review and convert…
         self.notice.hide()
         nwrap = QHBoxLayout()
         nwrap.setContentsMargins(16, 10, 16, 0)
@@ -4076,7 +4445,7 @@ class ChainScreen(QWidget):
         lg.setHorizontalSpacing(6)
         lg.setVerticalSpacing(2)
         rows = ([(category_colour(cat), name) for cat, name in CATEGORY_NAMES]
-                + [(cable_colour("coax"), "Coax and jumpers (on wires)"),
+                + [(cable_colour("coax"), "Coax (on wires)"),
                    (T.color("power"), "Power (drawing only)"),
                    ("dash", "USB side of a radio"),
                    ("M", "SMA male port (a pin)"), ("F", "SMA female port (a socket)")])
@@ -4649,10 +5018,21 @@ class ChainScreen(QWidget):
         if isinstance(item, WireItem) and not R.mated(item.wire):
             sub = Menu(m)
             sub.setTitle("Add a cable")
-            for t in [t for t in R.CABLE_TYPES if t in self.labels]:
-                a = sub.addAction(dot_icon(cable_colour(t)), self.labels[t]["label"])
+            for t in R.CABLE_TYPES:
+                a = sub.addAction(dot_icon(cable_colour(t)), "Coax" if t == "coax" else "USB cable")
                 a.triggered.connect(lambda _=False, t=t, w=item.wire: self._add_cable_to(w, t))
             m.addMenu(sub)
+            pt0 = self.menu_point or item.label_point()          # relay 017: chokes
+            bead = item.bead_at(pt0)
+            a = m.addAction("Put a choke here")
+            a.setEnabled(bool(item.cables()))
+            a.setToolTip("A ferrite bead on the cable at this point" if item.cables()
+                         else "A choke sits on a cable: add a Coax or USB cable first")
+            a.triggered.connect(lambda _=False, w=item.wire, p=QPointF(pt0), it=item: self._choke_here(w, it, p))
+            if bead is not None:
+                a = m.addAction("Remove this choke")
+                a.setToolTip("Takes it off the cable: drawing only, and the cable's \"with choke\" if it was the last")
+                a.triggered.connect(lambda _=False, w=item.wire, b=bead: self._choke_off(w, *b))
             # relay 015: bend points
             m.addSeparator()
             pt = self.menu_point or item.label_point()
@@ -4671,6 +5051,19 @@ class ChainScreen(QWidget):
             a.setChecked(bool(item.wire.get("square")))
             a.setToolTip("Square corners between this wire's points, whatever the wire style")
             a.triggered.connect(lambda on, w=item.wire: self.set_square(w, on))
+
+    def _choke_here(self, wire: dict, item, pt: QPointF):
+        why = R.add_choke(self.rig, wire["from"], wire["port"], item.along(pt))
+        if why:
+            self.show_notice(why)
+            return
+        self.changed()
+        self.select_wire(wire["from"], wire["port"])
+
+    def _choke_off(self, wire: dict, ci: int, k: int):
+        R.remove_choke(self.rig, wire["from"], wire["port"], ci, k)
+        self.changed()
+        self.select_wire(wire["from"], wire["port"])
 
     def _add_cable_to(self, wire: dict, type_: str):
         key = (wire["from"], wire["port"])
@@ -4938,7 +5331,110 @@ class ChainScreen(QWidget):
                              "Restore it from the Rig menu to edit it or use it for runs.")
         else:
             self.show_notice(None)
+            self.offer_old_words()
         QTimer.singleShot(0, self._center)
+
+    # -- relay 017: Jumper and Pigtail are old words. Offered, never converted silently.
+    def old_words_here(self) -> tuple[list, list]:
+        lib = R.library_old_words({"library": self.library}) if self.library else []
+        return (R.old_words(self.rig) if self.rig else []), lib
+
+    def offer_old_words(self):
+        """A gentle notice when the open drawing, or My parts, still says Jumper or Pigtail."""
+        items, lib = self.old_words_here()
+        if not items and not lib:
+            return
+        words = sorted({("Pigtail" if x["kind"] == "pigtail" else "Jumper") for x in items + lib})
+        where = ("this drawing and My parts" if items and lib else ("My parts" if lib else "this drawing"))
+        self.show_notice(f"{' and '.join(words)} {'is' if len(words) == 1 else 'are'} no longer used: cables are "
+                         f"Coax or USB with a length. {where[0].upper() + where[1:]} still "
+                         f"{'uses' if len(words) == 1 else 'use'} {'it' if len(words) == 1 else 'them'}, unchanged. "
+                         f"<a href=\"old-words\">Review and convert…</a>")
+
+    def _notice_link(self, href: str):
+        if href == "old-words":
+            self.review_old_words()
+
+    def review_old_words(self):
+        """Every old word in this drawing and in My parts, what each would become, one button each."""
+        items, lib = self.old_words_here()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Jumper and Pigtail")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
+        lay.setSpacing(T.SPACE)
+        head = QHBoxLayout()
+        intro = QLabel("Cables are now Coax or USB with a length. Each of these is unchanged until you convert it; "
+                       "converting changes the rig's recorded text, so its next run records it as changed. "
+                       "Undo puts it back.")
+        intro.setWordWrap(True)
+        head.addWidget(intro, 1)
+        head.addWidget(E.info("old_words"), 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(head)
+        if not items and not lib:
+            lay.addWidget(QLabel("Nothing left in the old words."))
+        for it in items:
+            lay.addWidget(self._old_row(f"{'Pigtail' if it['kind'] == 'pigtail' else 'Jumper'} in this drawing",
+                                        it["was"], it["becomes"],
+                                        "Merge into antenna" if it.get("merge") else "Convert to Coax / USB cable",
+                                        lambda _=False, it=it: (dlg.accept(), self.convert_old_item(it, reopen=True))))
+        for e in lib:
+            lay.addWidget(self._old_row("In My parts", e["was"], e["becomes"], "Convert in My parts",
+                                        lambda _=False, e=e: (dlg.accept(), self.convert_lib_old(e["id"]))))
+        foot = QLabel("Past runs' records are never changed: in records made before November 2026, \"jumper\" "
+                      "means a short cable.")
+        foot.setWordWrap(True)
+        foot.setProperty("muted", True)
+        lay.addWidget(foot)
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.reject)
+        r = QHBoxLayout()
+        r.addStretch(1)
+        r.addWidget(close)
+        lay.addLayout(r)
+        dlg.resize(560, dlg.sizeHint().height())
+        self._old_dialog = dlg
+        dlg.exec()
+
+    def _old_row(self, where: str, was: str, becomes: str, button: str, slot) -> QFrame:
+        f = QFrame()
+        f.setObjectName("CardBox")
+        g = QGridLayout(f)
+        g.setContentsMargins(10, 8, 10, 8)
+        g.setVerticalSpacing(2)
+        w = QLabel(where)
+        w.setProperty("muted", True)
+        g.addWidget(w, 0, 0, 1, 2)
+        a = QLabel(f"Now: {was}")
+        a.setWordWrap(True)
+        b = QLabel(f"Becomes: {becomes}")
+        b.setWordWrap(True)
+        g.addWidget(a, 1, 0)
+        g.addWidget(b, 2, 0)
+        btn = QPushButton(button)
+        btn.clicked.connect(slot)
+        g.addWidget(btn, 1, 1, 2, 1, Qt.AlignmentFlag.AlignVCenter)
+        g.setColumnStretch(0, 1)
+        return f
+
+    def convert_old_item(self, item: dict | None, reopen: bool = False):
+        """Apply one offer: one undoable step, then the notice again for whatever is left."""
+        if item is None or self.read_only:
+            return
+        R.convert_old(self.rig, item)
+        self.changed()
+        self.scene.clearSelection()
+        self.show_notice(None)
+        self.offer_old_words()
+        if reopen and any(self.old_words_here()):
+            QTimer.singleShot(0, self.review_old_words)
+
+    def convert_lib_old(self, lid: str):
+        if self._lib_change(lid, R.convert_lib_entry):
+            self.show_notice(None)
+            self.offer_old_words()
+            if any(self.old_words_here()):
+                QTimer.singleShot(0, self.review_old_words)
 
     def _center(self):
         """Show the whole rig if it fits; else start from its left end."""
@@ -5273,7 +5769,13 @@ class ChainScreen(QWidget):
                              "on. Separate them first (click the joint, then Delete), then wire them.")
             return
         key = (wi.wire["from"], wi.wire["port"])
-        wi.wire.setdefault("cables", []).append(R.new_cable(type_, self.labels))
+        if type_ == R.CHOKE:                          # relay 017: a choke goes onto the cable under the drop
+            why = R.add_choke(self.rig, *key, wi.along(pt))
+            if why:
+                self.show_notice(why)
+                return
+        else:
+            wi.wire.setdefault("cables", []).append(R.new_cable(type_, self.labels))
         self.show_notice(None)
         self.changed()
         self.select_wire(*key)
@@ -5887,6 +6389,22 @@ class ChainScreen(QWidget):
             it = self.items_by_id.get(nid)
             if it is not None:
                 it.update()
+
+    def set_lead(self, nid: str, key: str, value: str | None):
+        """Relay 017: one field of an antenna's built-in lead (length, connector, note). Drawing and Output only."""
+        node = R.box(self.rig, nid)
+        if node is None:
+            return
+        lead = dict(R.antenna(node).get("lead") or {})
+        if value in (None, ""):
+            lead.pop(key, None)
+        else:
+            lead[key] = value
+        self.set_antenna(nid, redraw=False, lead=lead or None)
+        it = self.items_by_id.get(nid)
+        if it is not None:
+            it.prepareGeometryChange()
+            it.update()
             self.fill_output()
 
     def choose_antenna(self, nid: str, where: QPoint):
@@ -6732,8 +7250,10 @@ class ChainScreen(QWidget):
             node = parts[0].node
             secs = [("Part", self._part_rows(node))]
             if node["part"]["type"] == "antenna":
-                lines = R.antenna_lines(node)
-                secs.append(("Antenna", lines or [("Type", "not set: choose it on the part's card")]))
+                lines = R.antenna_lines(node) or [("Type", "not set: choose it on the part's card")]
+                if R.lead_text(node):
+                    lines = lines + [("Built-in lead", R.lead_text(node))]
+                secs.append(("Antenna", lines))
             on = [p_ for p_ in paths if any(nid == node["id"] for nid, _ in p_)]
             for k, p_ in enumerate(on[:3]):
                 secs.append((f"Path {k + 1} of {len(on)}" if len(on) > 1 else "Path", self._path_rows(p_)))
@@ -6811,6 +7331,10 @@ class ChainScreen(QWidget):
                 ("Estimate", est)]
         if rep_["antenna_gain"] not in (None, ""):
             rows.append(("Antenna gain", f"{rep_['antenna_gain']:g} dBi (not in the estimate)"))
+        if rep_.get("antenna_lead"):
+            rows.append(("Antenna lead", f"{rep_['antenna_lead']} (built in; not in the recorded text)"))
+        if rep_.get("chokes"):
+            rows.append(("Chokes", f"{rep_['chokes']} on this path's cables"))
         return rows
 
     def _rig_rows(self, paths) -> list:
@@ -7156,6 +7680,11 @@ class ChainScreen(QWidget):
             a.triggered.connect(lambda: self._lib_rename(entry["id"]))
             a = m.addAction("Edit…")
             a.triggered.connect(lambda: self._lib_edit(entry["id"]))
+            if R.old_word(entry["part"]):          # relay 017: a Jumper or Pigtail saved in My parts
+                a = m.addAction("Convert to Coax / USB cable")
+                a.setToolTip("Becomes: " + engine_chain.part_text(R.converted_part(entry["part"]))
+                             + ". Parts already dropped into rigs keep their own copy.")
+                a.triggered.connect(lambda: self.convert_lib_old(entry["id"]))
             m.addSeparator()
             a = m.addAction("Remove from list")
             a.triggered.connect(lambda: self._lib_remove(entry["id"]))

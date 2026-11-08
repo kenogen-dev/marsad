@@ -48,7 +48,11 @@ FIELDS = ("length", "db", "rx")    # the extra fields chain.json keeps per part
 # Cables are drawn on the wire between two parts, not as parts. In the recorded text a
 # wire's cables are written, in order, between the two parts it joins, exactly where a
 # cable part sat in a straight chain, so the text does not change.
-CABLE_TYPES = ("coax", "jumper", "usb")
+CABLE_TYPES = ("coax", "usb")
+# Relay 017: "jumper" is no longer offered anywhere (a jumper bypasses a part; nothing here does). Saved drawings
+# and chains that use it still open, unchanged, with an offer to convert.
+OLD_CABLE_TYPES = ("jumper",)
+KNOWN_CABLE_TYPES = CABLE_TYPES + OLD_CABLE_TYPES
 # Enclosures: boxes drawn behind parts (the radio in its cage). Drawing only: they live in
 # chain_layout.json, in their own list beside the parts, so no path ever walks one and
 # they can never reach a recorded text.
@@ -366,7 +370,8 @@ def path_report(rig: dict, path, labels: dict | None = None) -> dict:
         for c in w.get("cables") or []:
             v = length_m(c.get("length"))
             if v is None:
-                unread.append(str(c.get("name") or c.get("type")))
+                unread.append(("Coax" if c.get("type") == "coax" else "USB cable") if c.get("auto")
+                              else str(c.get("name") or c.get("type")))
             else:
                 lengths += v
     fed = {w["to"] for w in power_wires(rig)}
@@ -376,7 +381,10 @@ def path_report(rig: dict, path, labels: dict | None = None) -> dict:
             "cable_m": round(lengths, 3), "cables": cables, "unread_lengths": unread, "joins": joins,
             "mated": mates, "connectors": 2 * joins, "genders": gender_notes, "power": power,
             "estimate": estimate(rig, path),
-            "antenna_gain": antenna(ant).get("gain_dbi") if ant is not None else None}
+            "antenna_gain": antenna(ant).get("gain_dbi") if ant is not None else None,
+            "antenna_lead": lead_text(ant) if ant is not None else "",
+            "chokes": sum(len(c.get("chokes") or []) for nid, port in path if port is not None
+                          for c in (wire_of(rig, nid, port) or {}).get("cables") or [])}
 
 
 def mated(w: dict) -> bool:
@@ -588,17 +596,331 @@ def path_parts(rig: dict, path, labels: dict | None = None) -> list[dict]:
 
 
 def cable_part(c: dict) -> dict:
-    """A wire's cable as a chain.json part."""
-    q = {"type": c.get("type"), "name": str(c.get("name") or "").strip(),
-         "detail": str(c.get("detail") or "").strip()}
+    """A wire's cable as a chain.json part. A cable drawn since relay 017 (`auto`) is written from its fields:
+    "3 ft RG316 coax (with chokes)". A cable saved before is written exactly as it was saved; only a choke the
+    owner puts on it adds "with choke(s)" to its note, unless the note already speaks of chokes."""
+    if c.get("auto"):
+        name, detail = cable_words(c)
+    else:
+        name, detail = str(c.get("name") or "").strip(), str(c.get("detail") or "").strip()
+        n = len(c.get("chokes") or [])
+        if n and "choke" not in detail.lower():
+            word = "with choke" if n == 1 else "with chokes"
+            detail = f"{detail}, {word}" if detail else word
+    q = {"type": c.get("type"), "name": name, "detail": detail}
     if c.get("length") not in (None, ""):
         q["length"] = c["length"]
     return q
 
 
+# ---------------------------------------------------------------- cable vocabulary (relay 017)
+# Every cable is Coax or USB, with a length. What is particular to one (connector genders, RG316, an S-bend)
+# goes in its note, which reaches the recorded text only when the owner ticks "include in text". Chokes sit on
+# cables: drawing only, except that a cable carrying any writes "(with choke)" or "(with chokes)".
+LENGTH_UNITS = ("in", "ft", "cm", "m")
+CABLE_DRAWING_KEYS = ("auto", "coax_type", "note", "note_in_text", "chokes", "gain_db")
+LEAD_KEYS = ("length", "connector", "note")            # an antenna's built-in lead: drawing and Output only
+CHOKE = "choke"
+_UNIT_OF = {"in": "in", "inch": "in", "inches": "in", '"': "in", "ft": "ft", "feet": "ft", "foot": "ft",
+            "'": "ft", "cm": "cm", "mm": "mm", "m": "m"}
+_LEN_RE = None
+_RG_RE = None
+
+
+def _res():
+    global _LEN_RE, _RG_RE
+    if _LEN_RE is None:
+        import re
+        _LEN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(inches|inch|in\b|\"|feet|foot|ft\b|'|cm\b|mm\b|m\b)", re.I)
+        _RG_RE = re.compile(r"\b((?:RG|LMR)[- ]?\d+[A-Z/]*)", re.I)
+    return _LEN_RE, _RG_RE
+
+
+def split_length(text) -> tuple[str, str]:
+    """A stored length as (number, unit) for the card: "3 ft" -> ("3", "ft"); unreadable -> ("", "in")."""
+    n, u = read_length(text) or ("", "")
+    return (n, u) if n else ("", "in")
+
+
+def read_length(*texts) -> tuple[str, str] | None:
+    """The first length written in any of the texts, as (number, unit): '6 in SMA jumper' -> ('6', 'in'),
+    '6" coax' -> ('6', 'in'), "2'" -> ('2', 'ft'), '150 cm' -> ('150', 'cm'). Millimetres become cm."""
+    rx, _ = _res()
+    for t in texts:
+        m = rx.search(str(t or ""))
+        if m:
+            v, u = float(m.group(1)), _UNIT_OF[m.group(2).lower()]
+            if u == "mm":
+                v, u = v / 10, "cm"
+            return f"{v:g}", u
+    return None
+
+
+def length_text(number, unit) -> str:
+    """The stored length: "3 ft"; "" when there is no number."""
+    n = str(number or "").strip()
+    return f"{n} {unit}" if n else ""
+
+
+def cable_words(c: dict) -> tuple[str, str]:
+    """(name, detail) of a cable drawn since relay 017, as the recorded text says it: "3 ft RG316 coax",
+    "16 ft USB cable", "Coax" with nothing typed; detail "with chokes" and the note when marked for the text."""
+    ln = str(c.get("length") or "").strip()
+    if c.get("type") == "usb":
+        name = " ".join(x for x in (ln, "USB cable") if x)
+    else:
+        name = " ".join(x for x in (ln, str(c.get("coax_type") or "").strip(), "coax") if x)
+        if name == "coax":
+            name = "Coax"
+    bits = []
+    n = len(c.get("chokes") or [])
+    if n:
+        bits.append("with choke" if n == 1 else "with chokes")
+    note = str(c.get("note") or "").strip()
+    if note and c.get("note_in_text"):
+        bits.append(note)
+    return name, ", ".join(bits)
+
+
+def cable_text(c: dict) -> str:
+    """One cable as it reaches the recorded text."""
+    return engine_chain.part_text(cable_part(c))
+
+
+def sync_cable(c: dict) -> dict:
+    """Keep a new-style cable's stored name and detail equal to what its fields say (older readers of the
+    layout, and the label width, read them). A cable saved before relay 017 is left as it is."""
+    if c.get("auto"):
+        c["name"], c["detail"] = cable_words(c)
+    return c
+
+
 def new_cable(type_: str, labels: dict | None = None) -> dict:
-    labels = labels or PART_TYPES
-    return {"type": type_, "name": labels.get(type_, {}).get("label", type_), "detail": ""}
+    """A cable drawn from now on: Coax or USB, its text made from its fields."""
+    if type_ not in CABLE_TYPES:
+        raise ValueError(f"no cable type {type_!r}: cables are Coax or USB")
+    return sync_cable({"type": type_, "auto": True})
+
+
+def check_cable(c: dict, where: str) -> None:
+    for k in ("coax_type", "note"):
+        if k in c and not isinstance(c[k], str):
+            raise ValueError(f"{where} has a cable whose {k.replace('_', ' ')} is not text")
+    for k in ("auto", "note_in_text"):
+        if k in c and not isinstance(c[k], bool):
+            raise ValueError(f"{where} has a cable whose {k.replace('_', ' ')} is not yes or no")
+    ch = c.get("chokes")
+    if ch is not None and (not isinstance(ch, list) or any(
+            not isinstance(k, dict) or isinstance(k.get("at"), bool) or not isinstance(k.get("at"), (int, float))
+            or not 0 <= k["at"] <= 1 or not isinstance(k.get("note", ""), str) for k in ch)):
+        raise ValueError(f"{where} has a choke that is not on its cable")
+
+
+# ---- chokes: beads on a cable, placed along the wire. A wire with n cables is drawn as n equal stretches, one
+# per cable in order, and a choke's "at" (0..1) is where it sits along its own cable's stretch.
+def choke_global(n_cables: int, ci: int, at: float) -> float:
+    """Where along the whole wire (0..1) a choke sits."""
+    n = max(1, n_cables)
+    return (min(max(ci, 0), n - 1) + min(max(at, 0.0), 1.0)) / n
+
+
+def choke_local(n_cables: int, ci: int, g: float) -> float:
+    """A place along the whole wire, as a place along cable ci's own stretch, kept on that cable."""
+    n = max(1, n_cables)
+    return round(min(max(g * n - ci, 0.04), 0.96), 3)
+
+
+def add_choke(rig: dict, src: str, port: int, g: float, note: str = "") -> str | None:
+    """A choke dropped at g (0..1) along a wire: onto the cable under that point. Returns why not, or None."""
+    w = wire_of(rig, src, port)
+    if w is None:
+        return "There is no wire there."
+    if mated(w):
+        return "Those parts are mated directly: there is no cable to put a choke on."
+    cables = w.get("cables") or []
+    if not cables:
+        return ("A choke sits on a cable, and this wire has none yet. Drop a Coax or USB cable on it first, "
+                "then the choke.")
+    n = len(cables)
+    ci = min(n - 1, max(0, int(g * n)))
+    k = {"at": choke_local(n, ci, g)}
+    if note:
+        k["note"] = note
+    cables[ci].setdefault("chokes", []).append(k)
+    sync_cable(cables[ci])
+    return None
+
+
+def remove_choke(rig: dict, src: str, port: int, ci: int, k: int) -> None:
+    c = (wire_of(rig, src, port) or {}).get("cables", [])[ci]
+    del c["chokes"][k]
+    if not c["chokes"]:
+        c.pop("chokes")
+    sync_cable(c)
+
+
+# ---- old words: Jumper and Pigtail. Never converted silently; the screen offers, the owner accepts.
+def is_pigtail(c: dict) -> bool:
+    return "pigtail" in f"{c.get('name') or ''} {c.get('detail') or ''}".lower()
+
+
+def old_word(c: dict) -> str | None:
+    """'pigtail' or 'jumper' for a cable (or part) saved in the old words, else None."""
+    if is_pigtail(c):
+        return "pigtail"
+    if c.get("type") in OLD_CABLE_TYPES:
+        return "jumper"
+    return None
+
+
+def converted_cable(c: dict) -> dict:
+    """An old cable rewritten as a Coax or USB cable: the length read from its length field, else its name or
+    note; RG316 and the like become the coax type; the old note stays as the note, still in the text, so the
+    record loses nothing the owner wrote. Chokes and the loss figure are kept. The caller decides to apply it."""
+    words = f"{c.get('name') or ''} {c.get('detail') or ''}"
+    out = {"type": "usb" if (c.get("type") == "usb" or "usb" in words.lower()) else "coax", "auto": True}
+    ln = read_length(c.get("length"), c.get("name"), c.get("detail"))
+    if ln:
+        out["length"] = length_text(*ln)
+    if out["type"] == "coax":
+        m = _res()[1].search(words)
+        if m:
+            out["coax_type"] = m.group(1).upper().replace(" ", "")
+    note = str(c.get("detail") or "").strip()
+    if note:
+        out["note"], out["note_in_text"] = note, True
+    for k in ("chokes", "gain_db"):
+        if k in c:
+            out[k] = copy.deepcopy(c[k])
+    return sync_cable(out)
+
+
+def lead_from(c: dict) -> dict:
+    """An antenna's built-in lead from a Pigtail cable or part: its length and its note."""
+    lead = {}
+    ln = read_length(c.get("length"), c.get("name"), c.get("detail"))
+    if ln:
+        lead["length"] = length_text(*ln)
+    note = str(c.get("detail") or "").strip()
+    if note:
+        lead["note"] = note
+    return lead
+
+
+def lead_text(node: dict) -> str:
+    """An antenna's built-in lead in words, for its card, drawing and Output: "2 ft, SMA male (moulded)"."""
+    lead = antenna(node).get("lead") or {}
+    bits = [str(lead.get(k) or "").strip() for k in ("length", "connector")]
+    s = ", ".join(b for b in bits if b)
+    note = str(lead.get("note") or "").strip()
+    return f"{s} ({note})" if s and note else (s or note)
+
+
+def old_words(rig: dict) -> list[dict]:
+    """Everything in a drawing still in the old words, with what each would become:
+    {"kind": "jumper"|"pigtail", "where": "cable"|"part", "wire": (src, port), "i": index, "id": node id,
+     "was": text now, "becomes": text after, "merge": True when a Pigtail can join its antenna}."""
+    nodes = {n["id"]: n for n in rig["nodes"]}
+    out = []
+    for w in rig["wires"]:
+        for i, c in enumerate(w.get("cables") or []):
+            k = old_word(c)
+            if not k:
+                continue
+            item = {"kind": k, "where": "cable", "wire": (w["from"], w["port"]), "i": i, "was": cable_text(c)}
+            ant = nodes.get(w["from"])
+            if k == "pigtail" and ant is not None and ant["part"]["type"] == "antenna" and i == 0:
+                item["merge"] = True
+                item["becomes"] = "the antenna's built-in lead (drawing and Output only)"
+            else:
+                item["becomes"] = cable_text(converted_cable(c))
+            out.append(item)
+    for n in rig["nodes"]:
+        k = old_word(n["part"])
+        if not k:
+            continue
+        item = {"kind": k, "where": "part", "id": n["id"], "was": engine_chain.part_text(n["part"])}
+        ins = [w for w in rig["wires"] if w["to"] == n["id"]]
+        outs = [w for w in rig["wires"] if w["from"] == n["id"]]
+        src = nodes.get(ins[0]["from"]) if len(ins) == 1 else None
+        if (k == "pigtail" and src is not None and src["part"]["type"] == "antenna" and len(outs) <= 1
+                and not ins[0].get("cables")):
+            item["merge"] = True
+            item["becomes"] = "the antenna's built-in lead (drawing and Output only)"
+        else:
+            item["becomes"] = engine_chain.part_text(converted_part(n["part"]))
+        out.append(item)
+    return out
+
+
+def converted_part(p: dict) -> dict:
+    """An old cable that sits as a part (a Jumper at the end of a chain, a Pigtail part) as a Coax or USB part."""
+    c = converted_cable(p)
+    name, detail = cable_words(c)
+    q = {"type": c["type"], "name": name, "detail": detail}
+    if c.get("length"):
+        q["length"] = c["length"]
+    return q
+
+
+def convert_old(rig: dict, item: dict) -> None:
+    """Apply one offer from old_words(): convert to a Coax or USB cable, or merge a Pigtail into its antenna."""
+    nodes = {n["id"]: n for n in rig["nodes"]}
+    if item["where"] == "cable":
+        w = wire_of(rig, *item["wire"])
+        c = w["cables"][item["i"]]
+        if item.get("merge"):
+            nodes[w["from"]].setdefault("antenna", {})["lead"] = lead_from(c)
+            del w["cables"][item["i"]]
+            if not w["cables"]:
+                w.pop("cables")
+        else:
+            w["cables"][item["i"]] = converted_cable(c)
+        return
+    node = nodes[item["id"]]
+    if not item.get("merge"):
+        node["part"] = {**{k: v for k, v in node["part"].items() if k not in ("type", "name", "detail", "length")},
+                        **converted_part(node["part"])}
+        return
+    win = next(w for w in rig["wires"] if w["to"] == node["id"])
+    out = next((w for w in rig["wires"] if w["from"] == node["id"]), None)
+    nodes[win["from"]].setdefault("antenna", {})["lead"] = lead_from(node["part"])
+    if out is not None:                     # the antenna now feeds what the pigtail fed, with that wire's cables
+        win["to"] = out["to"]
+        for k in ("in", "cables"):
+            if k in out:
+                win[k] = out[k]
+            else:
+                win.pop(k, None)
+        win.pop("points", None)
+        rig["wires"].remove(out)
+    else:
+        rig["wires"].remove(win)
+    remove_node(rig, node["id"])
+
+
+def library_old_words(layout: dict) -> list[dict]:
+    """My parts entries in the old words: [{"id", "kind", "was", "becomes"}]."""
+    out = []
+    for e in library(layout):
+        if e.get("removed"):
+            continue
+        k = old_word(e["part"])
+        if k:
+            out.append({"id": e["id"], "kind": k, "was": engine_chain.part_text(e["part"]),
+                        "becomes": engine_chain.part_text(converted_part(e["part"]))})
+    return out
+
+
+def convert_lib_entry(e: dict) -> dict:
+    """One My parts entry in the old words, rewritten as a Coax or USB part (in place; returned)."""
+    e["part"] = {**{k: v for k, v in e["part"].items() if k not in ("type", "name", "detail", "length")},
+                 **converted_part(e["part"])}
+    return e
+
+
+def convert_library_entry(layout: dict, entry_id: str) -> None:
+    convert_lib_entry(next(e for e in library(layout) if e["id"] == entry_id))
 
 
 def enclosures(rig: dict) -> list[dict]:
@@ -1165,7 +1487,8 @@ def label_room(cables: list | None) -> int:
     """Rough width a wire's cable label needs, so automatic layouts leave space for it."""
     if not cables:
         return 0
-    text = "  +  ".join(str(c.get("name") or c.get("type") or "") + (f" · {c['length']}" if c.get("length") else "")
+    text = "  +  ".join(cable_words(c)[0] if c.get("auto") else
+                        str(c.get("name") or c.get("type") or "") + (f" · {c['length']}" if c.get("length") else "")
                         for c in cables)
     return min(int(len(text) * 6.2) + 18, 260) + 40
 
@@ -1177,8 +1500,8 @@ def rig_from_parts(parts: list[dict]) -> dict:
     rig = new_rig()
     prev, pending, k, x = None, [], 0, 0
     for i, p in enumerate(parts):
-        later_part = any(q.get("type") not in CABLE_TYPES for q in parts[i + 1:])
-        if p.get("type") in CABLE_TYPES and prev is not None and later_part:
+        later_part = any(q.get("type") not in KNOWN_CABLE_TYPES for q in parts[i + 1:])
+        if p.get("type") in KNOWN_CABLE_TYPES and prev is not None and later_part:
             pending.append(copy.deepcopy(p))
             continue
         k += 1
@@ -1224,9 +1547,11 @@ def check_layout(data) -> dict:
             if not isinstance(w, dict) or w.get("from") not in ids or w.get("to") not in ids:
                 raise ValueError(f"rig {name!r} has a wire to a part that is not there")
             cables = w.get("cables", [])
-            if not isinstance(cables, list) or any(not isinstance(c, dict) or c.get("type") not in CABLE_TYPES
+            if not isinstance(cables, list) or any(not isinstance(c, dict) or c.get("type") not in KNOWN_CABLE_TYPES
                                                    for c in cables):
                 raise ValueError(f"rig {name!r} has a wire with a cable of unknown type")
+            for c in cables:
+                check_cable(c, f"rig {name!r}")
         encs = r.get("enclosures") or []
         if not isinstance(encs, list):
             raise ValueError(f"rig {name!r} has enclosures that are not a list")
@@ -1310,6 +1635,10 @@ def check_layout(data) -> dict:
             if "antenna" in n and (not isinstance(n["antenna"], dict)
                                    or n["antenna"].get("type", "custom") not in ANTENNA_TYPES):
                 raise ValueError(f"rig {name!r} has an antenna of unknown type")
+            lead = (n.get("antenna") or {}).get("lead")
+            if lead is not None and (not isinstance(lead, dict) or set(lead) - set(LEAD_KEYS)
+                                     or any(not isinstance(v, str) for v in lead.values())):
+                raise ValueError(f"rig {name!r} has an antenna whose built-in lead cannot be read")
         for b in list(pows):
             if "shape" in b and b["shape"] not in SHAPES:
                 raise ValueError(f"rig {name!r} has a power source of unknown shape")

@@ -249,7 +249,7 @@ def test_a_cable_with_nothing_after_it_stays_a_part():
 
 def test_a_cable_added_to_a_wire_is_written_between_its_parts():
     rig = R.rig_from_parts([_p("antenna", "whip"), _p("sdr", "radio-a")])
-    R.wire_of(rig, "n1", 0)["cables"] = [dict(R.new_cable("coax"), detail="2 m", length="2 m")]
+    R.wire_of(rig, "n1", 0)["cables"] = [{"type": "coax", "name": "Coax", "detail": "2 m", "length": "2 m"}]   # saved before 017
     assert R.rig_texts("r", rig)["r"] == "whip > Coax (2 m) > radio-a"
 
 
@@ -1061,7 +1061,7 @@ def test_path_report_adds_up_cables_joins_genders_and_power():
     r = R.new_node(rig, "sdr", 800, 0)
     R.connect(rig, a["id"], 0, ad["id"])
     R.wire_of(rig, a["id"], 0)["cables"] = [dict(R.new_cable("coax"), length="2 m"),
-                                            dict(R.new_cable("jumper"), length='6"')]
+                                            {"type": "jumper", "name": "SMA jumper", "detail": "", "length": '6"'}]
     R.mate(rig, ad["id"], 0, blk["id"])
     R.connect(rig, blk["id"], 0, lna["id"])
     R.connect(rig, lna["id"], 0, r["id"])

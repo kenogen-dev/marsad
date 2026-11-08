@@ -85,7 +85,7 @@ def _derive(b: dict) -> dict:
         # Parts list has a hue of its own, told apart from its neighbours (tests/test_desktop_theme.py).
         cat_source=b["open"],
         cat_sma="#F48FB1",                                        # SMA adapters, DC blocks, pads, bulkheads
-        cat_cable="#E07A5F",                                      # coax and jumpers (copper), on the wires
+        cat_cable="#E07A5F",                                      # coax (copper), on the wires
         cat_condition=b["private"],
         cat_split=b["anomaly"],
         cat_digital=_mix(b["muted"], b["panel"], 0.15),

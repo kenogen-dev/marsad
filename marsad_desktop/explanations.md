@@ -785,3 +785,64 @@ locks: n/a
 
 Asks the run to stop cleanly: the recorder finishes the sweep in progress, keeps everything recorded
 so far, then analyses and archives it as usual.
+
+# Chain screen: cables, chokes and the antenna's lead (relay 017)
+
+## cable_coax
+tip: Coax: shielded RF cable, written into the recorded text as its length and type, e.g. "3 ft RG316 coax".
+locks: n/a
+
+**Coax** is shielded radio-frequency cable: a centre wire inside an insulator inside a braided shield.
+It carries the antenna's signal between parts. Every short or long piece of RF cable is Coax with a
+length; anything particular (connector genders, an S-bend, the maker) goes in its note.
+
+The recorded text says its length and type, such as "6 in coax" or "3 ft RG316 coax". The coax type
+(RG316, RG58 and so on) is free text. In records made before November 2026, "jumper" means a short
+cable.
+
+## cable_usb
+tip: USB cable: the radio's data and power lead, written as its length, e.g. "16 ft USB cable".
+locks: n/a
+
+A **USB cable** carries the radio's samples to the PC and the radio's power from the PC. It is written
+into the recorded text as its length, such as "1 ft USB cable". Anything particular (USB3, M:M) goes
+in its note.
+
+## cable_note_in_text
+tip: When ticked, this note is written into the recorded text in brackets after the cable.
+locks: n/a
+
+A cable's note is drawing only unless this is ticked. Ticked, it follows the cable in the recorded
+text in brackets, after "with chokes" when the cable has any: "3 ft RG316 coax (with chokes, S-bend)".
+Changing the recorded text means the next run records the rig as changed.
+
+## choke
+tip: A choke: a ferrite bead or loop on a cable. Drop it onto a cable; slide it along to where it sits.
+locks: n/a
+
+A **choke** is a ferrite bead, or a few turns of the cable through a ferrite ring, that stops the
+outside of the cable's shield carrying noise. It sits on a cable, never on its own.
+
+Drop one from the "On cables" list onto a cable, then drag the bead along the wire to show roughly
+where it is. A cable with any chokes is written "(with choke)" or "(with chokes)" in the recorded text;
+how many and where are drawing only. Removing a choke changes only the drawing and that word.
+
+## antenna_lead
+tip: The lead moulded into the antenna: its length, connector and note. Drawing and Output only.
+locks: n/a
+
+Some antennas come with a short cable moulded into them that cannot be unplugged, often called a
+pigtail. It belongs to the **antenna**, not the chain, so it is set here: length, connector (such as
+"SMA male") and a note. It shows on the drawing and in Output, and never reaches the recorded text.
+
+## old_words
+tip: This drawing still uses "Jumper" or "Pigtail". Nothing changes until you convert it.
+locks: n/a
+
+Cables are now **Coax** or **USB** with a length. A part or cable saved as a "Jumper" can be converted
+to Coax or USB: its length is read from its name or note where it can be, and its note is kept in the
+text. A "Pigtail" after an antenna can be merged into that antenna as its built-in lead.
+
+Each conversion changes that rig's recorded text, so the next run records it as changed. Nothing is
+converted until you choose to, and Undo puts it back. Past runs' records are never changed: in records
+made before November 2026, "jumper" means a short cable.
