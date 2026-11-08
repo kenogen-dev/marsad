@@ -578,6 +578,8 @@ def test_survey_and_recorder_end_to_end(tmp_path, monkeypatch):
     assert rc == 0
     assert run.cmd[run.cmd.index("--device") + 1] == "0"            # the E4000, found by serial
     assert "--chain" in run.cmd and "--non-interactive" in run.cmd
+    sur, _ = W.survey_roles(st, cfg, None, None)
+    assert run.cmd[run.cmd.index("--receiver") + 1] == sur          # the child names the radio that surveys
     rows = cap.connect(st).execute("SELECT * FROM captures ORDER BY id").fetchall()
     freqs = {round(r["freq_hz"] / 1e6, 2): r for r in rows if r["mode"] in ("now", "survey pass")}
     assert 305.6 not in freqs                                         # 14.4 MHz x24 never triggers
@@ -874,3 +876,15 @@ def test_survey_dry_run_checks_the_childs_flags_with_its_own_parser(tmp_path, ca
     assert W.main(base + ["--gain", "29", "--integration", "30", "--chain", "a > b", "--conditions", "c",
                           "--tag", "x", "--skip-warmup", "5"], st) == 0
     assert "dry run: no radio opened" in capsys.readouterr().out
+
+
+def test_survey_child_is_told_the_surveying_radio(tmp_path, capsys):
+    """Owner's decision 2026-11-07 (relay 011): with the roles swapped, the survey run records the
+    radio that actually surveys, not the preset's, so its fingerprint names the right radio."""
+    st = station(tmp_path)
+    names = list(st.receivers)
+    base = ["survey", "milair", "1h", "--dry-run", "--chain", "a > b", "--conditions", "c"]
+    assert W.main(base + ["--surveyor", names[1], "--recorder", names[0]], st) == 0
+    assert f"--receiver {names[1]}" in capsys.readouterr().out
+    assert W.main(base + ["--surveyor", names[1], "--recorder", names[0], "--receiver", names[1]], st) == 0
+    assert capsys.readouterr().out.count("--receiver") == 1          # given once, never added twice

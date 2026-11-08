@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComb
                                QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
+from marsad_desktop import explain as X
 from marsad_desktop import rig as R
 from marsad_desktop import theme as T
 from marsad_desktop.service import Service, ServiceError
@@ -79,6 +80,17 @@ def call(fn, then):
 
 # ---------------------------------------------------------------- small pieces
 
+def mark_radio_item(cb, i: int, r: dict, text: str):
+    """A radio in a picker: its words, and, when switched off on Live Scan, "disabled" and not
+    selectable (relay 011: a disabled radio is never offered). A picker already set to it keeps
+    showing it, so the checks can say why it cannot start."""
+    off = r.get("enabled") is False
+    cb.setItemText(i, text + ("  · disabled" if off else ""))
+    item = cb.model().item(i) if hasattr(cb.model(), "item") else None
+    if item is not None:
+        item.setEnabled(not off)
+
+
 def label(text, muted=False, size=None, bold=False, wrap=False):
     w = QLabel(text)
     if muted:
@@ -104,7 +116,7 @@ def tool(text, tip="", kind="Tool"):
     return b
 
 
-def section(title, badge_text=None, badge_colour="muted"):
+def section(title, badge_text=None, badge_colour="muted", key=None):
     box = QFrame()
     box.setObjectName("TextPanel")
     v = QVBoxLayout(box)
@@ -112,6 +124,8 @@ def section(title, badge_text=None, badge_colour="muted"):
     v.setSpacing(T.SPACE)
     h = QHBoxLayout()
     h.addWidget(label(title, size=10, bold=True))
+    if key:
+        h.addWidget(X.info(key))
     if badge_text:
         h.addWidget(badge(badge_text, badge_colour))
     h.addStretch(1)
@@ -128,6 +142,48 @@ def dspin(lo, hi, dec, step=1.0, suffix=""):
     if suffix:
         w.setSuffix(suffix)
     return w
+
+
+def link_units(spin, combo, factors=(60.0, 3600.0)):
+    """A value with a unit choice converts when the unit changes (relay 011): 0.5 hours switched
+    to minutes reads 30 min, and back. The value typed last is remembered exactly, so 7 min shown
+    as 0.12 hours comes back as 7 min, not 7.2."""
+    state = {"i": combo.currentIndex(), "exact": None, "converting": False}
+
+    def edited(_v=None):
+        if not state["converting"]:
+            state["exact"] = (combo.currentIndex(), spin.value())
+
+    def unit(i):
+        old = state["i"]
+        state["i"] = i
+        if old == i or old < 0:
+            return
+        ex = state["exact"]
+        spin.blockSignals(True)
+        if ex and ex[0] == i:
+            spin.setValue(ex[1])
+        else:
+            spin.setValue(spin.value() * factors[old] / factors[i])
+            if ex is None or ex[0] != old:
+                state["exact"] = (old, spin.value() * factors[i] / factors[old])
+        spin.blockSignals(False)
+        state["converting"] = True
+        try:
+            spin.valueChanged.emit(spin.value())
+        finally:
+            state["converting"] = False
+
+    def reset():
+        state["i"], state["exact"] = combo.currentIndex(), None
+    spin.valueChanged.connect(edited)
+    combo.currentIndexChanged.connect(unit)
+    return reset
+
+
+def _word(name) -> str:
+    name = str(name or "")
+    return name.upper() if name.isalpha() else name
 
 
 def clear_layout(lay) -> None:
@@ -175,6 +231,10 @@ class RangeStrip(QWidget):
         self.crop = 0.25
         self.engine = "rtl_power"
         self._drag = None
+        self.view = None              # the hop row's visible (lo, hi) MHz; None = the whole scan
+        self._zoom_hops = 5.0         # how many hops the zoomed view shows, kept as settings change
+        self._user_zoom = False
+        self._buttons = {}
 
     def set_receiver(self, rng, gaps):
         self.tuner = (float(rng[0]), float(rng[1]))
@@ -187,7 +247,78 @@ class RangeStrip(QWidget):
 
     def set_plan(self, geo: dict, crop: float, engine: str, target):
         self.geo, self.crop, self.engine, self.target = geo or {}, crop, engine, target
+        self._fit_view()
         self.update()
+
+    # -- the hop row's zoom (relay 011): opens on a few hops around the target, or the middle
+    def _hop_layout(self):
+        """(centres, raw hop width, step between centres, span lo, span hi), from the engine's plan."""
+        centres = list(self.geo.get("hop_centres_mhz") or [])
+        lo, hi = self.ranges[0]
+        hop = float(self.geo.get("hop_mhz") or 0)
+        if self.engine == "rtl_power":
+            step = hop
+            width = hop / max(1e-9, 1 - self.crop) if hop else 0       # rtl_power's hop is wider than its kept part
+        else:
+            width = hop
+            step = float(self.geo.get("hop_spacing_mhz") or hop)
+        span_lo, span_hi = lo, hi
+        if centres and width:
+            span_lo, span_hi = min(lo, centres[0] - width / 2), max(hi, centres[-1] + width / 2)
+        return centres, width, step, span_lo, span_hi
+
+    def _fit_view(self):
+        centres, width, step, a, b = self._hop_layout()
+        if not centres or not step:
+            self.view = None
+            return
+        want = self._zoom_hops * step
+        if want >= (b - a) * 0.98:
+            self.view = None
+            return
+        if self.view and self._user_zoom:
+            c = (self.view[0] + self.view[1]) / 2
+        else:
+            c = self.target if self.target and a <= self.target <= b else (a + b) / 2
+        c = min(max(c, a + want / 2), b - want / 2)
+        self.view = (c - want / 2, c + want / 2)
+
+    def zoom(self, factor: float, about: float | None = None):
+        """factor < 1 zooms in. About a frequency (the pointer), else the view's middle."""
+        centres, width, step, a, b = self._hop_layout()
+        if not step:
+            return
+        va, vb = self.view or (a, b)
+        about = (va + vb) / 2 if about is None else about
+        span = min(b - a, max(step * 0.6, (vb - va) * factor))
+        frac = (about - va) / max(1e-9, vb - va)
+        na = about - frac * span
+        na = min(max(na, a), b - span)
+        self._user_zoom = True
+        if span >= (b - a) * 0.98:
+            self.view = None
+            self._zoom_hops = (b - a) / step
+        else:
+            self.view = (na, na + span)
+            self._zoom_hops = span / step
+        self.update()
+
+    def zoom_fit(self):
+        self._user_zoom = True
+        self.view = None
+        centres, width, step, a, b = self._hop_layout()
+        self._zoom_hops = (b - a) / step if step else 5.0
+        self.update()
+
+    def wheelEvent(self, ev):
+        r = self._track(1)
+        if not r.adjusted(0, -18, 0, 6).contains(ev.position()):
+            return super().wheelEvent(ev)
+        centres, width, step, a, b = self._hop_layout()
+        va, vb = self.view or (a, b)
+        f = self._f(ev.position().x(), va, vb, r)
+        self.zoom(0.8 if ev.angleDelta().y() > 0 else 1.25, f)
+        ev.accept()
 
     # geometry of the drawing
     def _track(self, row):
@@ -221,37 +352,8 @@ class RangeStrip(QWidget):
         p.drawLine(QPointF(x0, r.top() - 3), QPointF(x0, r.bottom() + 3))
         p.drawLine(QPointF(x1, r.top() - 3), QPointF(x1, r.bottom() + 3))
         self._target(p, r, a, b)
-        # 2: the scan, its hops, crop zones and DC spikes
-        r = self._track(1)
-        centres = list(self.geo.get("hop_centres_mhz") or [])
-        hop_w = float(self.geo.get("hop_mhz") or 0)
-        span_lo, span_hi = lo, hi
-        if self.engine == "rtl_power_fftw" and centres:
-            span_lo, span_hi = min(lo, centres[0] - hop_w / 2), max(hi, centres[-1] + hop_w / 2)
-        n = len(centres)
-        title = f"Scan: {jsnum(lo)}–{jsnum(hi)} MHz, {n} hop{'s' if n != 1 else ''}"
-        if self.engine == "rtl_power":
-            hop_w = hop_w / max(1e-9, 1 - self.crop) if hop_w else 0      # rtl_power's hop is wider than its kept part
-        self._strip(p, r, title)
-        if n and n <= 400:
-            for c in centres:
-                xa, xb = self._fx(c - hop_w / 2, span_lo, span_hi, r), self._fx(c + hop_w / 2, span_lo, span_hi, r)
-                cw = (xb - xa) * self.crop / 2
-                p.fillRect(QRectF(xa, r.top() + 2, max(0.5, cw), r.height() - 4), T.color("anomaly", 0.18))
-                p.fillRect(QRectF(xb - cw, r.top() + 2, max(0.5, cw), r.height() - 4), T.color("anomaly", 0.18))
-                p.setPen(QPen(T.color("lines"), 1))
-                p.drawLine(QPointF(xa, r.top() + 2), QPointF(xa, r.bottom() - 2))
-            p.setPen(QPen(T.color("anomaly"), 1.3))
-            for c in centres:
-                x = self._fx(c, span_lo, span_hi, r)
-                p.drawLine(QPointF(x, r.top() + r.height() * 0.35), QPointF(x, r.bottom()))
-        elif n:
-            p.setPen(T.color("muted"))
-            p.drawText(r, Qt.AlignmentFlag.AlignCenter, f"{n} hops: too many to draw one by one")
-        x0, x1 = self._fx(lo, span_lo, span_hi, r), self._fx(hi, span_lo, span_hi, r)
-        p.setPen(QPen(T.color("survey"), 1.5))
-        p.drawRect(QRectF(x0, r.top(), x1 - x0, r.height()))
-        self._target(p, r, span_lo, span_hi)
+        # 2: the scan, its hops, crop zones and DC spikes; zoomable
+        self._paint_hops(p, self._track(1), lo, hi)
         # 3: one hop, its bins
         r = self._track(2)
         fft = int(self.geo.get("fft") or 0)
@@ -277,6 +379,89 @@ class RangeStrip(QWidget):
             p.drawText(QRectF(r.left(), r.bottom() + 1, r.width(), 12), Qt.AlignmentFlag.AlignHCenter, "DC spike")
         p.end()
 
+    def _paint_hops(self, p, r, lo, hi):
+        centres, hop_w, step, span_lo, span_hi = self._hop_layout()
+        va, vb = self.view or (span_lo, span_hi)
+        n = len(centres)
+        title = f"Scan: {jsnum(lo)}–{jsnum(hi)} MHz, {n} hop{'s' if n != 1 else ''}"
+        vis = [c for c in centres if c + hop_w / 2 >= va and c - hop_w / 2 <= vb]
+        if self.view:
+            title += f"  ·  showing {va:.3f}–{vb:.3f} MHz ({len(vis)} hop{'s' if len(vis) != 1 else ''})"
+        self._strip(p, r, title)
+        self._zoom_buttons(p, r)
+        p.save()
+        p.setClipRect(r)
+        fx = lambda f: self._fx(f, va, vb, r)
+        close = bool(vis) and len(vis) <= 24
+        if vis and len(vis) <= 400:
+            fft = int(self.geo.get("fft") or 0)
+            for i, c in enumerate(vis):
+                xa, xb = fx(c - hop_w / 2), fx(c + hop_w / 2)
+                cw = (xb - xa) * self.crop / 2
+                p.fillRect(QRectF(xa, r.top() + 2, max(0.5, cw), r.height() - 4), T.color("anomaly", 0.18))
+                p.fillRect(QRectF(xb - cw, r.top() + 2, max(0.5, cw), r.height() - 4), T.color("anomaly", 0.18))
+                if close:
+                    # overlap with the next hop: where both hops listen (one of them crops it away)
+                    if i + 1 < len(vis):
+                        oa, ob = vis[i + 1] - hop_w / 2, c + hop_w / 2
+                        if ob > oa:
+                            p.fillRect(QRectF(fx(oa), r.top() + 2, max(1.0, fx(ob) - fx(oa)), r.height() * 0.3),
+                                       QBrush(T.color("survey", 0.55), Qt.BrushStyle.BDiagPattern))
+                    # bins, when there is room to draw them
+                    if fft and (xb - xa) / fft >= 3:
+                        p.setPen(QPen(T.color("lines"), 1))
+                        for k in range(fft + 1):
+                            x = xa + (xb - xa) * k / fft
+                            p.drawLine(QPointF(x, r.top() + r.height() * 0.7), QPointF(x, r.bottom() - 2))
+                    p.setPen(QPen(T.color("text2"), 1.2))
+                    p.drawLine(QPointF(xa, r.top() + 1), QPointF(xa, r.bottom() - 1))
+                    p.drawLine(QPointF(xb, r.top() + 1), QPointF(xb, r.bottom() - 1))
+                else:
+                    p.setPen(QPen(T.color("lines"), 1))
+                    p.drawLine(QPointF(xa, r.top() + 2), QPointF(xa, r.bottom() - 2))
+            p.setPen(QPen(T.color("anomaly"), 1.3 if not close else 2.0))
+            for c in vis:
+                x = fx(c)
+                p.drawLine(QPointF(x, r.top() + r.height() * (0.35 if not close else 0.15)), QPointF(x, r.bottom()))
+        elif n:
+            p.setPen(T.color("muted"))
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, f"{n} hops: too many to draw one by one; zoom in to see them")
+        x0, x1 = fx(lo), fx(hi)
+        p.setPen(QPen(T.color("survey"), 1.5))
+        p.drawRect(QRectF(x0, r.top(), x1 - x0, r.height()))
+        self._target(p, r, va, vb)
+        p.restore()
+        if close and len(vis) <= 8:
+            p.setPen(T.color("muted"))
+            p.setFont(T.ui_font(7))
+            for c in vis:
+                x = fx(c)
+                if r.left() + 45 <= x <= r.right() - 45:
+                    p.drawText(QRectF(x - 45, r.bottom() + 1, 90, 11), Qt.AlignmentFlag.AlignHCenter,
+                               f"centre {c:.3f}")
+            p.setFont(T.ui_font(8))
+        elif close:
+            p.setPen(T.color("muted"))
+            p.drawText(QRectF(r.left(), r.bottom() + 1, r.width(), 11), Qt.AlignmentFlag.AlignLeft,
+                       "edges · centre spike · cropped edges shaded · overlap hatched")
+
+    def _zoom_buttons(self, p, r):
+        """Three small buttons on the hop row's title line: zoom out, fit, zoom in."""
+        self._buttons = {}
+        x = r.right()
+        p.setFont(T.ui_font(8))
+        for key, text in (("in", "+"), ("fit", "fit"), ("out", "−")):
+            w = 22 if key != "fit" else 30
+            rect = QRectF(x - w, r.top() - 16, w, 14)
+            self._buttons[key] = rect
+            p.setPen(QPen(T.color("lines"), 1))
+            p.setBrush(T.color("raised"))
+            p.drawRoundedRect(rect, 3, 3)
+            p.setPen(T.color("text2"))
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            x -= w + 4
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
     def _strip(self, p, r, title):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(T.color("raised"))
@@ -294,6 +479,10 @@ class RangeStrip(QWidget):
 
     # dragging on the tuner strip
     def mousePressEvent(self, ev):
+        for key, rect in self._buttons.items():
+            if rect.contains(ev.position()):
+                {"in": lambda: self.zoom(0.5), "out": lambda: self.zoom(2.0), "fit": self.zoom_fit}[key]()
+                return
         r = self._track(0)
         if not r.adjusted(0, -6, 0, 6).contains(ev.position()):
             return
@@ -393,6 +582,7 @@ class ChecksPanel(QFrame):
         self.v.setSpacing(6)
         h = QHBoxLayout()
         h.addWidget(label("Before starting", size=10, bold=True))
+        h.addWidget(X.info("checks"))
         h.addStretch(1)
         self.again = tool("Check again", "Ask again: radios in use, each radio by its serial (rtl_eeprom reads it), "
                                          "the chain")
@@ -439,23 +629,23 @@ class ChecksPanel(QFrame):
         for rx, c in radios.items():
             r = c.get("radio") or {}
             if r.get("found") is True:
-                self._row("ok", f"{rx.upper()} by serial", r["text"])
+                self._row("ok", f"{_word(rx)} by serial", r["text"])
             elif r.get("found") is False:
                 self.blocked = True
-                self._row("bad", f"{rx.upper()} not found", r["text"])
+                self._row("bad", f"{_word(rx)} disabled" if r.get("disabled") else f"{_word(rx)} not found", r["text"])
             else:
-                self._row("warn", f"{rx.upper()} by serial", r.get("text") or "Not checked yet.")
+                self._row("warn", f"{_word(rx)} by serial", r.get("text") or "Not checked yet.")
             ch = c.get("chain") or {}
             if ch.get("problem"):
                 self.blocked = True
-                self._row("bad", f"Chain ({rx.upper()})", ch["problem"])
+                self._row("bad", f"Chain ({_word(rx)})", ch["problem"])
             elif ch.get("text"):
                 extra = ""
                 if ch.get("due"):
                     self.due = True
                     used = str(ch.get("used_at") or "").replace("T", " ")
                     extra = f" Already recorded by a run at {used}: is the rig still built as drawn?"
-                self._row("warn" if ch.get("due") else "ok", f"Chain ({rx.upper()})",
+                self._row("warn" if ch.get("due") else "ok", f"Chain ({_word(rx)})",
                           f"from {ch.get('source')}: <span style='font-family:Consolas'>{ch['text']}</span>.{extra}")
         for c in rig_checks:
             self._row("warn", "Chain check", f"{c.get('text')} (rig “{c.get('rig')}”)")
@@ -491,8 +681,20 @@ class ConditionsBox(QFrame):
         g = QGridLayout(self)
         g.setContentsMargins(T.SPACE * 1.5, T.SPACE * 1.25, T.SPACE * 1.5, T.SPACE * 1.5)
         g.setHorizontalSpacing(T.SPACE)
-        g.addWidget(label("Conditions", size=10, bold=True), 0, 0, 1, 2)
-        g.addWidget(badge("Recorded, not measured", "muted"), 0, 2, 1, 2, Qt.AlignmentFlag.AlignRight)
+        hd = QHBoxLayout()
+        hd.addWidget(label("Conditions", size=10, bold=True))
+        hd.addStretch(1)
+        g.addLayout(hd, 0, 0, 1, 4)
+        rh = QHBoxLayout()
+        rh.addWidget(label("Room (you enter)", bold=True))
+        rh.addWidget(X.info("room"))
+        rh.addWidget(badge("Recorded as typed", "muted"))
+        rh.addStretch(1)
+        self.same = tool("Same as last time", "Put back the conditions you gave last time")
+        X.attach(self.same, "same_as_last")
+        self.same.clicked.connect(self._same)
+        rh.addWidget(self.same)
+        g.addLayout(rh, 1, 0, 1, 4)
         self.temp, self.humid, self.notes = QLineEdit(), QLineEdit(), QLineEdit()
         self.temp.setPlaceholderText("°C")
         self.humid.setPlaceholderText("%")
@@ -500,19 +702,29 @@ class ConditionsBox(QFrame):
         self.where, self.sky = QComboBox(), QComboBox()
         self.where.addItems(["inside", "outside"])
         self.sky.addItems([s or "—" for s in SKY])
-        g.addWidget(label("Temp °C", muted=True), 1, 0)
-        g.addWidget(self.temp, 2, 0)
-        g.addWidget(label("Humidity %", muted=True), 1, 1)
-        g.addWidget(self.humid, 2, 1)
-        g.addWidget(label("Measured", muted=True), 1, 2)
-        g.addWidget(self.where, 2, 2)
-        g.addWidget(label("Sky", muted=True), 1, 3)
-        g.addWidget(self.sky, 2, 3)
-        g.addWidget(label("Anything else", muted=True), 3, 0, 1, 4)
-        g.addWidget(self.notes, 4, 0, 1, 4)
+        for col, (t, key, w) in enumerate((("Temperature °C", "room_temp", self.temp),
+                                           ("Humidity %", "room_humidity", self.humid),
+                                           ("Measured where", "room_where", self.where),
+                                           ("Sky", "room_sky", self.sky))):
+            g.addWidget(X.titled(t, key), 2, col)
+            g.addWidget(X.attach(w, key), 3, col)
+        g.addWidget(X.titled("Anything else", "room_notes"), 4, 0, 1, 4)
+        g.addWidget(X.attach(self.notes, "room_notes"), 5, 0, 1, 4)
         self.line = label("", muted=True, wrap=True)
         self.line.setFont(T.mono_font(8))
-        g.addWidget(self.line, 5, 0, 1, 4)
+        g.addWidget(self.line, 6, 0, 1, 4)
+        oh = QHBoxLayout()
+        oh.addWidget(label("Outdoor (added automatically at start)", bold=True))
+        oh.addWidget(X.info("outdoor"))
+        oh.addStretch(1)
+        g.addLayout(oh, 7, 0, 1, 4)
+        self.outdoor = label("Outdoor weather (temperature, humidity, pressure, cloud, rain, wind) and the sun's "
+                             "elevation are recorded with every run, at its start and end, from the station's "
+                             "location, which is kept private and not shown here. Without internet, or with no "
+                             "location set, the run carries on and its record says why they are missing.",
+                             muted=True, wrap=True)
+        g.addWidget(self.outdoor, 8, 0, 1, 4)
+        self.last: dict = {}
         for w in (self.temp, self.humid, self.notes):
             w.textChanged.connect(lambda *_: self.changed.emit())
         for w in (self.where, self.sky):
@@ -528,6 +740,16 @@ class ConditionsBox(QFrame):
         self.sky.setCurrentIndex(SKY.index(d.get("sky")) if d.get("sky") in SKY else 0)
         for w in (self.temp, self.humid, self.notes, self.where, self.sky):
             w.blockSignals(False)
+
+    def set_last(self, d: dict):
+        """The answers given last time, for Same as last time."""
+        self.last = dict(d or {})
+        self.same.setEnabled(bool(self.last))
+
+    def _same(self):
+        if self.last:
+            self.set_values(self.last)
+            self.changed.emit()
 
     def values(self) -> dict:
         return {"temp": self.temp.text().strip(), "humid": self.humid.text().strip(),
@@ -550,35 +772,38 @@ class FreeSettings(QFrame):
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.tag = QLineEdit()
         self.tag.setPlaceholderText("my-run")
-        self.dur = dspin(0.1, 10000, 2, 1)
+        self.dur = dspin(0.01, 10000, 2, 1)
         self.unit = QComboBox()
         self.unit.addItems(["min", "hours"])
+        X.attach(self.unit, "duration_unit")
         self.rx = QComboBox()
-        g.addWidget(label("Tag", muted=True), 1, 0)
-        g.addWidget(self.tag, 2, 0)
-        g.addWidget(label("Duration", muted=True), 1, 1)
+        g.addWidget(X.titled("Tag", "tag"), 1, 0)
+        g.addWidget(X.attach(self.tag, "tag"), 2, 0)
+        g.addWidget(X.titled("Duration", "duration"), 1, 1)
         d = QHBoxLayout()
-        d.addWidget(self.dur, 1)
+        d.addWidget(X.attach(self.dur, "duration"), 1)
         d.addWidget(self.unit)
         g.addLayout(d, 2, 1)
-        self.rx_label = label("Radio", muted=True)
+        self.unit_reset = link_units(self.dur, self.unit)
+        self.rx_label = X.titled("Radio", "radio")
         g.addWidget(self.rx_label, 1, 2, 1, 2)
-        g.addWidget(self.rx, 2, 2, 1, 2)
+        g.addWidget(X.attach(self.rx, "radio"), 2, 2, 1, 2)
         self.rx_label.setVisible(show_radio)
         self.rx.setVisible(show_radio)
         self.analyze = QCheckBox("Analyse when recording finishes")
         self.useskip = QCheckBox("Discard warm-up")
         self.skipmin = dspin(0, 600, 0, 1, " min")
+        X.attach(self.skipmin, "warmup")
         self.thresh = dspin(0, 60, 1, 0.5, " dB")
         self.floorwin = dspin(0, 100, 2, 0.1, " MHz")
         self.floorwin.setSpecialValueText("auto")
-        g.addWidget(self.analyze, 3, 0, 1, 4)
-        g.addWidget(self.useskip, 4, 0)
+        g.addWidget(X.with_info(self.analyze, "analyze"), 3, 0, 1, 4)
+        g.addWidget(X.with_info(self.useskip, "warmup"), 4, 0)
         g.addWidget(self.skipmin, 4, 1)
-        g.addWidget(label("Threshold", muted=True), 5, 0)
-        g.addWidget(self.thresh, 5, 1)
-        g.addWidget(label("Floor window", muted=True), 5, 2)
-        g.addWidget(self.floorwin, 5, 3)
+        g.addWidget(X.titled("Detection threshold", "threshold"), 5, 0)
+        g.addWidget(X.attach(self.thresh, "threshold"), 5, 1)
+        g.addWidget(X.titled("Floor window", "floor_window"), 5, 2)
+        g.addWidget(X.attach(self.floorwin, "floor_window"), 5, 3)
         g.setRowStretch(6, 1)
         for w in (self.tag,):
             w.textChanged.connect(lambda *_: self.changed.emit())
@@ -593,7 +818,7 @@ class FreeSettings(QFrame):
         self.rx.blockSignals(True)
         self.rx.clear()
         for name, r in receivers.items():
-            self.rx.addItem(f"{name.upper()}  ({r.get('label', name)})", name)
+            self.rx.addItem(f"{_word(name)}  ({r.get('label', name)})", name)
         self.rx.blockSignals(False)
 
     def set_values(self, s: dict):
@@ -613,6 +838,7 @@ class FreeSettings(QFrame):
         self.floorwin.setValue(float(s.get("floorwin") or 0))
         for w in ws:
             w.blockSignals(False)
+        self.unit_reset()
 
     def values(self) -> dict:
         v = self.dur.value()
@@ -621,6 +847,120 @@ class FreeSettings(QFrame):
                 "analyze": self.analyze.isChecked(), "useskip": self.useskip.isChecked(),
                 "skipmin": self.skipmin.value(), "thresh": self.thresh.value(),
                 "floorwin": self.floorwin.value() or None}
+
+
+CELL_KEYS = {"Hops": "cell_hops", "Sample rate": "cell_sample_rate", "FFT size": "cell_fft", "FFT bins": "cell_fft",
+             "Actual bin": "cell_bin", "Bin width": "cell_bin", "Bins logged": "cell_bins", "Sweeps": "cell_sweeps",
+             "Passes": "cell_passes", "Listening": "cell_listening", "Listen per frequency": "cell_per_freq",
+             "Occupancy step": "cell_occupancy", "File size": "cell_file", "Finishes": "cell_finishes",
+             "One pass": "cell_one_pass", "Spectra per hop": "cell_spectra"}
+
+# What a change of setting is called, and which figures to report when they move (relay 011).
+SETTING_WORDS = {"lo": ("start", " MHz"), "hiReq": ("stop", " MHz"), "bin": ("bin", " kHz"), "gain": ("gain", " dB"),
+                 "integ": ("integration", " s"), "crop": ("crop", ""), "fir": ("FIR", ""), "engine": ("engine", ""),
+                 "fbins": ("FFT bins", ""), "ftime": ("seconds per hop", " s"), "frate": ("sample rate", " S/s"),
+                 "fover": ("overlap", " %"), "durVal": ("duration", ""), "unit": ("duration unit", ""),
+                 "skipmin": ("warm-up", " min"), "useskip": ("discard warm-up", ""), "analyze": ("analysis", ""),
+                 "rx": ("receiver", "")}
+FIGURES = (("hops", "hops", "{:,.0f}"), ("sweeps", "sweeps", "{:,.0f}"), ("fft", "FFT size", "{:,.0f}"),
+           ("bin_khz_predicted", "bin", "{:.4g} kHz"), ("bins", "bins per sweep", "{:,.0f}"),
+           ("listening_frac", "listening", "{:.0%}"), ("listen_per_freq_s", "listen per frequency", "{:.1f} s"),
+           ("csv_mb", "file", "{:.1f} MB"))
+
+
+def changes_between(old: dict, new: dict) -> str:
+    """"sweeps 120 → 60, listening 83% → 91%: integration 30 s → 60 s" from two plans."""
+    if not old or not new:
+        return ""
+    os_, ns = old.get("settings") or {}, new.get("settings") or {}
+    why = []
+    fftw = ns.get("engine") == "rtl_power_fftw"
+    skip = ("bin", "integ", "fir") if fftw else ("fbins", "ftime", "frate", "fover")
+    for k, (word, unit) in SETTING_WORDS.items():
+        if k in skip and os_.get("engine") == ns.get("engine"):
+            continue                              # a setting the chosen engine does not use
+        a, b = os_.get(k), ns.get(k)
+        if a != b and not (a in (None, "") and b in (None, "")):
+            if isinstance(a, bool) or isinstance(b, bool):
+                why.append(f"{word} {'on' if b else 'off'}")
+            else:
+                why.append(f"{word} {a if a is not None else '—'}{unit if a is not None else ''} → "
+                           f"{b if b is not None else '—'}{unit if b is not None else ''}")
+    og, ng = old.get("geometry") or {}, new.get("geometry") or {}
+    moved = []
+    for k, word, fmt in FIGURES:
+        a, b = og.get(k), ng.get(k)
+        if a is None or b is None:
+            continue
+        try:
+            sa, sb = fmt.format(a), fmt.format(b)
+        except (ValueError, TypeError):
+            continue
+        if sa != sb:
+            moved.append(f"{word} {sa} → {sb}")
+    ot, nt = old.get("timeline") or {}, new.get("timeline") or {}
+    if ot.get("analysed_s") != nt.get("analysed_s") and nt:
+        moved.append(f"analysed {round(ot.get('analysed_s', 0) / 60, 1):g} → {round(nt.get('analysed_s', 0) / 60, 1):g} min")
+    if old.get("fingerprint") != new.get("fingerprint"):
+        moved.append("fingerprint changed")
+    if not why and not moved:
+        return ""
+    if not moved:
+        return "Changed " + ", ".join(why) + ": no figure moved."
+    return ", ".join(moved) + (": because " + ", ".join(why) if why else "") + "."
+
+
+class Timeline(QWidget):
+    """The run's real timeline, to scale: warm-up left out of the analysis, then the part analysed.
+    From the service's scan_timeline (the engine's own sweeps); nothing computed here."""
+
+    def __init__(self):
+        super().__init__()
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(3)
+        h = QHBoxLayout()
+        h.setSpacing(2)
+        h.addWidget(label("Timeline", muted=True))
+        h.addWidget(X.info("timeline"))
+        h.addStretch(1)
+        v.addLayout(h)
+        self.bar = QWidget()
+        self.bar.setFixedHeight(12)
+        self.bar.paintEvent = self._paint
+        v.addWidget(self.bar)
+        self.text = label("", wrap=True)
+        self.text.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(self.text)
+        self.t: dict = {}
+
+    def show_timeline(self, t: dict | None):
+        self.t = t or {}
+        colour = {"bad": "alert", "info": "muted"}.get(self.t.get("level"), "text2")
+        self.text.setText(f"<span style='color:{T.C[colour]}'>{self.t.get('text', '')}</span>")
+        self.bar.update()
+
+    def _paint(self, _):
+        t = self.t
+        if not t:
+            return
+        p = QPainter(self.bar)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(0, 1, self.bar.width(), self.bar.height() - 2)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(T.color("raised"))
+        p.drawRoundedRect(r, 3, 3)
+        total = float(t.get("total_s") or 0) or 1.0
+        if t.get("analysed"):
+            w = r.width() * min(1.0, float(t.get("warm_s") or 0) / total)
+            p.setBrush(QBrush(T.color("muted", 0.55), Qt.BrushStyle.BDiagPattern))
+            p.drawRect(QRectF(r.left(), r.top(), w, r.height()))
+            p.setBrush(T.color("alert" if t.get("level") == "bad" else "survey", 0.75))
+            p.drawRect(QRectF(r.left() + w, r.top(), max(0.0, r.width() - w), r.height()))
+        else:
+            p.setBrush(T.color("muted", 0.4))
+            p.drawRoundedRect(r, 3, 3)
+        p.end()
 
 
 class Cells(QFrame):
@@ -635,6 +975,7 @@ class Cells(QFrame):
         self.title = label("What rtl_power will do", size=10, bold=True)
         h.addWidget(self.title)
         h.addWidget(badge("From the engine", "muted"))
+        self.tl = Timeline()
         h.addStretch(1)
         v.addLayout(h)
         self.grid = QGridLayout()
@@ -646,6 +987,14 @@ class Cells(QFrame):
         self.review = label("", wrap=True)
         self.review.setStyleSheet(f"color: {T.C['anomaly']};")
         v.addWidget(self.review)
+        v.addWidget(self.tl)
+        ch = QHBoxLayout()
+        ch.setSpacing(2)
+        self.changed_line = label("", wrap=True)
+        self.changed_line.setTextFormat(Qt.TextFormat.RichText)
+        ch.addWidget(self.changed_line, 1)
+        ch.addWidget(X.info("what_changed"))
+        v.addLayout(ch)
 
     def show_plan(self, plan: dict):
         clear_layout(self.grid)
@@ -657,6 +1006,8 @@ class Cells(QFrame):
             name = QLabel(k + (" (under review)" if review and k == "Listening" else ""))
             name.setProperty("muted", True)
             name.setFont(T.ui_font(8))
+            if CELL_KEYS.get(k):
+                X.attach(name, CELL_KEYS[k])
             vv = QLabel(f"<b>{val}</b> <span style='color:{T.C['muted']}'>{unit}</span>")
             vv.setTextFormat(Qt.TextFormat.RichText)
             if key:
@@ -665,7 +1016,13 @@ class Cells(QFrame):
             box.setSpacing(0)
             w = QWidget()
             w.setLayout(box)
-            box.addWidget(name)
+            nh = QHBoxLayout()
+            nh.setSpacing(1)
+            nh.addWidget(name)
+            if CELL_KEYS.get(k):
+                nh.addWidget(X.info(CELL_KEYS[k]))
+            nh.addStretch(1)
+            box.addLayout(nh)
             box.addWidget(vv)
             self.grid.addWidget(w, r, c)
         sp = plan.get("split")
@@ -679,6 +1036,7 @@ class Cells(QFrame):
                             "6 %, whatever -i is. These figures are the engine's dwell model, as `marsad run` "
                             "prints today; correcting it is station work." if review else "")
         self.review.setVisible(bool(review))
+        self.tl.show_timeline(plan.get("timeline"))
 
 
 class Tradeoff(QTableWidget):
@@ -833,6 +1191,9 @@ class StartScanDialog(QDialog):
         rv.addWidget(self.pick_head)
         self.pick_sub = label("", muted=True, wrap=True)
         rv.addWidget(self.pick_sub)
+        self.other_radio = label("", wrap=True)
+        self.other_radio.setTextFormat(Qt.TextFormat.RichText)
+        rv.addWidget(self.other_radio)
         er = QHBoxLayout()
         self.edited = label("", wrap=True)
         self.edited.setStyleSheet(f"color: {T.C['anomaly']};")
@@ -844,7 +1205,7 @@ class StartScanDialog(QDialog):
         self.fp_line = QLabel()
         self.fp_line.setFont(T.mono_font(8.5))
         self.fp_line.setWordWrap(True)
-        self.fp_line.setToolTip("The comparability fingerprint: two runs compare only if theirs match")
+        X.attach(self.fp_line, "fingerprint")
         rv.addWidget(self.fp_line)
         self.newset = label("", wrap=True)
         self.newset.setObjectName("Notice")
@@ -853,6 +1214,8 @@ class StartScanDialog(QDialog):
         self.free = FreeSettings()
         self.free.changed.connect(self._free_changed)
         rv.addWidget(self.free)
+        self.timeline = Timeline()
+        rv.addWidget(self.timeline)
         self.cond = ConditionsBox()
         self.cond.changed.connect(self._schedule)
         rv.addWidget(self.cond)
@@ -864,8 +1227,10 @@ class StartScanDialog(QDialog):
         self.chain_edit = QCheckBox("Change the chain text for this run only (a 50 Ω load, a pad…)")
         self.chain_edit.toggled.connect(self._chain_edit)
         self.chain_text.textEdited.connect(self._schedule)
+        ch.addWidget(X.info("chain_text"))
+        X.attach(self.chain_text, "chain_text")
         cv.addWidget(self.chain_text)
-        cv.addWidget(self.chain_edit)
+        cv.addWidget(X.with_info(self.chain_edit, "chain_override"))
         rv.addWidget(chain_box)
         self.checks_panel = ChecksPanel()
         self.checks_panel.again.clicked.connect(lambda: self._check(detect=True))
@@ -884,24 +1249,26 @@ class StartScanDialog(QDialog):
         v = QVBoxLayout(page)
         v.setContentsMargins(0, T.SPACE, T.SPACE, 0)
         v.setSpacing(T.SPACE * 1.25)
-        box, bv, bh = section("Range", "Locks comparability", "anomaly")
+        box, bv, bh = section("Range", "Locks comparability", "anomaly", key="hop_strip")
         self.s_preset = QComboBox()
-        self.s_preset.setToolTip("Start from a station preset")
+        X.attach(self.s_preset, "start_from")
         self.s_preset.activated.connect(self._from_preset)
-        bh.addWidget(label("Start from", muted=True))
+        bh.addWidget(X.titled("Start from", "start_from"))
         bh.addWidget(self.s_preset)
         self.strip = RangeStrip()
+        X.attach(self.strip, "hop_strip")
         self.strip.rangeChanged.connect(self._strip_moved)
         bv.addWidget(self.strip)
         g = QGridLayout()
         self.s_lo, self.s_hi = dspin(0, 10000, 3, 1, " MHz"), dspin(0, 10000, 3, 1, " MHz")
         self.s_rx = QComboBox()
         self.s_target = dspin(0, 10000, 3, 0.1, " MHz")
-        self.s_target.setSpecialValueText("none")
-        for i, (t, w) in enumerate((("Start", self.s_lo), ("Stop", self.s_hi), ("Receiver", self.s_rx),
-                                    ("Target (optional)", self.s_target))):
-            g.addWidget(label(t, muted=True), 0, i)
-            g.addWidget(w, 1, i)
+        self.s_target.setSpecialValueText("none (no target)")
+        for i, (t, w, key) in enumerate((("Start", self.s_lo, "range_start"), ("Stop", self.s_hi, "range_stop"),
+                                         ("Receiver", self.s_rx, "receiver"),
+                                         ("Target frequency (optional)", self.s_target, "target"))):
+            g.addWidget(X.titled(t, key), 0, i)
+            g.addWidget(X.attach(w, key), 1, i)
         bv.addLayout(g)
         self.facts = label("", wrap=True)
         self.facts.setTextFormat(Qt.TextFormat.RichText)
@@ -911,7 +1278,7 @@ class StartScanDialog(QDialog):
 
         cols = QHBoxLayout()
         cols.setSpacing(T.SPACE * 1.25)
-        lock, lv, _ = section("Recording settings", "Locks comparability", "anomaly")
+        lock, lv, _ = section("Recording settings", "Locks comparability", "anomaly", key="fingerprint")
         lv.addWidget(label("Change any of these and this run can only be compared with runs that share the same "
                            "values.", muted=True, wrap=True))
         lg = QGridLayout()
@@ -933,14 +1300,21 @@ class StartScanDialog(QDialog):
         self.s_frate = dspin(0.25, 3.2, 6, 0.1, " MS/s")
         self.s_fover = dspin(0, 90, 1, 1, " %")
         self.rp_widgets = [("Bin", self.s_bin), ("Integration", self.s_integ), ("FIR", self.s_fir)]
-        self.fw_widgets = [("FFT bins", self.s_fbins), ("Seconds per hop", self.s_ftime), ("Rate", self.s_frate),
+        self.fw_widgets = [("FFT bins", self.s_fbins), ("Seconds per hop", self.s_ftime), ("Sample rate", self.s_frate),
                            ("Overlap", self.s_fover)]
         self.lock_labels = {}
         items = [("Engine", self.s_engine), ("Gain dB", self.s_gain)] + self.rp_widgets + self.fw_widgets + \
             [("Crop", self.s_crop)]
+        keys = {"Engine": "engine", "Gain dB": "gain", "Bin": "bin", "Integration": "integration", "FIR": "fir",
+                "FFT bins": "fft_bins", "Seconds per hop": "seconds_per_hop", "Sample rate": "sample_rate",
+                "Overlap": "overlap", "Crop": "crop"}
+        for w in (self.s_lo, self.s_hi, self.s_target, self.s_bin, self.s_crop, self.s_ftime, self.s_frate,
+                  self.s_fover, self.s_integ, self.s_fir):
+            w.setKeyboardTracking(True)            # every figure follows as you type (relay 011)
         for i, (t, w) in enumerate(items):
             r, c = divmod(i, 3)
-            lab = label(t, muted=True)
+            X.attach(w, keys[t])
+            lab = X.titled(t, keys[t])
             self.lock_labels[id(w)] = lab
             lg.addWidget(lab, r * 2, c)
             lg.addWidget(w, r * 2 + 1, c)
@@ -950,6 +1324,8 @@ class StartScanDialog(QDialog):
         self.s_fp.setWordWrap(True)
         lv.addWidget(self.s_fp)
         self.s_newset = label("", wrap=True)
+        X.attach(self.s_newset, "new_set")
+        X.attach(self.s_fp, "fingerprint")
         self.s_newset.setObjectName("Notice")
         self.s_newset.hide()
         lv.addWidget(self.s_newset)
@@ -958,16 +1334,16 @@ class StartScanDialog(QDialog):
         lv.addWidget(self.engine_note)
         cols.addWidget(lock, 1)
         self.s_free = FreeSettings("Run settings", show_radio=False)
-        self.s_free.changed.connect(self._schedule)
+        self.s_free.changed.connect(self._setup_changed)
         cols.addWidget(self.s_free, 1)
         v.addLayout(cols)
         self.cells = Cells()
         v.addWidget(self.cells)
-        wbox, self.wv, _ = section("Warnings")
+        wbox, self.wv, _ = section("Warnings", key="warnings")
         self.w_rows = QVBoxLayout()
         self.wv.addLayout(self.w_rows)
         v.addWidget(wbox)
-        tbox, tv, _ = section("Integration trade-off", "Locks comparability", "anomaly")
+        tbox, tv, _ = section("Integration trade-off", "Locks comparability", "anomaly", key="tradeoff")
         self.table = Tradeoff()
         self.table.adopt.connect(self._adopt)
         tv.addWidget(self.table)
@@ -1005,15 +1381,17 @@ class StartScanDialog(QDialog):
             self.saved = d
             rx = d.get("receivers") or {}
             self.free.set_receivers(rx)
+            self._ask_radios()
             self.s_rx.blockSignals(True)
             self.s_rx.clear()
             for name, r in rx.items():
-                self.s_rx.addItem(f"{name.upper()}  ({r.get('label', name)})", name)
+                self.s_rx.addItem(f"{_word(name)}  ({r.get('label', name)})", name)
             self.s_rx.blockSignals(False)
             self.s_preset.clear()
             for p in d.get("presets") or []:
                 self.s_preset.addItem(f"{p['name']}  ({p['range']}, {p['engine']})", p["name"])
             self.cond.set_values(d.get("conditions_last") or {})
+            self.cond.set_last(d.get("conditions_last") or {})
             self._fill_list(keep)
         call(self.svc.saved, got)
         call(lambda: self.svc.chains(), self._got_chains)
@@ -1039,7 +1417,7 @@ class StartScanDialog(QDialog):
             nonlocal pick
             last = (e.get("last_ran") or "").replace("T", " ")[:16]
             tag = "  · archived" if e.get("archived") else ""
-            it = QListWidgetItem(f"{e['name']}{tag}\n{e['range']} · {e['engine']} · {e['rx'].upper()} · "
+            it = QListWidgetItem(f"{e['name']}{tag}\n{e['range']} · {e['engine']} · {_word(e['rx'])} · "
                                  f"{e['duration']}\n" + (f"last ran {last}" if last else "never run with these settings"))
             it.setData(Qt.ItemDataRole.UserRole, e)
             it.setToolTip(e.get("fingerprint") or "")
@@ -1087,7 +1465,7 @@ class StartScanDialog(QDialog):
         self.scan = copy.deepcopy(e["settings"])
         self.free.set_values(self.scan)
         self.pick_head.setText(e["name"] + ("  (station preset)" if e["kind"] == "preset" else ""))
-        self.pick_sub.setText(f"{e['range']} · {e['engine']} · {e['rx'].upper()} · {e['duration']}"
+        self.pick_sub.setText(f"{e['range']} · {e['engine']} · {_word(e['rx'])} · {e['duration']}"
                               + (f" · {e.get('note')}" if e.get("note") else ""))
         for b in (self.b_ren, self.b_dup):
             b.setEnabled(e["kind"] == "saved")
@@ -1095,6 +1473,7 @@ class StartScanDialog(QDialog):
         self.b_arc.setText("Restore" if e.get("archived") else "Archive")
         self._load_setup()
         self._show_edited()
+        self._show_other_radio()
         self._check(detect=False)
         self._schedule()
 
@@ -1102,11 +1481,50 @@ class StartScanDialog(QDialog):
         self.show_archived = on
         self._fill_list()
 
+    def _ask_radios(self):
+        call(self.svc.radios, lambda d, err: self._got_radios(d) if not err else None)
+
+    def _got_radios(self, d: dict):
+        """A scan uses one radio. Say which radios are plugged in, and what the other one could do."""
+        from marsad_desktop.radios import word
+        self.radios_d = d
+        here = {r["name"]: r for r in d.get("radios") or []}
+        cb = self.free.rx
+        for i in range(cb.count()):
+            r = here.get(cb.itemData(i)) or {}
+            mark_radio_item(cb, i, r, f"{word(cb.itemData(i))}  ({r.get('label', cb.itemData(i))})"
+                            + {True: "", False: " · not plugged in", None: ""}[r.get("present")])
+        self._show_other_radio()
+
+    def _show_other_radio(self):
+        from marsad_desktop.radios import word
+        d = getattr(self, "radios_d", None) or {}
+        rx = self.scan.get("rx")
+        me = next((r for r in d.get("radios") or [] if r["name"] == rx), None)
+        others = [r for r in d.get("radios") or [] if r["name"] != rx]
+        bits = []
+        if me and me.get("enabled") is False:
+            bits.append(f"<span style='color:{T.C['alert']}'>The {word(rx)} is disabled (the switch on its card on "
+                        "Live Scan): this scan cannot start on it. Pick another radio or switch it back on.</span>")
+        elif me and me.get("present") is False:
+            bits.append(f"<span style='color:{T.C['alert']}'>The {word(rx)} is not plugged in: this scan cannot "
+                        "start until it is.</span>")
+        bits.append(f"This scan uses the {word(rx)} only; it surveys and nothing records IQ.")
+        for o in others:
+            if o.get("present"):
+                bits.append(f"The {word(o['name'])} is {o['doing']['text']}"
+                            + (": to record what this scan finds, use Start recording (survey + record) instead."
+                               if o["doing"]["state"] == "ready" else "."))
+            elif o.get("present") is False:
+                bits.append(f"The {word(o['name'])} is not plugged in.")
+        self.other_radio.setText(f"<span style='color:{T.C['text2']}'>" + " ".join(bits) + "</span>")
+
     def _free_changed(self):
         rx_before = self.scan.get("rx")
         self.scan.update(self.free.values())
         if self.scan.get("rx") != rx_before:
             self._check(detect=False)
+            self._show_other_radio()
         self._schedule()
 
     def _chain_edit(self, on):
@@ -1139,6 +1557,7 @@ class StartScanDialog(QDialog):
             if err:
                 self.why.setText(f"The service could not plan this scan: {err}")
                 return
+            self.changes = changes_between(self.plan, d) or getattr(self, "changes", "")
             self.plan = d
             self._show_plan()
         call(lambda: self.svc.plan(body), got)
@@ -1153,6 +1572,11 @@ class StartScanDialog(QDialog):
             w.setVisible(bool(d.get("new_set")))
         self.cmd.show_text(d.get("command") or "")
         self.cells.show_plan(d)
+        self.timeline.show_timeline(d.get("timeline"))
+        ch = getattr(self, "changes", "")
+        self.cells.changed_line.setText(f"<span style='color:{T.C['muted']}'>Last change:</span> "
+                                        f"<span style='color:{T.C['text2']}'>{ch}</span>" if ch else "")
+        X.use_radio(self.svc, (d.get("settings") or {}).get("rx"))
         self.table.show_rows(d.get("tradeoff") or [])
         clear_layout(self.w_rows)
         for lvl, title, text in d.get("warnings") or []:
@@ -1516,6 +1940,9 @@ class StartWatchDialog(QDialog):
             b.setProperty("accent", True)
             grp.addButton(b)
             modes.addWidget(b)
+        X.attach(self.m_survey, "record_mode_survey")
+        X.attach(self.m_fixed, "record_mode_fixed")
+        modes.addWidget(X.info("record_mode_survey"))
         self.m_survey.setChecked(True)
         self.m_survey.toggled.connect(self._mode)
         modes.addStretch(1)
@@ -1531,20 +1958,29 @@ class StartWatchDialog(QDialog):
         self.w_tag = QLineEdit()
         self.w_dur, self.w_unit = dspin(0.1, 10000, 2, 1), QComboBox()
         self.w_unit.addItems(["min", "hours"])
-        sg.addWidget(label("Saved scan or preset", muted=True), 0, 0, 1, 2)
-        sg.addWidget(self.w_scan, 1, 0, 1, 2)
-        sg.addWidget(label("Surveys", muted=True), 0, 2)
-        sg.addWidget(self.w_surveyor, 1, 2)
-        sg.addWidget(label("Records", muted=True), 0, 3)
-        sg.addWidget(self.w_recorder, 1, 3)
-        sg.addWidget(label("Tag", muted=True), 2, 0)
-        sg.addWidget(self.w_tag, 3, 0)
-        sg.addWidget(label("Duration", muted=True), 2, 1)
+        sg.addWidget(X.titled("Saved scan or preset", "saved_scan_or_preset"), 0, 0, 1, 2)
+        sg.addWidget(X.attach(self.w_scan, "saved_scan_or_preset"), 1, 0, 1, 2)
+        sg.addWidget(X.titled("Surveys", "surveyor"), 0, 2)
+        sg.addWidget(X.attach(self.w_surveyor, "surveyor"), 1, 2)
+        sg.addWidget(X.titled("Records", "recorder_radio"), 0, 3)
+        sg.addWidget(X.attach(self.w_recorder, "recorder_radio"), 1, 3)
+        self.w_swap = tool("⇄", "Swap which radio surveys and which records")
+        X.attach(self.w_swap, "swap")
+        self.w_swap.clicked.connect(self._swap)
+        sg.addWidget(self.w_swap, 1, 4)
+        sg.addWidget(X.titled("Tag", "tag"), 2, 0)
+        sg.addWidget(X.attach(self.w_tag, "tag"), 3, 0)
+        sg.addWidget(X.titled("Duration", "duration"), 2, 1)
         dd = QHBoxLayout()
-        dd.addWidget(self.w_dur, 1)
-        dd.addWidget(self.w_unit)
+        dd.addWidget(X.attach(self.w_dur, "duration"), 1)
+        dd.addWidget(X.attach(self.w_unit, "duration_unit"))
         sg.addLayout(dd, 3, 1)
+        self.w_unit_reset = link_units(self.w_dur, self.w_unit)
         sv.addLayout(sg)
+        from marsad_desktop.radios import CoverageMap
+        self.cov_map = CoverageMap()
+        X.attach(self.cov_map, "coverage_map")
+        sv.addWidget(self.cov_map)
         self.survey_fp = QLabel()
         self.survey_fp.setFont(T.mono_font(8.5))
         self.survey_fp.setWordWrap(True)
@@ -1564,15 +2000,16 @@ class StartWatchDialog(QDialog):
         self.f_unit.addItems(["min", "hours"])
         self.f_dur.setValue(1)
         self.f_unit.setCurrentIndex(1)
-        for i, (t, w) in enumerate((("Radio", self.f_rx), ("Frequency", self.f_freq), ("Width", self.f_width),
-                                    ("Gain", self.f_gain))):
-            fg.addWidget(label(t, muted=True), 0, i)
-            fg.addWidget(w, 1, i)
-        fg.addWidget(label("Duration", muted=True), 2, 0)
+        for i, (t, w, key) in enumerate((("Radio", self.f_rx, "fixed_radio"), ("Frequency", self.f_freq, "fixed_freq"),
+                                         ("Width", self.f_width, "fixed_width"), ("Gain", self.f_gain, "fixed_gain"))):
+            fg.addWidget(X.titled(t, key), 0, i)
+            fg.addWidget(X.attach(w, key), 1, i)
+        fg.addWidget(X.titled("Duration", "duration"), 2, 0)
         fd = QHBoxLayout()
-        fd.addWidget(self.f_dur, 1)
-        fd.addWidget(self.f_unit)
+        fd.addWidget(X.attach(self.f_dur, "duration"), 1)
+        fd.addWidget(X.attach(self.f_unit, "duration_unit"))
         fg.addLayout(fd, 3, 0)
+        self.f_unit_reset = link_units(self.f_dur, self.f_unit)
         fv.addLayout(fg)
         rv.addWidget(self.fixed_box)
 
@@ -1583,12 +2020,15 @@ class StartWatchDialog(QDialog):
         spec = [("keep_min_snr", "Keep level", " dB"), ("capture", "Capture", " s"), ("threshold", "Trigger", " dB"),
                 ("cooldown", "Cooldown", " min"), ("passes", "Passes", ""), ("ambush", "Ambush", " dB"),
                 ("recorder_gain", "Recorder gain", " dB")]
+        okeys = {"keep_min_snr": "keep_level", "capture": "capture", "threshold": "trigger", "cooldown": "cooldown",
+                 "passes": "passes_trigger", "ambush": "ambush", "recorder_gain": "recorder_gain"}
         for i, (k, t, suf) in enumerate(spec):
             w = dspin(0, 10000, 1, 1, suf)
             w.setSpecialValueText("default")
             self.o[k] = w
             r, c = divmod(i, 4)
-            og.addWidget(label(t, muted=True), r * 2, c)
+            X.attach(w, okeys[k])
+            og.addWidget(X.titled(t, okeys[k]), r * 2, c)
             og.addWidget(w, r * 2 + 1, c)
             w.valueChanged.connect(self._schedule)
         rov.addLayout(og)
@@ -1652,7 +2092,7 @@ class StartWatchDialog(QDialog):
                 cb.blockSignals(True)
                 cb.clear()
                 for name, r in (d.get("receivers") or {}).items():
-                    cb.addItem(name.upper(), name)
+                    cb.addItem(_word(name), name)
                     cb.setItemData(cb.count() - 1, r.get("label", name), Qt.ItemDataRole.ToolTipRole)
                 cb.setMinimumContentsLength(9)
                 cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -1664,12 +2104,78 @@ class StartWatchDialog(QDialog):
             for e in [x for x in d.get("scans") or [] if not x.get("archived")] + (d.get("presets") or []):
                 self.w_scan.addItem(f"{e['name']}  ({e['range']})", e)
             self.w_scan.blockSignals(False)
+            if getattr(self, "radios_d", None):
+                self._got_radios(self.radios_d)
             self._scan_picked()
             self.cond.set_values(d.get("conditions_last") or {})
+            self.cond.set_last(d.get("conditions_last") or {})
             self._fill(keep)
             self._schedule()
         call(self.svc.saved, got)
         call(lambda: self.svc.chains(), lambda d, err: setattr(self, "rig_checks", rig_checks_for_runs(d) if not err else []))
+        self._ask_radios()
+        if not hasattr(self, "radio_timer"):
+            self.radio_timer = QTimer(self)
+            self.radio_timer.timeout.connect(self._ask_radios)
+            self.radio_timer.start(4000)
+
+    # -- the radios: who surveys, who records, and whether survey + record is possible now
+    def _ask_radios(self):
+        call(self.svc.radios, lambda d, err: self._got_radios(d) if not err else None)
+
+    def _got_radios(self, d: dict):
+        self.radios_d = d
+        if not getattr(self, "_roles_applied", False) and self.w_surveyor.count():
+            self._roles_applied = True             # the roles chosen in the Radios panel, once
+            roles = d.get("roles") or {}
+            for cb, k in ((self.w_surveyor, "surveyor"), (self.w_recorder, "recorder")):
+                cb.blockSignals(True)
+                cb.setCurrentIndex(max(0, cb.findData(roles.get(k))))
+                cb.blockSignals(False)
+        here = {r["name"]: r for r in d.get("radios") or []}
+        for cb in (self.w_surveyor, self.w_recorder, self.f_rx):
+            for i in range(cb.count()):
+                r = here.get(cb.itemData(i)) or {}
+                from marsad_desktop.radios import word
+                mark_radio_item(cb, i, r, word(cb.itemData(i))
+                                + {True: "", False: "  (not plugged in)", None: ""}[r.get("present")])
+        ok = bool((d.get("mode") or {}).get("survey_record"))
+        self.m_survey.setEnabled(ok)
+        self.m_survey.setToolTip("" if ok else d["mode"]["text"])
+        if not ok and self.m_survey.isChecked():
+            self.m_fixed.setChecked(True)
+        self._mode(self.m_survey.isChecked())
+        self._schedule()
+
+    def _swap(self):
+        a, b = self.w_surveyor.currentIndex(), self.w_recorder.currentIndex()
+        self.w_surveyor.setCurrentIndex(b)
+        self.w_recorder.setCurrentIndex(a)
+        sur, rec = self.w_surveyor.currentData(), self.w_recorder.currentData()
+        if sur and rec and sur != rec:              # remembered for next time, as the Radios panel's Swap is
+            call(lambda: self.svc.set_roles({"surveyor": sur, "recorder": rec}), lambda d, err: None)
+
+    def _coverage_warning(self, w: dict, plan: dict):
+        """Survey + record can only record what the recording radio can tune."""
+        d = getattr(self, "radios_d", None) or {}
+        if w["mode"] != "survey":
+            return None
+        st = (plan.get("settings") or {}).get("scan") or {}
+        lo, hi = st.get("lo"), st.get("hiReq")
+        rec = next((r for r in d.get("radios") or [] if r["name"] == w.get("recorder")), None)
+        self.cov_map.show_status(d, (lo, hi) if lo is not None else None)
+        if not rec or lo is None or hi is None or hi <= lo:
+            return None
+        ok = sum(max(0.0, min(b, hi) - max(a, lo)) for a, b in rec["tunable_mhz"]) / (hi - lo)
+        from marsad_desktop.radios import word
+        if w.get("surveyor") == w.get("recorder"):
+            return ["bad", "Radios", "One radio cannot survey and record at once: pick two different radios."]
+        if ok >= 0.999:
+            return ["ok", "Coverage", f"The {word(rec['name'])} can tune all of this survey's {lo:g}–{hi:g} MHz."]
+        span = ", ".join(f"{a:g}–{b:g}" for a, b in rec["tunable_mhz"])
+        return ["bad" if ok <= 0 else "warn", "Coverage",
+                f"The {word(rec['name'])} can tune {100 * ok:.0f}% of this survey's {lo:g}–{hi:g} MHz (it tunes {span} "
+                "MHz): anything the survey finds outside that cannot be recorded."]
 
     def _fill(self, keep=None):
         self.list.blockSignals(True)
@@ -1719,9 +2225,13 @@ class StartWatchDialog(QDialog):
         self.fixed_box.setVisible(not survey)
         for k in ("passes", "ambush", "recorder_gain"):
             self.o[k].setEnabled(survey)
-        self.mode_note.setText("One radio surveys and the other records what the first one finds. Each radio's chain "
-                               "is its own path in the rig used for runs." if survey else
-                               "One radio parked on one frequency, recording every event over the trigger level.")
+        both = bool(((getattr(self, "radios_d", None) or {}).get("mode") or {}).get("survey_record"))
+        self.mode_note.setText(
+            ("One radio surveys and the other records what the first one finds. Each radio's chain is its own path "
+             "in the rig used for runs." if survey else
+             "One radio parked on one frequency, recording every event over the trigger level. Works with one radio.")
+            + ("" if both or getattr(self, "radios_d", None) is None else
+               "  Survey + record is off: " + self.radios_d["mode"]["text"]))
         self._schedule()
 
     def _settings(self) -> dict:
@@ -1774,6 +2284,9 @@ class StartWatchDialog(QDialog):
             warn = [x for x in sv.get("warnings") or [] if x[0] != "ok"]
             if w["mode"] == "survey" and not any(w["scan"].get(k) for k in COND_KEYS if k != "where"):
                 warn.append(NO_CONDITIONS)
+            cov = self._coverage_warning(w, d)
+            if cov:
+                warn.insert(0, cov)
             self.checks_panel.show_checks(ch.get("radios") or {}, ch.get("in_use"), warn, self.rig_checks)
         call(lambda: self.svc.watch_plan({"watch": w, "detect": detect}), got)
 

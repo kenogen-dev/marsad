@@ -1320,6 +1320,11 @@ def main_survey(station, cfg, args, rest, detect, launch, exe, spawn, poll_s) ->
         rest += ["--chain", record.confirm_default_chain(station, ns, args.surveyor)]
     if "--device" in rest or any(a.startswith("--device=") for a in rest):
         raise SystemExit("  --device is chosen by serial here; leave it out.")
+    if "--receiver" not in rest and not any(a.startswith("--receiver=") for a in rest):
+        # The survey child records whatever receiver it is told, else the preset's. Tell it the
+        # radio that actually surveys, so its sidecar and fingerprint name that radio even when
+        # the roles differ from the preset (owner's decision, 2026-11-07, relay 011).
+        rest += ["--receiver", args.surveyor]
     if args.dry_run:
         record.build_parser(station).parse_args([args.preset, args.duration, *rest])   # what the child would refuse
         print(f"  would detect {args.surveyor} (SN {cap.serial_of(cfg, args.surveyor) or 'by tuner'}) and "

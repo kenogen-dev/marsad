@@ -658,6 +658,13 @@ class LiveScreen(QWidget):
         self.engine_lbl.setObjectName("Pill")
         top.addWidget(self.engine_lbl)
         top.addStretch(1)
+        from .radios import RadiosStrip
+        self.radios = RadiosStrip()
+        self.radios.open_panel.connect(self.open_radios)
+        self.radios.swap.connect(self.swap_radios)
+        self.radios.enable.connect(self.enable_radio)
+        top.addWidget(self.radios)
+        top.addSpacing(T.SPACE)
         self.btn_start = QToolButton()
         self.btn_start.setObjectName("Primary")
         self.btn_start.setText("Start a scan")
@@ -665,6 +672,15 @@ class LiveScreen(QWidget):
                                   "launched outside this window, so closing the window never stops it")
         self.btn_start.clicked.connect(self.open_start)
         top.addWidget(self.btn_start)
+        self.btn_record = QToolButton()
+        self.btn_record.setObjectName("Tool")
+        self.btn_record.setText("Start recording…")
+        from . import explain as X
+        X.attach(self.btn_record, "start_recording")
+        self.btn_record.clicked.connect(self.open_watch)
+        top.addWidget(self.btn_record)
+        X.attach(self.btn_start, "start_scan")
+        X.attach(self.btn_follow, "follow")
         self.btn_view = QToolButton()
         self.btn_view.setObjectName("Tool")
         self.btn_view.setText("View ▾")
@@ -823,8 +839,8 @@ class LiveScreen(QWidget):
         v.setSpacing(3)
         h = QHBoxLayout()
         h.setSpacing(4)
-        lab = QLabel("sweep height")
-        lab.setProperty("muted", True)
+        from . import explain as X
+        lab = X.titled("sweep height", "sweep_height")
         h.addWidget(lab)
         self.height_btns = QButtonGroup(w)
         for k, ry in enumerate(SWEEP_HEIGHTS):
@@ -851,6 +867,8 @@ class LiveScreen(QWidget):
             cb = QCheckBox(text)
             cb.setChecked(True)
             cb.setToolTip(tip)
+            from . import explain as X
+            X.attach(cb, {"noise": "layer_noise", "signal": "layer_signal", "internal": "layer_internal"}[key])
             cb.toggled.connect(lambda on, k=key: self.set_layer(k, on))
             self.ly_boxes[key] = cb
             h.addWidget(cb)
@@ -860,7 +878,7 @@ class LiveScreen(QWidget):
                 self.thr_box.setDecimals(0)
                 self.thr_box.setValue(self.sig_thr)
                 self.thr_box.setSuffix(" dB")
-                self.thr_box.setToolTip("The signal layer's threshold over each sweep's floor")
+                X.attach(self.thr_box, "signal_threshold")
                 self.thr_box.valueChanged.connect(self.set_threshold)
                 h.addWidget(self.thr_box)
         self.ly_note = QLabel()
@@ -922,9 +940,51 @@ class LiveScreen(QWidget):
     def showEvent(self, ev):
         super().showEvent(ev)
         self.poller.start()
+        if not hasattr(self, "radio_timer"):
+            self.radio_timer = QTimer(self)
+            self.radio_timer.timeout.connect(self._ask_radios)
+        self.radio_timer.start(5000)
+        self._ask_radios()
+
+    def _ask_radios(self):
+        """The radio strip: presence by serial from Windows' device list, nothing opened (cheap)."""
+        from .scan_start import call
+        call(self.svc.radios, lambda d, err: self.radios.show_status(d) if not err and self.isVisible() else None)
+
+    def swap_radios(self):
+        """Swap on the strip: asks first, naming both radios' new jobs."""
+        from PySide6.QtWidgets import QMessageBox
+        from .radios import word
+        from .scan_start import call
+        roles = (self.radios.data or {}).get("roles") or {}
+        sur, rec = roles.get("surveyor"), roles.get("recorder")
+        if not sur or not rec:
+            return
+        if QMessageBox.question(
+                self, "Swap the radios' jobs?",
+                f"After the swap the {word(rec)} surveys and the {word(sur)} records what it finds.\n\n"
+                "This applies to recorder sessions started from now on (survey + record). Nothing already "
+                "running changes, and a plain scan still uses the radio you pick for it.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        call(lambda: self.svc.set_roles({"swap": True}),
+             lambda d, err: self.radios.show_status(d) if not err else QMessageBox.warning(self, "Swap refused", str(err)))
+
+    def enable_radio(self, name: str, on: bool):
+        from .scan_start import call
+        call(lambda: self.svc.set_enabled(name, on),
+             lambda d, err: self.radios.show_status(d) if not err else self._ask_radios())
+
+    def open_radios(self):
+        from .radios import RadiosDialog
+        d = RadiosDialog(self.svc, self)
+        d.changed.connect(self.radios.show_status)
+        d.exec()
 
     def hideEvent(self, ev):
         super().hideEvent(ev)
+        if hasattr(self, "radio_timer"):
+            self.radio_timer.stop()
 
     def shutdown(self):
         self.poller.stop()

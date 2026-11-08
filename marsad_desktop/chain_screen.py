@@ -3182,8 +3182,8 @@ class ChainScreen(QWidget):
         seg.setObjectName("Segment")
         seg.setAccessibleName(name)
         lay = QHBoxLayout(seg)
-        lay.setContentsMargins(3, 3, 3, 3)
-        lay.setSpacing(2)
+        lay.setContentsMargins(T.SPACE // 2, T.SPACE // 2, T.SPACE // 2, T.SPACE // 2)
+        lay.setSpacing(T.SPACE // 2)
         for w in widgets:
             lay.addWidget(w)
         return seg
@@ -3193,19 +3193,22 @@ class ChainScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # The toolbar (relay 007): grouped segments - rig, run on the first row; edit, arrange, view
-        # and the set-apart Clear grid on the second - one height for every control.
+        # The toolbar (relay 007, spread out in relay 011): the rig section and its actions with Save and
+        # Use for runs on the first row; edit, arrange, picture and help, then the run switches and the
+        # set-apart Clear grid on the second. The view menus (Grid, Parts, Wires, Zoom) sit on a small bar
+        # at the grid's top edge, with the view they change. One height for every toolbar button.
         bar = QFrame()
         bar.setObjectName("Toolbar")
         rows = QVBoxLayout(bar)
-        rows.setContentsMargins(T.SPACE * 2, T.SPACE, T.SPACE * 2, T.SPACE)
+        rows.setContentsMargins(T.SPACE * 2, T.SPACE + T.SPACE // 2, T.SPACE * 2, T.SPACE + T.SPACE // 2)
         rows.setSpacing(T.SPACE)
         b = QHBoxLayout()
-        b.setSpacing(T.SPACE)
+        b.setSpacing(T.SPACE * 2)
         rows.addLayout(b)
         info = QHBoxLayout()
-        info.setSpacing(T.SPACE)
+        info.setSpacing(T.SPACE * 2)
         rows.addLayout(info)
+        top = Qt.AlignmentFlag.AlignTop
         lab = QLabel()
         lab.setPixmap(tool_icon("rig", "muted").pixmap(16, 16))
         lab.setToolTip("Rig: the drawing on the grid")
@@ -3216,14 +3219,31 @@ class ChainScreen(QWidget):
         self.pick.setToolTip("The rig shown on the grid. Each saved rig, and each chain the web page made, is "
                              "listed; archived rigs are listed apart, under Archived.")
         self.pick.activated.connect(self._picked)
-        self.state = ElidedLabel()
+        # The rig's state has a line of its own under the picker (relay 011): it wraps, never clips.
+        self.state = QLabel()
         self.state.setObjectName("RigState")
         self.state.setProperty("muted", True)
         self.state.setFont(T.ui_font(8.5))
-        self.state.setMinimumWidth(60)
+        self.state.setWordWrap(True)
+        self.state.setTextFormat(Qt.TextFormat.PlainText)
+        self.state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
         self.state.setToolTip("This rig's state: saved or not, when it last ran, static or not")
         self.pill = QLabel()
         self.pill.setObjectName("Pill")
+        rig_seg = QFrame()
+        rig_seg.setObjectName("Segment")
+        rig_seg.setAccessibleName("rig")
+        rv = QVBoxLayout(rig_seg)
+        rv.setContentsMargins(T.SPACE // 2, T.SPACE // 2, T.SPACE, T.SPACE // 2 + 2)
+        rv.setSpacing(T.SPACE // 2)
+        rh = QHBoxLayout()
+        rh.setSpacing(T.SPACE // 2)
+        rh.addWidget(lab)
+        rh.addWidget(self.pick, 1)
+        rh.addWidget(self.pill)
+        rv.addLayout(rh)
+        rv.addWidget(self.state)
+        rig_seg.setMinimumWidth(T.SPACE * 45)
         self.btn_new = self._tool("New rig", "Start a new rig: blank, or from a template", self.new_rig, icon="new")
         self.btn_rename = self._tool("Rename", "Give this rig a new name", self.rename_rig, icon="rename")
         self.btn_rig = self._tool("Rig", "History of this rig's saves; archive or restore it", lambda: None,
@@ -3231,8 +3251,8 @@ class ChainScreen(QWidget):
         self.btn_rig.setText("Rig ▾")
         self.btn_rig.setMenu(self._rig_menu())
         self.btn_rig.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        b.addWidget(self._segment(lab, self.pick, self.state, self.pill, name="rig"))
-        b.addWidget(self._segment(self.btn_new, self.btn_rename, self.btn_rig, name="rig actions"))
+        b.addWidget(rig_seg, 0, top)
+        b.addWidget(self._segment(self.btn_new, self.btn_rename, self.btn_rig, name="rig actions"), 0, top)
         b.addStretch(1)
         self.chk_static = QCheckBox("Static")
         self.chk_static.setToolTip("A static rig is never questioned before a run: it does not change.")
@@ -3244,12 +3264,11 @@ class ChainScreen(QWidget):
         self.btn_out = self._tool("Output", "Show or hide the Output panel: technical data for what is selected, "
                                   "or for the whole rig", lambda: None, icon="output")
         self.btn_out.setCheckable(True)
-        b.addWidget(self._segment(self.chk_static, self.btn_text, self.btn_out, name="run"))
         self.btn_save = self._tool("Save", "Write this rig to chain.json through the service", self.save,
                                    icon="save", kind="Primary")
         self.btn_use = self._tool("Use for runs", "", self.use_for_runs, icon="use", kind="Primary")
-        b.addWidget(self.btn_save)
-        b.addWidget(self.btn_use)
+        b.addWidget(self.btn_save, 0, top)
+        b.addWidget(self.btn_use, 0, top)
         root.addWidget(bar)
 
         self.btn_undo = self._tool("Undo", "Undo (Ctrl+Z)", self.undo, icon="undo", label=False)
@@ -3277,11 +3296,14 @@ class ChainScreen(QWidget):
         self.btn_picture = self._tool("Picture…", "Save the drawing as a PNG picture, to a place you pick",
                                       lambda: self.export_picture(), icon="picture")
         self.btn_help = self._tool("Help", "Keyboard shortcuts (F1)", self.show_help, icon="help", label=False)
-        info.addWidget(self._segment(*view, self.btn_picture, self.btn_help, name="view"))
+        info.addWidget(self._segment(self.btn_picture, self.btn_help, name="picture and help"))
         info.addStretch(1)
+        info.addWidget(self._segment(self.chk_static, self.btn_text, self.btn_out, name="run"))
         self.btn_clear = self._tool("Clear grid", "Take every part and wire off the grid. Undo brings them back; "
                                     "nothing is saved until Save.", self.clear_grid, icon="clear", kind="Danger")
         info.addWidget(self.btn_clear)
+        # The view bar (relay 011): built here, placed on the grid's top edge below.
+        self.view_bar = self._segment(*view, name="view")
 
         # The Checks strip: problems as the rig is built. Each one selects what it is about.
         self.checks_box = QFrame()
@@ -3399,7 +3421,13 @@ class ChainScreen(QWidget):
         self.split_down.setChildrenCollapsible(False)
         holder = QWidget()
         hv = QVBoxLayout(holder)
-        hv.setContentsMargins(12, 16, 16, 6)
+        hv.setContentsMargins(12, T.SPACE * 2, 16, 6)
+        hv.setSpacing(T.SPACE // 2)
+        vb = QHBoxLayout()
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.addWidget(self.view_bar)
+        vb.addStretch(1)
+        hv.addLayout(vb)
         self.scene = ChainScene(self)
         self.scene.setSceneRect(-200, -400, 2600, 1100)
         self.view = ChainView(self, self.scene)

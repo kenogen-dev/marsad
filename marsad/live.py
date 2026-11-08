@@ -1280,6 +1280,105 @@ def time_split(g: dict, integ) -> dict | None:
     return {"kept": g["listening"] * kept, "cropped": g["listening"] * (1 - kept), "retune": 1 - g["listening"]}
 
 
+def scan_timeline(g: dict, s: dict) -> dict:
+    """What happens to the run's time, in the engine's own terms: the recording lasts the
+    duration; `--skip-warmup` is applied at analysis, as whole sweeps (record.py rounds up and
+    always keeps at least the last sweep), so warm-up is inside the duration, never added to it."""
+    total = float(s["durS"])
+    per = float(g["passS"] if g["engine"] else s["integ"]) or 1.0
+    sweeps = int(g["sweeps"] or 0)
+    word = "passes" if g["engine"] else "sweeps"
+    out = {"total_s": total, "per_s": per, "sweeps": sweeps, "unit": word, "analysed": bool(s["analyze"])}
+    if not s["analyze"]:
+        out.update(skipped=0, warm_s=0.0, analysed_s=0.0, level="info",
+                   text=f"Records {_secs(total)}. Analysis is off, so nothing is discarded or analysed when it "
+                        "ends (run `marsad analyze` on it later).")
+        return out
+    want = s["skipmin"] * 60 if s["useskip"] else 0.0
+    skipped = min(max(0, sweeps - 1), math.ceil(want / per)) if want > 0 else 0
+    warm = min(total, skipped * per)
+    out.update(skipped=skipped, warm_s=warm, analysed_s=max(0.0, total - warm))
+    if want > 0 and want >= total:
+        out.update(level="bad", text=f"Records {_secs(total)}, but the warm-up to discard ({_secs(want)}) is as long "
+                                     "as the run: the whole run would be warm-up, and nothing would be analysed "
+                                     f"(the analyser keeps only the last of the {sweeps} {word}).")
+    elif skipped:
+        out.update(level="ok", text=f"Records {_secs(total)}: the first {_secs(warm)} ({skipped} {word}) are warm-up "
+                                    f"and left out of the analysis, then {_secs(total - warm)} "
+                                    f"({max(0, sweeps - skipped)} {word}) are analysed. Warm-up is part of the "
+                                    "duration, not added to it.")
+    else:
+        out.update(level="ok", text=f"Records {_secs(total)}, all of it analysed ({sweeps} {word}); no warm-up is "
+                                    "discarded.")
+    return out
+
+
+def default_sources(station: Station, rx: str | None = None) -> dict:
+    """Where each radio-dependent default comes from, in plain words (relay 011): station.json
+    (read here, raw, with its own `_key` note when it has one), or marsad's built-in starting value,
+    or the window's own. Never station.local.json. Nothing is guessed: a value with no note says
+    only where it is set, and names the command that would measure it."""
+    from . import capture as cap
+    try:
+        raw = json.loads(station.file.read_text(encoding="utf-8")) if station.file.exists() else {}
+    except (OSError, ValueError):
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    rx = rx if rx in station.receivers else station.default_receiver
+    rraw = ((raw.get("receivers") or {}).get(rx) or {}) if rx else {}
+    rec_raw = raw.get("recorder") or {}
+    cfg = cap.settings(station)
+
+    def item(value, where, note="", measure="", generic=False):
+        text = {"station": "from station.json, entered by hand",
+                "builtin": "not measured here: marsad's built-in starting value",
+                "window": "not measured: a generic starting value"}[where]
+        return {"value": value, "where": where, "text": text, "note": str(note or ""), "measure": measure,
+                "generic": generic or where != "station", "scope": "radio"}
+
+    out = {}
+    pre_skip = {k: v.get("skip_warmup") for k, v in (raw.get("presets") or {}).items()
+                if isinstance(v, dict) and v.get("skip_warmup") is not None}
+    out["warmup"] = item(f"{jsnum(SCAN_DEFAULTS['skipmin'])} min", "window",
+                         measure="`marsad drift <tag>` on a run started cold (ideally with a 50 ohm load): it "
+                                 "reports the sweep from which the floor stays settled")
+    if pre_skip:
+        out["warmup"]["note"] = "station.json presets with their own warm-up: " + ", ".join(
+            f"{k} {jsnum(v)} min" for k, v in pre_skip.items())
+    out["retune"] = item(f"{jsnum(station.retune_ms_per_hop)} ms per hop",
+                         "station" if "retune_ms_per_hop" in raw else "builtin", raw.get("_retune_ms_per_hop"),
+                         "`marsad calibrate-retune`")
+    out["retune_fftw"] = item("59 ms per hop + 16 ms per extra buffer read",
+                              "station" if "retune_ms_per_hop_fftw" in raw else "builtin",
+                              raw.get("_retune_ms_per_hop_fftw"),
+                              "a short rtl_power_fftw run: its log gives per-hop timings")
+    gaps = (station.receivers.get(rx) or {}).get("gaps_mhz") or []
+    out["gap"] = item(", ".join(f"{jsnum(a)}–{jsnum(b)} MHz" for a, b in gaps) or "none",
+                      "station" if "gaps_mhz" in rraw else "builtin", rraw.get("_gaps_mhz"),
+                      "`rtl_test -t` (E4000 tuners report where the PLL will not lock); it moves as the radio warms")
+    rng = (station.receivers.get(rx) or {}).get("range_mhz")
+    out["range"] = item(f"{jsnum(rng[0])}–{jsnum(rng[1])} MHz" if rng else "not set",
+                        "station" if "range_mhz" in rraw else "builtin", rraw.get("_range_mhz"),
+                        "`rtl_test -t` for E4000 tuners; otherwise the tuner's datasheet")
+    df = station.detection_floors
+    out["detection_floor"] = item(", ".join(f"{k} {jsnum(v)} dB" for k, v in df.items()) or "not set",
+                                  "station" if "detection_floor_db" in raw else "builtin",
+                                  raw.get("_detection_floor_db"),
+                                  "two terminated runs back to back, compared with `marsad compare-runs`")
+    out["threshold"] = item(f"{jsnum(SCAN_DEFAULTS['thresh'])} dB", "window",
+                            measure="a choice, not a measurement: raise it if the noise produces detections")
+    out["trigger"] = item(f"{jsnum(cfg.get('threshold_db', 12))} dB",
+                          "station" if "threshold_db" in rec_raw else "builtin", rec_raw.get("_threshold_db"),
+                          "a choice: look at what a watch caught (`marsad watch report`) and adjust")
+    keep = cfg.get("keep_min_snr_db") or 0
+    out["keep"] = item("off" if not keep else f"{jsnum(keep)} dB",
+                       "station" if "keep_min_snr_db" in rec_raw else "builtin", rec_raw.get("_keep_min_snr_db"),
+                       "a choice: compare kept and refused events in `marsad watch report`")
+    for k in ("retune", "retune_fftw", "detection_floor", "threshold", "trigger", "keep", "warmup"):
+        out[k]["scope"] = "station"             # one figure for every radio on this station, not per radio
+    return {"receiver": rx, "items": out}
+
+
 def scan_fingerprint(station: Station, s: dict) -> str:
     """The fingerprint `marsad run` would write, by marsad's own function."""
     if s["engine"] == rpf.ENGINE:
@@ -1649,6 +1748,7 @@ def scan_plan(station: Station, form: dict) -> dict:
             "warnings": scan_warnings(station, g, s, chain_text), "cells": scan_cells(g, s),
             "facts": scan_facts(station, s),
             "split": time_split(g, s["integ"]), "tradeoff": scan_tradeoff(station, s),
+            "timeline": scan_timeline(g, s),
             "conditions": conditions_text(s), "command": cmd["text"], "line": cmd["line"],
             # relay 001: rtl_power's real listening share is about 6 % whatever -i is; the
             # engine still reports its dwell model, so the window marks the figure under review.
@@ -1676,12 +1776,12 @@ def radio_in_use(station: Station) -> dict:
                     rx = json.loads(f.with_suffix(".json").read_text()).get("receiver")
                 except (OSError, ValueError):
                     rx = None
-                held.append(f"{(rx or 'a radio').upper()} is recording {f.name}")
+                held.append(f"{radio_word(rx) if rx else 'a radio'} is recording {f.name}")
     try:
         from . import catalogue
         for d in catalogue.live_recorders(station):
             if d.get("running"):
-                held.append(f"{str(d.get('receiver') or d.get('serial') or 'a radio').upper()} is held by "
+                held.append(f"{radio_word(d.get('receiver') or d.get('serial') or 'a radio')} is held by "
                             f"marsad watch ({d.get('mode') or 'recorder'})")
     except Exception:  # noqa: BLE001 - a broken status file must not hide the process check
         pass
@@ -1705,7 +1805,7 @@ def find_radio(station: Station, rx: str) -> dict:
     except SystemExit as exc:
         return {"found": False, "rx": rx, "serial": cap.serial_of(cfg, rx), "text": str(exc).strip().split("\n  Nothing")[0]}
     return {"found": True, "rx": rx, "serial": r["serial"], "device": r["device"],
-            "text": f"{rx.upper()} found by serial {r['serial']} at USB index {r['device']}."}
+            "text": f"{radio_word(rx)} found by serial {r['serial']} at USB index {r['device']}."}
 
 
 def chain_for(station: Station, rx: str) -> dict:
@@ -1721,7 +1821,7 @@ def chain_for(station: Station, rx: str) -> dict:
     used = d.get("chain_used_at")
     if rig is not None:
         static = chain.texts_are_static(station, (d.get("chain_by_serial") or {}).values())
-        source = f"the rig used for runs, path to the {rx.upper()}"
+        source = f"the rig used for runs, path to the {radio_word(rx)}"
     else:
         static = chain.default_is_static(station, text) if text else False
         source = "the saved default chain"
@@ -1740,6 +1840,10 @@ def scan_checks(station: Station, rx: str, detect: bool = True) -> dict:
         radio = {"found": None, "rx": rx, "text": "Not checked yet: Start asks it its serial, or Check again does now."}
     else:
         radio = find_radio(station, rx)
+    if rx in disabled_radios(station):              # the window's own switch: never offered, never started
+        radio = {"found": False, "rx": rx, "disabled": True,
+                 "text": f"The {radio_word(rx)} is disabled in this window (the switch on its card). Enable it "
+                         "there to use it; its role and settings are kept."}
     return {"in_use": use, "radio": radio, "chain": chain_for(station, rx)}
 
 
@@ -1865,14 +1969,16 @@ def scan_start(station: Station, form: dict) -> dict:
 
 def saved_doc(station: Station) -> dict:
     p = station.root / SAVED_SCANS_FILE
-    doc = {"schema": 1, "scans": {}, "watches": {}, "conditions_last": {}}
+    doc = {"schema": 1, "scans": {}, "watches": {}, "conditions_last": {}, "roles": {}, "disabled": []}
     if p.exists():
         try:
             got = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(got, dict):
-                for k in ("scans", "watches", "conditions_last"):
+                for k in ("scans", "watches", "conditions_last", "roles"):
                     if isinstance(got.get(k), dict):
                         doc[k] = got[k]
+                if isinstance(got.get("disabled"), list):
+                    doc["disabled"] = [str(x) for x in got["disabled"]]
         except (OSError, ValueError) as exc:
             raise ValueError(f"{SAVED_SCANS_FILE} is unreadable: {exc}")
     return doc
@@ -2099,6 +2205,8 @@ def watch_plan(station: Station, form: dict, detect: bool = False) -> dict:
         checks["radios"][r] = {"chain": chain_for(station, r),
                                "radio": ({"found": None, "rx": r, "text": "Not checked yet."} if not detect or use["blocked"]
                                          else find_radio(station, r))}
+        if r in disabled_radios(station):
+            checks["radios"][r]["radio"] = scan_checks(station, r, detect=False)["radio"]
     cmd = watch_command(station, w, chains)
     out = {"settings": w, "line": cmd["line"], "argv": cmd["argv"], "checks": checks, "chains": chains}
     if w["mode"] == "survey":
@@ -2134,6 +2242,310 @@ def watch_start(station: Station, form: dict) -> dict:
     return {"started": True, "line": plan["line"], "argv": plan["argv"], **got, "checks": ch}
 
 
+# ---------------------------------------------------------------- the radios (owner, 2026-11-07)
+#
+# Which radios are plugged in, what each is doing now, which surveys and which records, and what
+# each can and cannot do. Presence comes from Windows' own list of USB devices, which names each
+# dongle by its serial without opening it, so it is safe to ask every few seconds even while a
+# radio is recording. Nothing here opens a radio; the start path's rtl_eeprom check still decides
+# the USB index at start time (rule 8).
+
+RTL_USB_IDS = ("VID_0BDA&PID_2838", "VID_0BDA&PID_2832")
+
+
+def radio_word(name) -> str:
+    """How a radio is named in words: an all-letter name in capitals ("abc" -> "ABC"), any other as written."""
+    name = str(name or "")
+    return name.upper() if name.isalpha() else name
+_USB_CACHE: list = [0.0, None]
+
+
+def usb_radios() -> dict | None:
+    """{serial: device name} for every RTL-SDR plugged in now, from Windows' device list
+    (SetupAPI, the list Device Manager shows). Opens nothing. None where it cannot be told
+    (not Windows, or the call failed). Cached for 2 s."""
+    if time.time() - _USB_CACHE[0] < 2.0:
+        return _USB_CACHE[1]
+    out = None
+    if host.IS_WINDOWS:
+        try:
+            out = _setupapi_rtl()
+        except (OSError, AttributeError, ValueError):
+            out = None
+    _USB_CACHE[:] = [time.time(), out]
+    return out
+
+
+def _setupapi_rtl() -> dict:
+    import ctypes
+    from ctypes import wintypes
+
+    class DEVINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("ClassGuid", ctypes.c_byte * 16),
+                    ("DevInst", wintypes.DWORD), ("Reserved", ctypes.c_void_p)]
+    sa = ctypes.WinDLL("setupapi", use_last_error=True)
+    sa.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    sa.SetupDiGetClassDevsW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD]
+    sa.SetupDiEnumDeviceInfo.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(DEVINFO)]
+    sa.SetupDiGetDeviceInstanceIdW.argtypes = [ctypes.c_void_p, ctypes.POINTER(DEVINFO), wintypes.LPWSTR,
+                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    sa.SetupDiGetDeviceRegistryPropertyW.argtypes = [ctypes.c_void_p, ctypes.POINTER(DEVINFO), wintypes.DWORD,
+                                                     ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
+                                                     wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    sa.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    h = sa.SetupDiGetClassDevsW(None, "USB", None, 0x2 | 0x4)       # DIGCF_PRESENT | DIGCF_ALLCLASSES
+    if not h or h == ctypes.c_void_p(-1).value:
+        raise OSError("SetupDiGetClassDevs failed")
+    found = {}
+    try:
+        i = 0
+        info = DEVINFO()
+        info.cbSize = ctypes.sizeof(DEVINFO)
+        buf = ctypes.create_unicode_buffer(512)
+        while sa.SetupDiEnumDeviceInfo(h, i, ctypes.byref(info)):
+            i += 1
+            if not sa.SetupDiGetDeviceInstanceIdW(h, ctypes.byref(info), buf, 512, None):
+                continue
+            iid = buf.value.upper()
+            if not any(k in iid for k in RTL_USB_IDS):
+                continue
+            serial = buf.value.split("\\")[-1]
+            name = ""
+            for prop in (0xC, 0x0):                                 # SPDRP_FRIENDLYNAME, SPDRP_DEVICEDESC
+                nb = ctypes.create_unicode_buffer(256)
+                if sa.SetupDiGetDeviceRegistryPropertyW(h, ctypes.byref(info), prop, None, nb, 512, None):
+                    name = nb.value
+                    break
+            found[serial] = name
+    finally:
+        sa.SetupDiDestroyDeviceInfoList(h)
+    return found
+
+
+def radio_roles(station: Station) -> dict:
+    """Which radio surveys and which records: the window's own choice (saved_scans.json "roles"),
+    else station.json's recorder.roles, else the first and second receivers (watch.survey_roles).
+    Every recorder command states both with --surveyor / --recorder, so this changes nothing in
+    the engine's own defaults."""
+    from . import capture as cap, watch
+    saved = (saved_doc(station).get("roles") or {})
+    names = list(station.receivers)
+    sur, rec = saved.get("surveyor"), saved.get("recorder")
+    if sur not in names or rec not in names or sur == rec:
+        try:
+            sur, rec = watch.survey_roles(station, cap.settings(station), None, None)
+        except SystemExit:
+            sur, rec = (names + [None, None])[:2]
+    return {"surveyor": sur, "recorder": rec, "chosen_here": bool(saved)}
+
+
+def set_radio_roles(station: Station, form: dict) -> dict:
+    """POST /radios/roles: {"surveyor", "recorder"} or {"swap": true}."""
+    doc = saved_doc(station)
+    now = radio_roles(station)
+    if form.get("swap"):
+        sur, rec = now["recorder"], now["surveyor"]
+    else:
+        sur, rec = form.get("surveyor"), form.get("recorder")
+    if sur not in station.receivers or rec not in station.receivers:
+        raise ValueError("both roles need a receiver from station.json")
+    if sur == rec:
+        raise ValueError("one radio cannot survey and record at once; pick two different radios")
+    doc["roles"] = {"surveyor": sur, "recorder": rec}
+    _saved_write(station, doc)
+    return radios_status(station)
+
+
+def disabled_radios(station: Station) -> set:
+    """Radios switched off in the window (saved_scans.json "disabled"). The engine never reads this:
+    it only stops the window offering or starting new work on them (relay 011)."""
+    try:
+        return set(saved_doc(station).get("disabled") or []) & set(station.receivers)
+    except ValueError:
+        return set()
+
+
+def set_radio_enabled(station: Station, form: dict) -> dict:
+    """POST /radios/enable {"name", "enabled"}. Disabling stops nothing already running on that
+    radio (rule 1); it only blocks new starts. The radio keeps its role."""
+    name = form.get("name")
+    if name not in station.receivers:
+        raise ValueError(f"no receiver {name!r} in station.json")
+    doc = saved_doc(station)
+    off = [x for x in doc.get("disabled") or [] if x != name]
+    if not form.get("enabled", True):
+        off.append(name)
+    doc["disabled"] = off
+    _saved_write(station, doc)
+    return radios_status(station)
+
+
+def _intervals_minus(lo: float, hi: float, gaps) -> list:
+    out, cur = [], lo
+    for a, b in sorted((float(a), float(b)) for a, b in gaps or []):
+        if b <= cur or a >= hi:
+            continue
+        if a > cur:
+            out.append([cur, a])
+        cur = max(cur, b)
+    if cur < hi:
+        out.append([cur, hi])
+    return out
+
+
+def _intersect(xs: list, ys: list) -> list:
+    out = []
+    for a, b in xs:
+        for c, d in ys:
+            lo, hi = max(a, c), min(b, d)
+            if hi > lo:
+                out.append([lo, hi])
+    return out
+
+
+def coverage_of(station: Station, rx: str, lo: float, hi: float) -> float | None:
+    """Share of [lo, hi] MHz this receiver can tune (its range less its PLL gaps)."""
+    r = station.receivers.get(rx) or {}
+    rng = r.get("range_mhz")
+    if not rng or hi <= lo:
+        return None
+    ok = _intersect(_intervals_minus(float(rng[0]), float(rng[1]), r.get("gaps_mhz")), [[lo, hi]])
+    return sum(b - a for a, b in ok) / (hi - lo)
+
+
+def _radio_notes(station: Station, rx: str, tuner: str) -> list:
+    """station.json's builder_notes that belong to this radio (keyed on it or its tuner), each with
+    where it applies, in words."""
+    out = []
+    for n in station.data.get("builder_notes", []):
+        w = n.get("when") or {}
+        if w.get("rx") != rx and w.get("tuner") != tuner:
+            continue
+        where = []
+        if w.get("span"):
+            where.append(f"{jsnum(w['span'][0])}–{jsnum(w['span'][1])} MHz")
+        if "includes" in w:
+            where.append(f"scans including {jsnum(w['includes'])} MHz")
+        if "hi_above" in w:
+            where.append(f"above {jsnum(w['hi_above'])} MHz")
+        if "engine" in w:
+            where.append("rtl_power_fftw" if w["engine"] else "rtl_power")
+        if "gain_above" in w:
+            where.append(f"gain over {jsnum(w['gain_above'])}")
+        out.append({"level": n.get("level") or "warn", "title": n.get("title") or "Note",
+                    "text": n.get("text") or "", "where": ", ".join(where)})
+    return out
+
+
+def radios_status(station: Station) -> dict:
+    """GET /radios: each configured radio, whether it is plugged in (by serial, nothing opened),
+    what it is doing now, its role, and what it can do; plus what the station can do now, in
+    words. Read-only and cheap: safe to ask every few seconds."""
+    from . import capture as cap, catalogue
+    cfg = cap.settings(station)
+    usb = usb_radios()
+    programs = host.running_sdr_programs()
+    roles = radio_roles(station)
+    off = disabled_radios(station)
+    active = {}
+    if station.surveys.exists():
+        for f in list(station.surveys.glob("*.csv")) + list(station.surveys.glob("*.dat")):
+            if recording_active(f):
+                try:
+                    d = json.loads(f.with_suffix(".json").read_text())
+                except (OSError, ValueError):
+                    continue
+                active.setdefault(d.get("receiver"), f.stem)
+    recorders = {}
+    try:
+        for r in catalogue.live_recorders(station, cfg):
+            if r.get("running"):
+                recorders[str(r.get("serial") or "")] = r
+                recorders.setdefault("@" + str(r.get("receiver") or ""), r)
+    except Exception:  # noqa: BLE001 - a broken status file must not hide the radios
+        pass
+    radios = []
+    spans = {}
+    for name, r in station.receivers.items():
+        tuner = (r.get("tuner") or "").lower()
+        serial = cap.serial_of(cfg, name)
+        rng = r.get("range_mhz") or [24, 1766]
+        tunable = _intervals_minus(float(rng[0]), float(rng[1]), r.get("gaps_mhz"))
+        spans[name] = tunable
+        if usb is None:
+            present = None
+        elif serial:
+            present = serial in usb
+        else:
+            present = None                           # no serial in station.json: cannot tell which dongle
+        rec = recorders.get(serial or "") or recorders.get("@" + name)
+        if rec:
+            job = rec.get("job") or {}
+            doing = {"state": "recording", "text": f"recording ({rec.get('mode') or 'watch'})"
+                     + (f", on {job['target_mhz']:.4f} MHz" if isinstance(job.get("target_mhz"), (int, float)) else "")}
+        elif active.get(name):
+            doing = {"state": "surveying", "text": f"surveying: {active[name]}"}
+        elif present is False:
+            doing = {"state": "absent", "text": "not plugged in"}
+        elif programs:
+            doing = {"state": "blocked", "text": f"{', '.join(programs)} is running: a scan cannot start until it ends"}
+        elif present:
+            doing = {"state": "ready", "text": "plugged in and idle"}
+        else:
+            doing = {"state": "unknown", "text": "presence not known (no serial in station.json, or Windows would not say)"}
+        role = "survey" if name == roles["surveyor"] else ("record" if name == roles["recorder"] else None)
+        enabled = name not in off
+        if not enabled and doing["state"] in ("recording", "surveying"):
+            doing = dict(doing, text=doing["text"] + " (disabled: this keeps going; only new starts are blocked)")
+        elif not enabled:
+            doing = {"state": "disabled", "text": "disabled in this window: not offered for scans or recording"
+                     + ("" if present is not False else " (also not plugged in)")}
+        facts = [f"{jsnum(rng[0])}–{jsnum(rng[1])} MHz"]
+        for a, b in r.get("gaps_mhz") or []:
+            facts.append(f"blind {jsnum(a)}–{jsnum(b)} MHz (PLL gap)")
+        if float(rng[1]) > RTL_POWER_MAX_MHZ:
+            facts.append(f"above {RTL_POWER_MAX_MHZ:.2f} MHz only with rtl_power_fftw")
+        facts.append({"e4000": "zero-IF: a DC spike at every hop centre",
+                      "r820t": "low-IF: a small bump at the tuning frequency",
+                      "r828d": "low-IF: a small bump at the tuning frequency"}.get(tuner, f"tuner {tuner or '?'}"))
+        gains = TUNER_GAINS.get(tuner) or []
+        radios.append({
+            "name": name, "label": r.get("label", name), "tuner": tuner, "serial": serial,
+            "usb_name": (usb or {}).get(serial or "", ""), "present": present, "enabled": enabled,
+            "doing": doing, "role": role,
+            "range_mhz": rng, "gaps_mhz": r.get("gaps_mhz") or [], "tunable_mhz": tunable,
+            "gains": gains, "gain_text": (f"{len(gains)} steps, {jsnum(gains[0])}–{jsnum(gains[-1])} dB" if gains else ""),
+            "facts": facts, "notes": _radio_notes(station, name, tuner),
+            "chain": chain_for(station, name),
+        })
+    names = [r["name"] for r in radios]
+    both = _intersect(spans[names[0]], spans[names[1]]) if len(names) >= 2 else []
+    here = [r for r in radios if r["present"] and r["enabled"]]
+    sur, rec = roles["surveyor"], roles["recorder"]
+    off_words = " ".join(f"The {radio_word(r['name'])} is disabled in this window, so it is not offered."
+                         for r in radios if not r["enabled"])
+    if len(here) >= 2:
+        mode = {"radios": 2, "survey_record": True,
+                "text": f"Two radios plugged in. A scan uses one of them. Survey + record is possible: "
+                        f"the {radio_word(sur)} surveys and the {radio_word(rec)} records what it finds."}
+    elif len(here) == 1:
+        one = radio_word(here[0]["name"])
+        mode = {"radios": 1, "survey_record": False,
+                "text": f"Only the {one} is plugged in. A scan with it surveys the band and writes its spectrum file, but "
+                        f"no IQ is captured. Fixed-frequency recording works with the {one} alone. Survey + record needs "
+                        "the second radio plugged in" + (" and enabled." if off else ".")}
+    else:
+        mode = {"radios": 0, "survey_record": False,
+                "text": ("No radio is plugged in and enabled. Nothing can start until one is."
+                         if off else "No radio is plugged in (as far as Windows can tell). Nothing can start until one is.")
+                        if usb is not None else "Windows would not say which radios are plugged in."}
+    if off_words:
+        mode["text"] = off_words + " " + mode["text"]
+    return {"radios": radios, "roles": roles, "both_cover_mhz": both, "mode": mode,
+            "programs": programs, "presence_source": "Windows device list, by serial (nothing opened)"
+                                                    if usb is not None else None, "checked": time.time()}
+
+
 SCAN_POST_ROUTES = {
     "/scan/plan": scan_plan,
     "/scan/check": lambda st, f: scan_checks(st, str(f.get("rx") or st.default_receiver or ""),
@@ -2142,6 +2554,8 @@ SCAN_POST_ROUTES = {
     "/scan/saved": saved_change,
     "/watch/plan": lambda st, f: watch_plan(st, f, detect=bool(f.get("detect"))),
     "/watch/start": watch_start,
+    "/radios/roles": set_radio_roles,
+    "/radios/enable": set_radio_enabled,
 }
 
 
@@ -2416,6 +2830,16 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 body = json.dumps(dict(backup.JOB)).encode()
             elif u.path == "/config":
                 body = json.dumps(cfg).encode()
+            elif u.path == "/radios":
+                try:
+                    body = json.dumps(radios_status(station)).encode()
+                except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
+            elif u.path == "/explain/defaults":
+                try:
+                    body = json.dumps(default_sources(station, (q.get("rx") or [None])[0])).encode()
+                except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/scan/saved":
                 try:
                     body = json.dumps(saved_list(station)).encode()

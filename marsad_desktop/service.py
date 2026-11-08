@@ -127,3 +127,20 @@ class Service:
 
     def watch_start(self, body: dict) -> dict:
         return self._call("/watch/start", body, timeout=150)
+
+    # -- The radios (owner, 2026-11-07): presence by serial from Windows' device list, nothing opened
+    def radios(self) -> dict:
+        return self._call("/radios", timeout=30)
+
+    def default_sources(self, rx: str) -> dict:
+        """Where each radio-dependent default comes from (station.json, built-in, or the window's)."""
+        return self._call(f"/explain/defaults?rx={quote(rx)}", timeout=30)
+
+    def set_enabled(self, name: str, enabled: bool) -> dict:
+        """Switch a radio on or off in the window: off, it is never offered for new work; nothing
+        already running on it stops."""
+        return self._call("/radios/enable", {"name": name, "enabled": bool(enabled)}, timeout=30)
+
+    def set_roles(self, body: dict) -> dict:
+        """{"surveyor", "recorder"} or {"swap": true}: who surveys and who records."""
+        return self._call("/radios/roles", body, timeout=30)
