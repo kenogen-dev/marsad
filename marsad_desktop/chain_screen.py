@@ -29,7 +29,8 @@ from PySide6.QtCore import (QEasingCurve, QLineF, QMimeData, QParallelAnimationG
                             QPointF, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QVariantAnimation,
                             Signal)
 from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QCursor, QDrag, QFont, QFontMetricsF, QIcon,
-                           QImage, QKeySequence, QTransform,
+                           QLinearGradient,
+                           QImage, QKeySequence, QTextOption, QTransform,
                            QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox, QDialog,
                                QSizePolicy, QToolButton, QWidgetAction,
@@ -37,7 +38,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
                                QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem,
                                QGraphicsObject, QGraphicsPathItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView,
                                QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QScrollArea,
+                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
+                               QScrollArea,
                                QSpinBox, QSplitter, QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from marsad import chain as engine_chain
@@ -106,6 +108,8 @@ SHORTCUTS = [
     ("Arranging", "Ctrl+G", "Group", "window"),
     ("Arranging", "Ctrl+Shift+G", "Ungroup", "window"),
     ("Arranging", "Arrange menu", "Align left, centre, right, top, middle, bottom; distribute", "menu"),
+    ("Arranging", "Direction button", "Build left → right or top → bottom; Tidy then lays the rig out that way",
+     "menu"),
     ("Parts", "Click a part", "Open its card: name, note, fields, colour, shape, text position", "mouse"),
     ("Parts", "Drag a part", "Move it (a drag opens nothing)", "mouse"),
     ("Resizing", "Drag a handle", "Resize a selected part, enclosure or power source", "mouse"),
@@ -118,7 +122,10 @@ SHORTCUTS = [
     ("Wiring", "Drag from a dot", "Wire it to the part you let go over (from an input dot too)", "mouse"),
     ("Wiring", "Drop an SMA part on a dot", "Mate it directly, port to port, with no wire", "mouse"),
     ("Wiring", "Drag a selected wire's end handle", "Reconnect that end to another part", "mouse"),
-    ("Wiring", "Double-click a wire   ·   drag its middle", "Add a bend point (on the grid when snap is on)", "mouse"),
+    ("Wiring", "Click a wire", "Select it (and open its card: its cables)", "mouse"),
+    ("Wiring", "Drag a wire", "Move it: the stretch under the pointer moves, re-routed, ends kept on their parts",
+     "mouse"),
+    ("Wiring", "Ctrl+click a wire", "Add a bend point there (on the grid when snap is on)", "mouse"),
     ("Wiring", "Drag a bend point", "Move it", "mouse"),
     ("Wiring", "Click a bend point, then Delete", "Remove it (the wire's menu: Remove point, Straighten)", "mouse"),
     ("View", "Wheel", "Zoom round the pointer", "mouse"),
@@ -332,6 +339,23 @@ class Menu(QMenu):
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint)
 
+    def open_at(self, global_pos: QPoint):
+        """Relay 016: a right-click menu opens with its top-left corner a few pixels below and right of the
+        pointer, never anchored to what was clicked, and flips to the pointer's other side only where it would run
+        off the window. Every context menu in the window opens this way."""
+        win = self.parentWidget().window() if self.parentWidget() is not None else None
+        area = win.frameGeometry() if win is not None else None
+        scr = QApplication.screenAt(global_pos) or QApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr is not None else None
+        if area is None:
+            area = avail
+        elif avail is not None:
+            area = area.intersected(avail) if area.intersects(avail) else avail
+        size = self.sizeHint()
+        x, y = G.menu_place(global_pos.x(), global_pos.y(), size.width(), size.height(),
+                            (area.left(), area.top(), area.right(), area.bottom()) if area is not None else None)
+        return self.exec(QPoint(x, y))
+
     def add_heading(self, text: str) -> QAction:
         if self.actions():
             self.addSeparator()
@@ -347,9 +371,12 @@ class Menu(QMenu):
         qp.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         qp.fillRect(self.rect(), Qt.GlobalColor.transparent)
         qp.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         qp.setPen(QPen(T.color("line_strong"), T.BORDER))
-        qp.setBrush(T.color("menu", T.FLOAT_ALPHA))
-        qp.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        qp.setBrush(T.color("menu", T.MENU_ALPHA))
+        qp.drawRoundedRect(body, 6, 6)
+        qp.setPen(QPen(T.color("highlight", T.HIGHLIGHT_ALPHA["overlay"]), 1))   # relay 016: the overlay's top edge
+        qp.drawLine(QPointF(body.left() + 6, body.top() + 1), QPointF(body.right() - 6, body.top() + 1))
         pad = T.SPACE * 2
         for a in self.actions():
             r = self.actionGeometry(a)
@@ -363,7 +390,7 @@ class Menu(QMenu):
             label, _, keys = a.text().partition("\t")
             label = label.replace("&&", "\0").replace("&", "").replace("\0", "&")
             if a.data() == "heading":
-                qp.setPen(T.color("muted"))
+                qp.setPen(T.color("menu_muted"))
                 qp.setFont(T.ui_font(7.5, QFont.Weight.DemiBold))
                 qp.drawText(r.adjusted(pad, 2, -pad, 0), int(Qt.AlignmentFlag.AlignVCenter), label.upper())
                 continue
@@ -378,7 +405,7 @@ class Menu(QMenu):
             qp.drawText(r.adjusted(T.SPACE * 4 + 2, 0, -pad, 0),
                         int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), label)
             if keys:
-                qp.setPen(T.color("muted") if on else T.color("faint"))
+                qp.setPen(T.color("menu_muted") if on else T.color("faint"))
                 qp.drawText(r.adjusted(0, 0, -pad, 0),
                             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight), keys)
             if a.isCheckable() and a.isChecked():
@@ -387,7 +414,7 @@ class Menu(QMenu):
                 x0 = r.left() + T.SPACE + 5
                 qp.drawPolyline([QPointF(x0, cy), QPointF(x0 + 4, cy + 4), QPointF(x0 + 11, cy - 4)])
             if a.menu() is not None:
-                qp.setPen(T.color("muted"))
+                qp.setPen(T.color("menu_muted"))
                 qp.drawText(r.adjusted(0, 0, -T.SPACE, 0),
                             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight), "›")
         qp.end()
@@ -437,6 +464,142 @@ class ElidedLabel(QLabel):
         qp.drawText(r, int(self.alignment() | Qt.AlignmentFlag.AlignVCenter),
                     self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, r.width()))
         qp.end()
+
+
+class NoteEdit(QPlainTextEdit):
+    """Relay 016: a card's note as a box that wraps and grows with its text (two to six lines, then it scrolls).
+    One paragraph only: a part's note can reach the recorded text, which is one line per run, so Enter adds no line
+    break and pasted line breaks become spaces."""
+    edited = Signal(str)
+
+    def __init__(self, text: str = "", placeholder: str = ""):
+        super().__init__()
+        self.setPlainText(" ".join(str(text or "").split("\n")))
+        self.setPlaceholderText(placeholder)
+        self.setTabChangesFocus(True)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.textChanged.connect(self._changed)
+        self._fit()
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
+    def insertFromMimeData(self, source):
+        self.insertPlainText(" ".join((source.text() or "").split()))
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def _changed(self):
+        self._fit()
+        self.edited.emit(self.toPlainText())
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._fit()
+
+    def _fit(self):
+        lines = max(1, int(self.document().size().height()))
+        shown = min(max(lines, 2), 6)
+        m = self.contentsMargins()
+        h = self.fontMetrics().lineSpacing() * shown + m.top() + m.bottom() + 2 * int(self.document().documentMargin()) + 4
+        if self.height() != h:
+            self.setFixedHeight(h)
+
+
+_WRAP: dict = {}
+WORDS_KIND, WORDS_NAME, WORDS_NOTE = 18, 18, 14     # px: a part's kind line, one line of its name, one of its note
+
+
+def wrap_lines(font: QFont, text: str, width: float, max_lines: int) -> tuple[list[str], bool]:
+    """Relay 016: text broken into lines that fit `width`, at most `max_lines`; a word too long for a line is broken
+    within it. When it does not all fit, the last line ends with "…" and the second value is True, so the caller
+    shows the whole text on hover. Cached: painting asks for the same words over and over."""
+    key = (font.key(), text, round(width), max_lines)
+    hit = _WRAP.get(key)
+    if hit is not None:
+        return hit
+    fm = QFontMetricsF(font)
+    lines: list[str] = []
+    cur = ""
+    for word in str(text).split():
+        trial = word if not cur else cur + " " + word
+        if fm.horizontalAdvance(trial) <= width:
+            cur = trial
+            continue
+        if cur:
+            lines.append(cur)
+        while fm.horizontalAdvance(word) > width and len(word) > 1:     # a word wider than the line: break it
+            k = len(word)
+            while k > 1 and fm.horizontalAdvance(word[:k]) > width:
+                k -= 1
+            lines.append(word[:k])
+            word = word[k:]
+        cur = word
+    if cur:
+        lines.append(cur)
+    cut = len(lines) > max(max_lines, 1)
+    if cut:
+        rest = " ".join(lines[max_lines - 1:])
+        lines = lines[:max_lines - 1] + [fm.elidedText(rest + " …", Qt.TextElideMode.ElideRight, int(width))]
+        if not lines[-1].endswith("…"):
+            lines[-1] = fm.elidedText(lines[-1] + "…", Qt.TextElideMode.ElideRight, int(width))
+    out = (lines or [""], cut)
+    if len(_WRAP) > 8192:
+        _WRAP.clear()
+    _WRAP[key] = out
+    return out
+
+
+class WrapChip(QPushButton):
+    """Relay 016: a Checks chip whose words wrap instead of running off the strip: a button holding its dot and a
+    word-wrapped label, as tall as its words need at the width it is given."""
+
+    def __init__(self, text: str, icon: QIcon):
+        super().__init__()
+        self._text = text
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(T.SPACE, 4, T.SPACE, 4)
+        lay.setSpacing(T.SPACE - 2)
+        dot = QLabel()
+        dot.setPixmap(icon.pixmap(12, 12))
+        dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.lab = QLabel(text)
+        self.lab.setWordWrap(True)
+        self.lab.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        lay.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addWidget(self.lab, 1)
+        sp = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+        self.setMaximumWidth(T.SPACE * 58)
+
+    def text(self) -> str:
+        return self._text
+
+    def sizeHint(self):
+        """Its words on one line when they fit the chip's widest; wrapped beyond that."""
+        m = self.layout().contentsMargins()
+        w = (self.lab.fontMetrics().horizontalAdvance(self._text) + 12 + self.layout().spacing()
+             + m.left() + m.right() + 4)
+        w = min(w, self.maximumWidth())
+        return QSize(w, self.heightForWidth(w))
+
+    def minimumSizeHint(self):
+        return QSize(T.SPACE * 16, self.layout().minimumSize().height())
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        return self.layout().heightForWidth(w)
 
 
 class PosPicker(QWidget):
@@ -495,6 +658,53 @@ def outline_path(shape: str, w: float, h: float) -> QPainterPath:
     return path
 
 
+_LABEL: dict = {}
+
+
+def label_size(text: str) -> tuple[float, float]:
+    """A wire's cable label box (w, h) for its text. Remembered: a drag refreshes every wire several times a frame,
+    and measuring the same words again each time was a steady cost (relay 016 paid for its depth with this)."""
+    hit = _LABEL.get(text)
+    if hit is None:
+        fm = QFontMetricsF(T.ui_font(8.5))
+        hit = _LABEL[text] = (min(fm.horizontalAdvance(text) + 18, 260), fm.height() + 6)
+        if len(_LABEL) > 2048:
+            _LABEL.clear()
+    return hit
+
+
+def label_line(text: str, width: int) -> str:
+    """A wire label shortened to its pill's width, remembered with its size (painting asks every frame)."""
+    key = ("line", text, width)
+    hit = _LABEL.get(key)
+    if hit is None:
+        hit = _LABEL[key] = QFontMetricsF(T.ui_font(8.5)).elidedText(text, Qt.TextElideMode.ElideRight, width)
+    return hit
+
+
+_LIT: dict = {}
+
+
+def lit_brush(fill: QColor, h: float) -> QBrush:
+    """Relay 016: a part's fill lit from above, a step lighter at the top and a touch darker at the bottom, so it
+    reads as raised. Made once per colour and height (painting asks constantly)."""
+    key = (fill.rgba(), round(h))
+    br = _LIT.get(key)
+    if br is None:
+        g = QLinearGradient(0, 0, 0, max(h, 1))
+        top = QColor(fill).lighter(109)
+        top.setAlpha(fill.alpha())
+        bottom = QColor(fill).darker(104)
+        bottom.setAlpha(fill.alpha())
+        g.setColorAt(0, top)
+        g.setColorAt(0.55, fill)
+        g.setColorAt(1, bottom)
+        br = _LIT[key] = QBrush(g)
+        if len(_LIT) > 4096:
+            _LIT.clear()
+    return br
+
+
 def text_box(shape: str, w: float, h: float) -> QRectF:
     """Where a node's words go inside its shape (left, top, width): inside the shape's widest part."""
     if shape == "triangle":
@@ -508,6 +718,10 @@ def text_box(shape: str, w: float, h: float) -> QRectF:
         return QRectF(min(h / 2, w / 4) * 0.7 + 4, 0, w - min(h / 2, w / 4) * 1.4 - 8, h)
     if shape == "trapezoid":
         return QRectF(w * 0.12, 0, w * 0.82, h)
+    if shape == "triangle_down":                # relay 016: the words sit in the wide top of the point
+        return QRectF(w * 0.2, 0, w * 0.6, h * 0.62)
+    if shape == "trapezoid_down":
+        return QRectF(w * 0.2, 0, w * 0.6, h)
     return QRectF(12, 0, w - 20, h)
 
 
@@ -690,6 +904,12 @@ def tool_path(name: str) -> QPainterPath:
         p.addEllipse(QRectF(2, 2, 12, 12)); line((8, 4.5), (8, 8), (10.5, 9.5))
     elif name == "archive":
         p.addRect(QRectF(1.5, 3, 13, 3.5)); line((2.5, 6.5), (2.5, 14), (13.5, 14), (13.5, 6.5)); line((6, 9), (10, 9))
+    elif name == "dir_right":            # relay 016: two boxes joined left to right
+        p.addRoundedRect(QRectF(1, 5, 5, 6), 1, 1); p.addRoundedRect(QRectF(10, 5, 5, 6), 1, 1)
+        line((6, 8), (10, 8)); line((8.5, 6.5), (10, 8), (8.5, 9.5))
+    elif name == "dir_down":             # and top to bottom
+        p.addRoundedRect(QRectF(5, 1, 6, 5), 1, 1); p.addRoundedRect(QRectF(5, 10, 6, 5), 1, 1)
+        line((8, 6), (8, 10)); line((6.5, 8.5), (8, 10), (9.5, 8.5))
     else:
         p.addRect(QRectF(3, 3, 10, 10))
     return p
@@ -738,16 +958,17 @@ TEMPLATE_PREVIEW = (260, 120)
 TEMPLATE_ROW = 40                # px, one row of the New rig template list
 
 
-def template_pixmap(key: str, labels: dict | None, receivers: list | None, dpr: float = 2.0) -> QPixmap:
+def template_pixmap(key: str, labels: dict | None, receivers: list | None, dpr: float = 2.0,
+                    down: bool = False) -> QPixmap:
     """Relay 015: a small picture of a New rig template's shape, its parts as boxes in their kind colours and
-    its wires as lines; Blank shows an empty dashed grid."""
+    its wires as lines; Blank shows an empty dashed grid. Relay 016: drawn top to bottom when `down`."""
     w, h = TEMPLATE_PREVIEW
     pm = QPixmap(int(w * dpr), int(h * dpr))
     pm.setDevicePixelRatio(dpr)
     pm.fill(T.color("panel"))
     qp = QPainter(pm)
     qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-    rig = R.template(key, labels, receivers)
+    rig = R.template(key, labels, receivers, down=down)
     if not rig["nodes"]:
         pen = QPen(T.color("line_strong"), 1.2, Qt.PenStyle.DashLine)
         qp.setPen(pen)
@@ -773,7 +994,10 @@ def template_pixmap(key: str, labels: dict | None, receivers: list | None, dpr: 
     qp.setPen(QPen(T.color("wire"), 1.6))
     for wre in rig["wires"]:
         a, b = box(wre["from"]), box(wre["to"])
-        qp.drawLine(QPointF(a.right(), a.center().y()), QPointF(b.left(), b.center().y()))
+        if down:
+            qp.drawLine(QPointF(a.center().x(), a.bottom()), QPointF(b.center().x(), b.top()))
+        else:
+            qp.drawLine(QPointF(a.right(), a.center().y()), QPointF(b.left(), b.center().y()))
     qp.setFont(T.ui_font(7))
     for n in rig["nodes"]:
         r = box(n["id"])
@@ -903,7 +1127,7 @@ class PartItem(QGraphicsObject):
         # Winding fill: where a dot's circle overlaps the body it stays inside (the default odd-even
         # rule makes every overlap a hole, which is how a press on a dot fell through to a wire).
         p.setFillRule(Qt.FillRule.WindingFill)
-        shape = R.shape_of(self.node)
+        shape = G.oriented(R.shape_of(self.node), self.screen.down)
         if shape == "pipe":                      # an adapter is only where its pipe is
             st = QPainterPathStroker()
             st.setWidth(PIPE_W + 8)
@@ -976,7 +1200,7 @@ class PartItem(QGraphicsObject):
         dots = [QPointF(a[0], a[1]) for k, a in self.screen.anchor_map.items() if k[0] == self.node["id"]]
         out = []
         for s in G.SIDES:
-            x, y = G.mid_side(self.node, s)
+            x, y = G.mid_side(self.node, s, self.screen.down)
             p = QPointF(x, y)
             if all((p - d).manhattanLength() > PORT_R * 2.5 for d in dots):
                 out.append(p)
@@ -1024,7 +1248,7 @@ class PartItem(QGraphicsObject):
         fill, edge, small, main, soft = self._tint()
         sel = self.isSelected()
         target = self.screen.drop_target == self.node["id"]
-        shape = R.shape_of(self.node)
+        shape = G.oriented(R.shape_of(self.node), self.screen.down)
         qp.setRenderHint(QPainter.RenderHint.Antialiasing)
         own = bool(self.node.get("colour"))
         if sel or target:
@@ -1041,15 +1265,17 @@ class PartItem(QGraphicsObject):
         else:
             body = outline_path(shape, w, h)
             qp.setPen(Qt.PenStyle.NoPen)
-            for dy, _spread, alpha in T.SHADOW_LAYERS[:2]:      # a soft shadow: the outline, offset
-                qp.setBrush(T.color("shadow", alpha))
+            # a soft shadow, the outline offset: a part sits at the raised level, a selected one is lifted to the
+            # overlay level (relay 016), its shadow deeper
+            for dy, _spread, alpha in T.SHADOWS["overlay" if sel else "raised"]:
+                qp.setBrush(T.qc("shadow", alpha))
                 qp.drawPath(body.translated(0, dy))
             if sel or target:                              # a faint outer glow
                 qp.setBrush(Qt.BrushStyle.NoBrush)
                 for width, alpha in ((12, 0.07), (7, 0.13)):
-                    qp.setPen(QPen(T.color("survey", alpha if sel else alpha * 1.6), width))
+                    qp.setPen(QPen(T.qc("survey", alpha if sel else alpha * 1.6), width))
                     qp.drawPath(body)
-            qp.setBrush(fill)
+            qp.setBrush(lit_brush(fill, h))
             qp.setPen(QPen(edge, T.SELECTED_BORDER if (sel or target) else T.BORDER))
             qp.drawPath(body)
             self._paint_words(qp, shape, w, h, small, main, soft, own, widget)
@@ -1073,19 +1299,19 @@ class PartItem(QGraphicsObject):
             c = QPointF(x, y) - here
             gender = R.port_gender(self.node, kind_, port)
             if gender == "F":
-                qp.setPen(QPen(T.color("background"), 1.5))
-                qp.setBrush(T.color("background"))
+                qp.setPen(QPen(T.qc("background"), 1.5))
+                qp.setBrush(T.qc("background"))
                 qp.drawEllipse(c, r, r)
                 qp.setPen(QPen(colour, 2.2))
                 qp.setBrush(Qt.BrushStyle.NoBrush)
                 qp.drawEllipse(c, r - 1.6, r - 1.6)
             else:
-                qp.setPen(QPen(T.color("background"), 2))
+                qp.setPen(QPen(T.qc("background"), 2))
                 qp.setBrush(colour)
                 qp.drawEllipse(c, r, r)
                 if gender == "M":                          # the pin
                     qp.setPen(Qt.PenStyle.NoPen)
-                    qp.setBrush(T.color("background"))
+                    qp.setBrush(T.qc("background"))
                     qp.drawEllipse(c, 1.6, 1.6)
         pp = self.power_point()
         if pp is not None:                    # the power input: a diamond, filled once a power wire feeds it
@@ -1096,12 +1322,12 @@ class PartItem(QGraphicsObject):
             for q in ((c.x() + d, c.y()), (c.x(), c.y() + d), (c.x() - d, c.y())):
                 diamond.lineTo(*q)
             diamond.closeSubpath()
-            qp.setPen(QPen(T.color("power") if fed else T.color("alert"), 1.6))
-            qp.setBrush(T.color("power") if fed else T.color("background"))
+            qp.setPen(QPen(T.qc("power") if fed else T.color("alert"), 1.6))
+            qp.setBrush(T.qc("power") if fed else T.color("background"))
             qp.drawPath(diamond)
         if (self.hover or sel) and self.screen.wiring_from is None:
             qp.setBrush(Qt.BrushStyle.NoBrush)
-            qp.setPen(QPen(T.color("survey", 0.85), 1.5))
+            qp.setPen(QPen(T.qc("survey", 0.85), 1.5))
             for r in self._rings():
                 qp.drawEllipse(r - here, PORT_R - 1, PORT_R - 1)
         if sel and not R.is_locked(self.node) and self.screen.sel_count == 1:
@@ -1141,38 +1367,76 @@ class PartItem(QGraphicsObject):
             dpr = widget.devicePixelRatioF() if widget is not None else 2.0
             qp.drawPixmap(QPointF(x0, h / 2 - 11), kind_pixmap("ant_" + a_type, QColor(small), 22, dpr))
             x0 += 28
-        tw = max(20, box.right() - x0)
-        detail = self._detail()
+        wd = self.words(shape, w, h, x0)
+        tw, block = wd["tw"], wd["block"]
         pos = R.text_pos(self.node)                       # relay 008: where the words sit, 3 x 3
-        note_on = bool(detail and self.screen.show_notes)
-        block = 16 + 18 + (18 if note_on else 0)
-        top = {"t": 8, "m": (h - block) / 2, "b": h - block - 6}[pos[0]]
-        top = max(4, top)
+        top = {"t": box.top() + 8, "m": box.top() + (box.height() - block) / 2,
+               "b": box.bottom() - block - 6}[pos[0]]
+        top = max(box.top() + 4, top)
         halign = {"l": Qt.AlignmentFlag.AlignLeft, "c": Qt.AlignmentFlag.AlignHCenter,
                   "r": Qt.AlignmentFlag.AlignRight}[pos[1]]
         qp.setPen(small)
         qp.setFont(T.ui_font(8.5))
-        kind = self.screen.kind_label(self.node)
-        if a_type:
-            kind = R.ANTENNA_TYPES.get(a_type, ("Antenna",))[0]
-        qp.drawText(QRectF(x0, top, tw, 16), halign,
-                    qp.fontMetrics().elidedText(kind, Qt.TextElideMode.ElideRight, int(tw)))
+        qp.drawText(QRectF(x0, top, tw, 16), halign, wd["kind_line"])
+        # relay 016: the name and the note wrap inside the part; what does not fit ends in "…" (the whole text is
+        # in the part's tooltip), and the part grows to fit when its words are edited and there is room
+        y = top + WORDS_KIND
         qp.setPen(main)
         qp.setFont(T.ui_font(10, QFont.Weight.DemiBold))
+        for line in wd["name"]:
+            qp.drawText(QRectF(x0, y, tw, WORDS_NAME + 2), halign, line)
+            y += WORDS_NAME
+        if wd["note"]:
+            qp.setPen(soft)
+            qp.setFont(T.ui_font(8))
+            y += 2
+            for line in wd["note"]:
+                qp.drawText(QRectF(x0, y, tw, WORDS_NOTE + 2), halign, line)
+                y += WORDS_NOTE
+
+    def words(self, shape: str, w: float, h: float, x0: float | None = None) -> dict:
+        """Relay 016: how a part's words lay out in its box: the kind line, the name and the note wrapped into the
+        room there is (the name first, then the note), whether anything was cut, and the height the part would
+        need to show them all. Painting and growing to fit both ask this, so they always agree. Kept until the next
+        edit (the screen's words_gen), so a drag repaints from the cache."""
+        key = (shape, w, h, x0, self.screen.show_notes, self.screen.words_gen)
+        hit = getattr(self, "_words", None)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        out = self._lay_words(shape, w, h, x0)
+        self._words = (key, out)
+        return out
+
+    def _lay_words(self, shape: str, w: float, h: float, x0: float | None) -> dict:
+        p = self.node["part"]
+        box = text_box(shape, w, h)
+        if x0 is None:
+            x0 = box.left() + (28 if p["type"] == "antenna" and R.antenna(self.node).get("type") else 0)
+        tw = max(20, box.right() - x0)
+        a_type = R.antenna(self.node).get("type")
+        kind = R.ANTENNA_TYPES.get(a_type, ("Antenna",))[0] if a_type else self.screen.kind_label(self.node)
         name = p.get("name") or "(no name)"
         if p["type"] == "attenuator" and p.get("db") not in (None, "", 0):
             name = f"{p['db']} dB"
-        qp.drawText(QRectF(x0, top + 18, tw, 20), halign,
-                    qp.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, int(tw)))
-        if note_on:
-            qp.setPen(soft)
-            qp.setFont(T.ui_font(8))
-            if pos[0] == "t" and h > G.MIN_H + 10:          # a taller part shows the whole note under the name
-                qp.drawText(QRectF(x0, top + 36, tw, max(16, h - top - 40)), int(halign | Qt.AlignmentFlag.AlignTop)
-                            | int(Qt.TextFlag.TextWordWrap), str(detail))
-            else:
-                qp.drawText(QRectF(x0, top + 36, tw, 16), halign,
-                            qp.fontMetrics().elidedText(str(detail), Qt.TextElideMode.ElideRight, int(tw)))
+        detail = str(self._detail() or "")
+        note_on = bool(detail and self.screen.show_notes)
+        f_name, f_note = T.ui_font(10, QFont.Weight.DemiBold), T.ui_font(8)
+        name_all = wrap_lines(f_name, name, tw, 99)[0]
+        note_all = wrap_lines(f_note, detail, tw, 99)[0] if note_on else []
+        room = box.height() - 12 - WORDS_KIND
+        n_name = max(1, min(len(name_all), int(room // WORDS_NAME)))
+        n_note = min(len(note_all), int(max(0, room - n_name * WORDS_NAME - 2) // WORDS_NOTE)) if note_on else 0
+        if note_on and n_note == 0 and n_name > 1:          # keep one line of the note in sight
+            n_name -= 1
+            n_note = min(len(note_all), int(max(0, room - n_name * WORDS_NAME - 2) // WORDS_NOTE))
+        name_lines, cut = wrap_lines(f_name, name, tw, n_name)
+        note_lines, cut2 = wrap_lines(f_note, detail, tw, n_note) if n_note else ([], note_on)
+        block = WORDS_KIND + len(name_lines) * WORDS_NAME + (2 + len(note_lines) * WORDS_NOTE if note_lines else 0)
+        need = 14 + WORDS_KIND + len(name_all) * WORDS_NAME + (2 + len(note_all) * WORDS_NOTE if note_on else 0)
+        need = need * h / max(box.height(), 1)                # a shape whose words sit in part of its box
+        kind_line = QFontMetricsF(T.ui_font(8.5)).elidedText(kind, Qt.TextElideMode.ElideRight, int(tw))
+        return {"kind": kind, "kind_line": kind_line, "name": name_lines, "note": note_lines, "cut": bool(cut or cut2), "tw": tw,
+                "block": block, "need": need, "full": name + (f"\n{detail}" if detail else "")}
 
     def _detail(self) -> str:
         p = self.node["part"]
@@ -1234,6 +1498,7 @@ class PartItem(QGraphicsObject):
 
     def hoverEnterEvent(self, ev):
         self.hover = True
+        self.setToolTip(self._port_tip(None))
         self.update()
 
     def hoverLeaveEvent(self, ev):
@@ -1271,8 +1536,14 @@ class PartItem(QGraphicsObject):
         if hot == "power":
             return "Power input: drag from here to a power source, or from a power source's dot to here"
         if hot is None:
-            return ("Locked: it stays where it is. Click to edit it; right-click to format it."
+            hint = ("Locked: it stays where it is. Click to edit it; right-click to format it."
                     if R.is_locked(self.node) else "Click to edit · drag to move · right-click to format and arrange")
+            shape = G.oriented(R.shape_of(self.node), self.screen.down)
+            if shape != "pipe":
+                wd = self.words(shape, *self.wh())
+                if wd["cut"]:                  # relay 016: words cut short in the part are whole here
+                    return wd["full"] + "\n\n" + hint
+            return hint
         _nid, kind, port = hot
         g = R.port_gender(self.node, kind, port)
         what = ("Output" if kind == "out" else "Input") + (f", SMA {R.GENDER_WORD[g]}" if g else "")
@@ -1598,9 +1869,10 @@ class WireItem(QGraphicsPathItem):
     carries (coax, jumper, USB) are named in a label at its middle. Past the radio a
     wire is the USB side and is drawn dashed when that option is on.
 
-    Relay 015: a wire can bend. Double-click it, or drag its middle, to make a bend point; drag a point
-    anywhere (on the grid when snap is on); click one and press Delete to remove it. A selected wire shows a
-    handle near each end: drag it to another part to reconnect that end. Bends live in chain_layout.json."""
+    Relay 015: a wire can bend; drag a point anywhere (on the grid when snap is on); click one and press Delete to
+    remove it. A selected wire shows a handle near each end: drag it to another part to reconnect that end. Bends
+    live in chain_layout.json. Relay 016: a click selects; dragging the wire moves it (the stretch under the pointer,
+    re-routed, its ends kept); Ctrl+click adds a bend point. A double-click adds nothing."""
 
     def __init__(self, screen: "ChainScreen", wire: dict):
         super().__init__()
@@ -1610,7 +1882,7 @@ class WireItem(QGraphicsPathItem):
         self.setZValue(1)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("A wire: click it to give it cables, drop a cable from the Cables list onto it, "
-                        "double-click or drag its middle to bend it, or right-click for more")
+                        "drag it to move it, Ctrl+click to add a bend point, or right-click for more")
         self.color = T.color("wire")
         self.digital = False
         self.hover = False
@@ -1681,9 +1953,7 @@ class WireItem(QGraphicsPathItem):
         self.setPen(pen)
         self.label_text = "  +  ".join(cable_summary(c) for c in cab) if self.screen.show_labels else ""
         if self.label_text:
-            fm = QFontMetricsF(T.ui_font(8.5))
-            w = min(fm.horizontalAdvance(self.label_text) + 18, 260)
-            h = fm.height() + 6
+            w, h = label_size(self.label_text)
             mid = self.label_point()
             self.label_rect = QRectF(mid.x() - w / 2, mid.y() - h / 2, w, h)
         else:
@@ -1768,11 +2038,11 @@ class WireItem(QGraphicsPathItem):
             r = self.joint_rect()
             colour = T.color("alert") if self.clash() else (
                 T.color("survey") if self.isSelected() else (T.color("text2") if self.hover else self.color))
-            qp.setPen(QPen(T.color("background"), 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            qp.setPen(QPen(T.qc("background"), 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             qp.drawPath(self.path())
             qp.setPen(QPen(colour, 5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             qp.drawPath(self.path())
-            qp.setPen(QPen(T.color("background"), 1.5))
+            qp.setPen(QPen(T.qc("background"), 1.5))
             qp.setBrush(colour)
             qp.drawRoundedRect(r, 3, 3)
             return
@@ -1783,20 +2053,19 @@ class WireItem(QGraphicsPathItem):
             first = self.cables()[0].get("type")
             edge = T.color("survey") if self.isSelected() else cable_colour(first)
             qp.setPen(QPen(edge, 1.2))
-            qp.setBrush(T.color("panel"))
+            qp.setBrush(T.qc("panel"))
             qp.drawRoundedRect(self.label_rect, self.label_rect.height() / 2, self.label_rect.height() / 2)
-            qp.setPen(T.color("text2"))
+            qp.setPen(T.qc("text2"))
             qp.setFont(T.ui_font(8.5))
             qp.drawText(self.label_rect.adjusted(9, 0, -9, 0), Qt.AlignmentFlag.AlignCenter,
-                        qp.fontMetrics().elidedText(self.label_text, Qt.TextElideMode.ElideRight,
-                                                    int(self.label_rect.width() - 18)))
+                        label_line(self.label_text, int(self.label_rect.width() - 18)))
         # bend points: small squares, shown while the wire is hovered or selected (the picked one filled)
         if self.points() and (self.hover or self.isSelected()):
             sp = self.sel_point()
             for i, q in enumerate(self.points()):
                 r = QRectF(q[0] - 4.5, q[1] - 4.5, 9, 9)
-                qp.setPen(QPen(T.color("survey") if self.isSelected() else T.color("text2"), 1.6))
-                qp.setBrush(T.color("survey") if i == sp else T.color("background"))
+                qp.setPen(QPen(T.qc("survey") if self.isSelected() else T.color("text2"), 1.6))
+                qp.setBrush(T.qc("survey") if i == sp else T.color("background"))
                 qp.drawRect(r)
         # end handles: small diamonds near each end of a selected wire
         for q in self.end_handles().values():
@@ -1806,8 +2075,8 @@ class WireItem(QGraphicsPathItem):
             d.lineTo(q.x(), q.y() + 6)
             d.lineTo(q.x() - 6, q.y())
             d.closeSubpath()
-            qp.setPen(QPen(T.color("background"), 1.5))
-            qp.setBrush(T.color("survey"))
+            qp.setPen(QPen(T.qc("background"), 1.5))
+            qp.setBrush(T.qc("survey"))
             qp.drawPath(d)
 
     def hoverEnterEvent(self, ev):
@@ -1830,7 +2099,7 @@ class WireItem(QGraphicsPathItem):
         else:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self.setToolTip("A wire: click it to give it cables, drop a cable from the Cables list onto it, "
-                            "double-click or drag its middle to bend it, or right-click for more")
+                            "drag it to move it, Ctrl+click to add a bend point, or right-click for more")
 
     def _select_only(self, mods):
         if mods & Qt.KeyboardModifier.ControlModifier:            # Ctrl+click toggles, as on boxes
@@ -1842,6 +2111,9 @@ class WireItem(QGraphicsPathItem):
         self.setSelected(True)
 
     def mousePressEvent(self, ev):
+        """Relay 016: a left-click selects the wire (or the bend point under it); a drag then moves what was
+        pressed: a point moves the point, the wire's body moves the stretch under the pointer, ends kept on their
+        parts. Ctrl+left-click adds a bend point there. The handles near the ends still reconnect."""
         if ev.button() != Qt.MouseButton.LeftButton or self.is_mated() or self.screen.read_only:
             super().mousePressEvent(ev)
             return
@@ -1853,6 +2125,11 @@ class WireItem(QGraphicsPathItem):
             ev.accept()
             return
         i = self.point_at(pt)
+        if ev.modifiers() & Qt.KeyboardModifier.ControlModifier and i is None:
+            self.screen.add_bend(self.wire, pt)            # Ctrl+click: a bend point here (one undo step)
+            self._drag = None
+            ev.accept()
+            return
         self._select_only(ev.modifiers())
         if i is not None:
             self.screen.sel_point = (*self.key(), i)
@@ -1861,7 +2138,12 @@ class WireItem(QGraphicsPathItem):
             ev.accept()
             return
         self.screen.sel_point = None
-        self._drag = ("body", pt, ev.screenPos())
+        a, b = self.ends()
+        if a is None or b is None:
+            self._drag = None
+        else:                       # the wire as it was when grabbed: every move is worked out again from here
+            self._drag = ("body", pt, ev.screenPos(), [list(q) for q in self.points()], a, b, False)
+        self.update()
         ev.accept()
 
     def mouseMoveEvent(self, ev):
@@ -1873,14 +2155,21 @@ class WireItem(QGraphicsPathItem):
             self.screen.drag_reconnect(pt)
             return
         if d[0] == "body":
-            if (ev.screenPos() - d[2]).manhattanLength() < CLICK_TOL * 2:
-                return
-            i = self.screen.add_bend(self.wire, d[1], commit=False)      # dragging the middle makes a point
-            if i is None:
-                self._drag = None
-                return
-            self.screen.sel_point = (*self.key(), i)
-            d = self._drag = ("point", i, True)
+            _k, grab, at, orig, a, b, moved = d
+            if not moved and (ev.screenPos() - at).manhattanLength() < CLICK_TOL * 2:
+                return                   # a click, not a drag yet
+            new = G.move_wire(a, b, orig, self.screen.wire_style, bool(self.wire.get("square")),
+                              (grab.x(), grab.y()), pt.x() - grab.x(), pt.y() - grab.y(),
+                              snap=R.GRID if self.screen.snap_on else None)
+            if new:
+                self.wire["points"] = new
+            else:
+                self.wire.pop("points", None)
+            self._drag = d[:6] + (True,)
+            self.screen.status.emit("moving the wire: its ends stay on their parts (Undo puts it back)")
+            self.refresh()
+            self.update()
+            return
         if d[0] == "point":
             x, y = self.screen.bend_place(pt)
             pts = self.wire["points"]
@@ -1899,14 +2188,13 @@ class WireItem(QGraphicsPathItem):
             self.screen.end_reconnect(ev.scenePos())
         elif d[0] == "point" and d[2]:
             self.screen.changed()
+        elif d[0] == "body" and d[6]:
+            self.screen.changed()
+            self.screen.select_wire(*self.key())
         ev.accept()
 
     def mouseDoubleClickEvent(self, ev):
-        if ev.button() != Qt.MouseButton.LeftButton or self.is_mated() or self.screen.read_only:
-            return
-        if self.point_at(ev.scenePos()) is not None or self.end_at(ev.scenePos()):
-            return
-        self.screen.add_bend(self.wire, ev.scenePos())
+        """Relay 016: a double-click no longer adds a bend point (Ctrl+click does); it is a second click."""
         ev.accept()
 
     def itemChange(self, change, value):
@@ -2213,7 +2501,7 @@ class ChainScene(QGraphicsScene):
         if o["style"] == "lines":
             minor = [QLineF(x, rect.top(), x, rect.bottom()) for x in xs if not is_big(x)]
             minor += [QLineF(rect.left(), y, rect.right(), y) for y in ys if not is_big(y)]
-            pen = QPen(T.color("lines", 0.6), 0)
+            pen = QPen(T.qc("lines", 0.6), 0)
             if o["dotted"]:
                 pen.setStyle(Qt.PenStyle.DotLine)
             qp.setPen(pen)
@@ -2221,16 +2509,16 @@ class ChainScene(QGraphicsScene):
             if big:
                 major = [QLineF(x, rect.top(), x, rect.bottom()) for x in xs if is_big(x)]
                 major += [QLineF(rect.left(), y, rect.right(), y) for y in ys if is_big(y)]
-                pen = QPen(T.color("line_strong"), 0)
+                pen = QPen(T.qc("line_strong"), 0)
                 if o["dotted"]:
                     pen.setStyle(Qt.PenStyle.DashLine)
                 qp.setPen(pen)
                 qp.drawLines(major)
             return
-        qp.setPen(QPen(T.color("lines"), 2))
+        qp.setPen(QPen(T.qc("lines"), 2))
         qp.drawPoints([QPointF(x, y) for x in xs for y in ys if not (is_big(x) and is_big(y))])
         if big:
-            qp.setPen(QPen(T.color("line_strong"), 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            qp.setPen(QPen(T.qc("line_strong"), 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             qp.drawPoints([QPointF(x, y) for x in xs if is_big(x) for y in ys if is_big(y)])
 
 
@@ -2384,7 +2672,7 @@ class ChainView(QGraphicsView):
         self.menu_open = True
         self._menu_at = (time.monotonic(), ev.globalPos())
         try:
-            m.exec(ev.globalPos())
+            m.open_at(ev.globalPos())
         finally:
             self.menu_open = False
             self._menu_at = (time.monotonic(), ev.globalPos())
@@ -2412,6 +2700,28 @@ class ChainView(QGraphicsView):
     def focusOutEvent(self, ev):
         self._space = False
         super().focusOutEvent(ev)
+
+    def drawForeground(self, qp: QPainter, rect: QRectF):
+        """Relay 016: the grid is slightly recessed, an inner shade along its four edges, so the drawing sits in
+        something. Drawn in the viewport's own pixels over the scene: four gradient strips, a few fills a frame.
+        (A picture of the drawing is made from the scene, so it never carries the shade.)"""
+        super().drawForeground(qp, rect)
+        depth, alpha = T.GRID_RECESS
+        vr = self.viewport().rect()
+        w, h = vr.width(), vr.height()
+        qp.save()
+        qp.resetTransform()
+        qp.setPen(Qt.PenStyle.NoPen)
+        dark, clear = T.color("shadow", alpha), T.color("shadow", 0.0)
+        for (x0, y0, x1, y1), r in (((0, 0, 0, depth), QRectF(0, 0, w, depth)),
+                                     ((0, h, 0, h - depth * 0.7), QRectF(0, h - depth * 0.7, w, depth * 0.7)),
+                                     ((0, 0, depth, 0), QRectF(0, 0, depth, h)),
+                                     ((w, 0, w - depth, 0), QRectF(w - depth, 0, depth, h))):
+            g = QLinearGradient(x0, y0, x1, y1)
+            g.setColorAt(0, dark)
+            g.setColorAt(1, clear)
+            qp.fillRect(r, QBrush(g))
+        qp.restore()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -2786,10 +3096,53 @@ class GridStatus(QWidget):
 
 
 # ---------------------------------------------------------------- the edit card
+class CardShadow(QWidget):
+    """Relay 016: the floating card's soft shadow, at the overlay level. A sibling drawn just under the card from one
+    cached picture (layered rounded rectangles, no blur), so dragging on the grid behind it costs a single
+    drawPixmap a frame, where a QGraphicsEffect would blur again on every frame."""
+    M = 18                                   # px of shadow round the card
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setStyleSheet("background: transparent;")
+        self._pm = None
+        self.hide()
+
+    def follow(self, card: QWidget):
+        dy = T.CARD_SHADOW["dy"]
+        self.setGeometry(card.geometry().adjusted(-self.M, -self.M + dy, self.M, self.M + dy))
+        self.stackUnder(card)
+
+    def paintEvent(self, ev):
+        dpr = self.devicePixelRatioF()
+        key = (self.width(), self.height(), dpr)
+        if self._pm is None or self._pm[0] != key:
+            pm = QPixmap(int(self.width() * dpr), int(self.height() * dpr))
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(Qt.PenStyle.NoPen)
+            steps = 9
+            for k in range(steps):           # outermost first, each a little darker and smaller: a soft fall-off
+                inset = self.M * (1 - (k + 1) / steps)
+                p.setBrush(T.color("shadow", T.CARD_SHADOW["alpha"] / steps))
+                r = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+                p.drawRoundedRect(r, T.RADIUS + inset, T.RADIUS + inset)
+            p.end()
+            self._pm = (key, pm)
+        qp = QPainter(self)
+        qp.drawPixmap(0, 0, self._pm[1])
+        qp.end()
+
+
 class EditCard(QFrame):
     def __init__(self, screen: "ChainScreen", parent):
         super().__init__(parent)
         self.screen = screen
+        self.shadow = CardShadow(parent)
         self.setObjectName("Card")
         self.setStyleSheet("QLabel { background: transparent; border: none; }")
         self.setFixedWidth(300)
@@ -2818,6 +3171,25 @@ class EditCard(QFrame):
         self.enc = None
         self.power = None
         self.hide()
+
+    # the shadow follows the card wherever it is placed, and shows and hides with it (relay 016)
+    def moveEvent(self, ev):
+        super().moveEvent(ev)
+        self.shadow.follow(self)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.shadow.follow(self)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self.shadow.follow(self)
+        self.shadow.show()
+        self.raise_()
+
+    def hideEvent(self, ev):
+        super().hideEvent(ev)
+        self.shadow.hide()
 
     def _clear(self):
         """Empty the card, rows of buttons included. (Before relay 006 the widgets inside a row's
@@ -3038,9 +3410,14 @@ class EditCard(QFrame):
             e.textEdited.connect(lambda v, k=key: self._set(k, v))
             self._field(label, e)
 
+        def note_edit(key, label):          # relay 016: a note wraps in a box that grows with it
+            e = NoteEdit(str(p.get(key) or ""))
+            e.edited.connect(lambda v, k=key: self._set(k, v))
+            self._field(label, e)
+
         if p["type"] != "attenuator":
             text_edit("name", "Name")
-        text_edit("detail", "Note" if p["type"] != R.SPLITTER else "Note (used when a port has no label)")
+        note_edit("detail", "Note" if p["type"] != R.SPLITTER else "Note (used when a port has no label)")
         if p["type"] in LENGTH_TYPES:
             text_edit("length", "Length")
         if p["type"] == "attenuator":
@@ -3145,8 +3522,8 @@ class EditCard(QFrame):
         kind.currentIndexChanged.connect(lambda i: self._power_kind(kind.itemData(i)))
         self._field("Kind", kind)
         for key, label in (("name", "Name"), ("note", "Note")):
-            e = QLineEdit(str(item.box.get(key) or ""))
-            e.textEdited.connect(lambda v, k=key: self._power_set(k, v))
+            e = QLineEdit(str(item.box.get(key) or "")) if key == "name" else NoteEdit(str(item.box.get(key) or ""))
+            (e.textEdited if key == "name" else e.edited).connect(lambda v, k=key: self._power_set(k, v))
             self._field(label, e)
         names = {n["id"]: n["part"].get("name") or "a part" for n in self.screen.rig["nodes"]}
         feeds = [names.get(w["to"], "?") for w in R.power_wires(self.screen.rig) if w["from"] == item.box["id"]]
@@ -3194,8 +3571,8 @@ class EditCard(QFrame):
         head.setFont(T.ui_font(10, QFont.Weight.DemiBold))
         self.lay.addWidget(head)
         for key, label in (("name", "Name"), ("note", "Note")):
-            e = QLineEdit(str(item.enc.get(key) or ""))
-            e.textEdited.connect(lambda v, k=key: self._enc_set(k, v))
+            e = QLineEdit(str(item.enc.get(key) or "")) if key == "name" else NoteEdit(str(item.enc.get(key) or ""))
+            (e.textEdited if key == "name" else e.edited).connect(lambda v, k=key: self._enc_set(k, v))
             self._field(label, e)
         hint = QLabel("Drawing only: an enclosure writes nothing into the recorded text. "
                       "Parts inside it move with it, and so do their groups; drag one out to take it "
@@ -3351,6 +3728,8 @@ class EditCard(QFrame):
             self.node["part"].pop(key, None) if key in R.FIELDS else self.node["part"].__setitem__(key, "")
         else:
             self.node["part"][key] = value
+        if key in ("name", "detail", "length"):          # relay 016: the part grows to fit its words, room allowing
+            self.screen.fit_text(self.node["id"])
         self.screen.changed(redraw=False, merge=("field", self.node["id"], key))
 
     def _port_label(self, i, v):
@@ -3419,6 +3798,7 @@ class ChainScreen(QWidget):
         self.power_map: dict = {}      # part id -> its power input (x, y, side)
         self.mated_keys: set = set()   # connection points joined port to port (drawn as a joint, not a dot)
         self.sel_count = 0             # how many boxes are selected (kept here: painting asks for it often)
+        self.words_gen = 0             # relay 016: bumped by every edit, so each part lays out its words again
         self.card_wanted = None        # the box whose card was asked for by a click (relay 008); a press or drag asks nothing
         self.power_out: dict = {}      # power source id -> its output dot (x, y, side)
         self.group_marks: list = []
@@ -3580,9 +3960,26 @@ class ChainScreen(QWidget):
         self.btn_undo = self._tool("Undo", "Undo (Ctrl+Z)", self.undo, icon="undo", label=False)
         self.btn_redo = self._tool("Redo", "Redo (Ctrl+Y)", self.redo, icon="redo", label=False)
         info.addWidget(self._segment(self.btn_undo, self.btn_redo, name="edit"))
-        self.btn_tidy = self._tool("Tidy", "Arrange the rig: source on the left, branches one under another. "
-                                   "Locked boxes stay; parts make way for a group. Undo puts it back.", self.tidy,
-                                   icon="tidy")
+        self.btn_tidy = self._tool("Tidy", "Arrange the rig in its direction: left to right, source on the left and "
+                                   "branches one under another; or top to bottom, source at the top and branches side "
+                                   "by side. Locked boxes stay; parts make way for a group. Undo puts it back.",
+                                   self.tidy, icon="tidy")
+        # Relay 016: the rig's layout direction. Changing it moves nothing until Tidy; Undo covers it.
+        self.btn_dir = self._tool("Left → right", "The rig's direction: left to right, or top to bottom. New wires "
+                                  "leave from the output side and arrive on the input side; Tidy lays the rig out "
+                                  "that way. Changing it moves nothing until you press Tidy.", lambda: None,
+                                  icon="dir_right")
+        dm = Menu(self)
+        self.dir_actions = {}
+        grp = QActionGroup(dm)
+        for key, text in R.DIRECTIONS.items():
+            a = QAction(tool_icon("dir_" + key), text, dm, checkable=True)
+            a.triggered.connect(lambda _=False, k=key: self.set_direction(k))
+            grp.addAction(a)
+            dm.addAction(a)
+            self.dir_actions[key] = a
+        self.btn_dir.setMenu(dm)
+        self.btn_dir.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menus = {}
         arrange = []
         view = []
@@ -3598,7 +3995,7 @@ class ChainScreen(QWidget):
             btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             (arrange if key == "arrange" else view).append(btn)
             self.menus[key] = btn
-        info.addWidget(self._segment(self.btn_tidy, *arrange, name="arrange"))
+        info.addWidget(self._segment(self.btn_tidy, self.btn_dir, *arrange, name="arrange"))
         self.btn_picture = self._tool("Picture…", "Save the drawing as a PNG picture, to a place you pick",
                                       lambda: self.export_picture(), icon="picture")
         self.btn_help = self._tool("Help", "Keyboard shortcuts (F1)", self.show_help, icon="help", label=False)
@@ -4260,7 +4657,7 @@ class ChainScreen(QWidget):
             m.addSeparator()
             pt = self.menu_point or item.label_point()
             near = item.point_at(pt)
-            a = m.addAction("Add bend point here")
+            a = m.addAction("Add bend point here	Ctrl+click")
             a.setToolTip("A point the wire passes through; drag it anywhere on the grid")
             a.triggered.connect(lambda _=False, w=item.wire, p=QPointF(pt): self.add_bend(w, p))
             a = m.addAction("Remove point\tDelete")
@@ -4587,6 +4984,7 @@ class ChainScreen(QWidget):
         self.card.show_for(None)
         self.group_marks, self.guide_items = [], []
         self._drag, self._group_click = None, None
+        self._show_direction()
         self.scene.clear()
         self.temp_wire = None
         self.items_by_id, self.wire_items = {}, []
@@ -4906,15 +5304,16 @@ class ChainScreen(QWidget):
             return
         nid = self.wiring_from[1] if self.wiring_from[0] == "in" else self.wiring_from[0]
         node = self.items_by_id[nid].node
-        side = G.side_to_point(node, pt.x(), pt.y())
-        ax, ay = G.mid_side(node, side)
+        down = self.down
+        side = G.side_to_point(node, pt.x(), pt.y(), down)
+        ax, ay = G.mid_side(node, side, down)
         target = next((i for i in self.scene.items(pt) if isinstance(i, PartItem)
                        and i.node["id"] != node["id"]), None)
         end = (pt.x(), pt.y())
         end_side = None
         if target is not None:              # the curve settles onto the part it will join
-            end_side = G.OPPOSITE[G.side_toward(node, target.node)]
-            end = G.mid_side(target.node, end_side)
+            end_side = G.OPPOSITE[G.side_toward(node, target.node, down)]
+            end = G.mid_side(target.node, end_side, down)
         self.temp_wire.setPath(wire_path((ax, ay, side), end, self.wire_style, end_side))
         new = target.node["id"] if target is not None else None
         if new != self.drop_target:
@@ -5497,7 +5896,7 @@ class ChainScreen(QWidget):
         for k, (label, _f) in R.ANTENNA_TYPES.items():
             a = m.addAction(QIcon(kind_pixmap("ant_" + k, T.color("text2"), 16, 2.0)), label)
             a.triggered.connect(lambda _=False, k=k: self.set_antenna(nid, type=k))
-        m.exec(where)
+        m.open_at(where)
 
     def set_colour(self, ids, colour: str | None):
         """Give boxes a colour of their own (None: back to their kind's colour). Drawing only."""
@@ -5963,6 +6362,7 @@ class ChainScreen(QWidget):
             del self.undo_stack[:-UNDO_MAX]
         self._merge = merge
         self.redo_stack.clear()
+        self.words_gen += 1                                  # relay 016: words may have changed: lay them out again
         if G.settle_walls(self.rig) and not redraw:          # relay 014: a seated bulkhead stays on its wall
             redraw = True
         self._last = self._snapshot()
@@ -6003,6 +6403,70 @@ class ChainScreen(QWidget):
         self.undo_stack.append(self._last)
         self.show_notice(None)
         self._restore(self.redo_stack.pop())
+
+    # -- words that fit (relay 016)
+    def fit_text(self, nid: str) -> bool:
+        """A part whose name or note no longer fits grows taller to show them, when there is room: up to the tallest
+        a part may be, and only where it would not run into another box. Otherwise it keeps its size and its words
+        end in "…" (whole in its tooltip). True when it grew."""
+        it = self.items_by_id.get(nid)
+        if it is None or self.read_only or R.is_locked(it.node):
+            return False
+        shape = G.oriented(R.shape_of(it.node), self.down)
+        if shape == "pipe":
+            return False
+        self.words_gen += 1                     # the words just changed: never read them from the cache here
+        w, h = it.wh()
+        need = it.words(shape, w, h)["need"]
+        if need <= h:
+            return False
+        new_h = min(G.MAX_H, int(math.ceil(need / R.GRID) * R.GRID))
+        if new_h <= h:
+            return False
+        x, y = it.node["x"], it.node["y"]
+        grown = (x, y + h, w, new_h - h)                # only the new strip has to be free
+        for bid in [b["id"] for b in R._boxes(self.rig)]:
+            if bid == nid or R.kind_of(self.rig, bid) == "enclosure":
+                continue
+            r = G.rect(self.rig, bid)
+            if r is not None and G._overlap(grown, r):
+                return False
+        it.prepareGeometryChange()
+        it.node["h"] = new_h
+        self._refresh_wires()
+        it.update()
+        return True
+
+    # -- direction (relay 016)
+    @property
+    def down(self) -> bool:
+        """True when this rig is built top to bottom."""
+        return G.direction(self.rig) == "down"
+
+    def set_direction(self, d: str):
+        """Left to right or top to bottom. Nothing moves until Tidy; new wires and free dots follow at once.
+        One undo step."""
+        if d not in R.DIRECTIONS or d == G.direction(self.rig):
+            self._show_direction()
+            return
+        if d == "down":
+            self.rig["dir"] = "down"
+        else:
+            self.rig.pop("dir", None)
+        self.changed()
+        if not self.read_only:
+            self.status.emit(f"{R.DIRECTIONS[d]}: new wires follow it now; press Tidy to lay the rig out that way "
+                             "(Undo puts it back)")
+
+    def _show_direction(self):
+        if not hasattr(self, "btn_dir"):
+            return
+        d = G.direction(self.rig)
+        self.btn_dir.setText(R.DIRECTIONS[d] + " ▾")
+        self.btn_dir.setIcon(tool_icon("dir_" + d))
+        for k, a in self.dir_actions.items():
+            a.setChecked(k == d)
+        self.btn_dir.setEnabled(not self.read_only)
 
     # -- arranging
     def tidy(self):
@@ -6155,10 +6619,9 @@ class ChainScreen(QWidget):
         self.checks_title.setText(f"Checks · {len(self.check_list)}")
         shown = self.check_list[:4]
         for c in shown:
-            b = QPushButton(c["text"])
+            b = WrapChip(c["text"], dot_icon(T.color(self.CHECK_COLOUR.get(c["kind"], "anomaly"))))
             b.setObjectName("CheckChip")
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            b.setIcon(dot_icon(T.color(self.CHECK_COLOUR.get(c["kind"], "anomaly"))))
             b.setToolTip("Click to select " + ("it" if len(c["ids"]) == 1 else "them")
                          + ". A check warns; it never stops a save.")
             b.clicked.connect(lambda _=False, ids=c["ids"]: self.select_ids(ids))
@@ -6204,6 +6667,7 @@ class ChainScreen(QWidget):
                            + (f"   ·   antenna {gain:+g} dBi, not in the estimate" if gain not in (None, "") else ""))
                 e.setFont(T.ui_font(8.5))
                 e.setProperty("muted", True)
+                e.setWordWrap(True)
                 e.setToolTip("An estimate, nominal: the dB figures typed on the parts and cables between the "
                              "source and the radio, added up. Cable loss depends on frequency; the figures are at "
                              "whatever frequency you typed them for. Never a measured level, and never drawn on "
@@ -6414,9 +6878,10 @@ class ChainScreen(QWidget):
     def _taken(self, name: str) -> bool:
         return name in self.display or name in (self.summary.get("chains") or {})
 
-    def new_rig(self, name: str | None = None, template: str | None = None):
-        """New rig (relay 014, the owner's flow): unsaved changes first (Save / Discard / Cancel), then a name and
-        a starting drawing - blank, or one of relay 007's templates. A taken name is refused in the prompt. The
+    def new_rig(self, name: str | None = None, template: str | None = None, direction: str | None = None):
+        """New rig (relay 014, the owner's flow): unsaved changes first (Save / Discard / Cancel), then a name, which
+        way it is built (relay 016: left to right or top to bottom) and a starting drawing - blank, or one of relay
+        007's templates, in that direction. A taken name is refused in the prompt. The
         rig is saved at once as a drawing (chain_layout.json), so it is in the picker from the start; its chains
         reach chain.json on the first Save that has a path."""
         if not self._ask_unsaved():
@@ -6440,6 +6905,24 @@ class ChainScreen(QWidget):
             err.setWordWrap(True)
             err.hide()
             lay.addWidget(err)
+            # relay 016: which way the rig is built; changeable later from the toolbar
+            lab_d = QLabel("Build it")
+            lab_d.setProperty("muted", True)
+            lay.addWidget(lab_d)
+            drow = QHBoxLayout()
+            drow.setSpacing(T.SPACE)
+            dbtn = {}
+            for key, text in R.DIRECTIONS.items():
+                b = QPushButton(tool_icon("dir_" + key), text)
+                b.setObjectName("Dir_" + key)
+                b.setCheckable(True)
+                b.setAutoExclusive(True)
+                b.setProperty("accent", True)
+                dbtn[key] = b
+                drow.addWidget(b)
+            dbtn["right"].setChecked(True)
+            drow.addStretch(1)
+            lay.addLayout(drow)
             lab2 = QLabel("Start from (optional)")
             lab2.setProperty("muted", True)
             lay.addWidget(lab2)
@@ -6475,9 +6958,12 @@ class ChainScreen(QWidget):
                 it = pick.currentItem()
                 key = it.data(Qt.ItemDataRole.UserRole) if it else "blank"
                 prev.setPixmap(template_pixmap(key, self.labels, self.receivers,
-                                               dpr=dlg.devicePixelRatioF() if dlg.isVisible() else 2.0))
+                                               dpr=dlg.devicePixelRatioF() if dlg.isVisible() else 2.0,
+                                               down=dbtn["down"].isChecked()))
                 note.setText(R.TEMPLATE_NOTES.get(key, ""))
             pick.currentRowChanged.connect(show_pick)
+            for b in dbtn.values():
+                b.toggled.connect(lambda on, *_: on and show_pick())
             pick.setCurrentRow(0)
             pick.item(0).setSelected(True)
             show_pick()
@@ -6505,13 +6991,14 @@ class ChainScreen(QWidget):
                 return False
             name = ed.text()
             template = pick.currentItem().data(Qt.ItemDataRole.UserRole) if pick.currentItem() else "blank"
+            direction = "down" if dbtn["down"].isChecked() else "right"
         name = (name or "").strip()
         if not name:
             return False
         if self._taken(name):
             self.show_notice(f"Not made: there is already a rig or chain called “{name}”.")
             return False
-        rig = R.template(template or "blank", self.labels, self.receivers)
+        rig = R.template(template or "blank", self.labels, self.receivers, down=direction == "down")
         try:
             lay = R.add_draft(self.layout_doc, name, rig, self.chain_doc())
             self.svc.save(self.chain_doc(), lay)
@@ -6681,7 +7168,7 @@ class ChainScreen(QWidget):
                 a.triggered.connect(lambda _=False, i=e["id"]: self._lib_put_back(i))
             m.addMenu(sub)
         if m.actions():
-            m.exec(where)
+            m.open_at(where)
 
     def _lib_change(self, lid: str, fn) -> bool:
         entries = copy.deepcopy(self.library)

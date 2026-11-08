@@ -145,9 +145,11 @@ class RadioChip(QFrame):
             short += " · disabled for new work"
         self.state.setText(short)
         self.state.setStyleSheet(f"color: {T.C[colour]};")
-        self.setStyleSheet(f"#RadioChip {{ background: {T.C['panel']}; border: 1px solid {T.C['lines']}; "
-                           f"border-left: 3px solid {T.C[colour]}; border-radius: 6px; }} "
-                           f"#RadioChip:hover {{ background: {T.C['raised']}; }} #RadioChip QLabel {{ background: transparent; }}")
+        # relay 016: a raised card, lit from above, its state colour down the left edge
+        self.setStyleSheet(f"#RadioChip {{ background: {T.gradient(T.C['seg_top'], T.C['seg_bottom'])}; "
+                           f"{T.lit_edges('raised')} border-left: 3px solid {T.C[colour]}; border-radius: 6px; }} "
+                           f"#RadioChip:hover {{ background: {T.gradient(T.C['btn_hover_top'], T.C['btn_hover_bottom'])}; }} "
+                           f"#RadioChip QLabel {{ background: transparent; }}")
         self.setToolTip(f"{r['label']}\nserial {r.get('serial') or '?'} · {r['doing']['text']}\n"
                         f"{ROLE_WORD[role]} · click for the Radios panel")
 

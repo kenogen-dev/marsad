@@ -46,13 +46,40 @@ def is_source(node: dict) -> bool:
     return bool(engine_chain.PART_TYPES.get(node["part"]["type"], {}).get("source"))
 
 
-def side_toward(a: dict, b: dict) -> str:
-    """The side of part a that faces part b. A part directly above or below (the two
-    boxes overlap left to right) is joined top to bottom; anything else is joined
-    from the side, since chains read left to right."""
+DIRECTIONS = ("right", "down")
+# Relay 016: a rig is built left to right (the default, no key stored) or top to bottom ("dir": "down").
+# FLOW gives (the side a main output sits on, the side a main input sits on).
+FLOW = {"right": ("right", "left"), "down": ("bottom", "top")}
+
+
+def direction(rig: dict | None) -> str:
+    """A rig's layout direction: "down" (top to bottom) or "right" (left to right, the default)."""
+    return "down" if (rig or {}).get("dir") == "down" else "right"
+
+
+def oriented(shape: str, down: bool) -> str:
+    """The outline a shape is drawn with: a triangle points, and a trapezoid widens, along the rig's flow, so in
+    a top-to-bottom rig they are turned to point down (relay 016)."""
+    return shape + "_down" if down and shape in ("triangle", "trapezoid") else shape
+
+
+def side_toward(a: dict, b: dict, down: bool = False) -> str:
+    """The side of part a that faces part b. Left to right: a part directly above or below (the two boxes
+    overlap left to right) is joined top to bottom; anything else from the side, since chains read left to
+    right. Top to bottom (relay 016) is the same rule turned a quarter: a part directly beside it (the boxes
+    overlap up and down) is joined from the side, anything else top to bottom."""
     (ax, ay), (bx, by) = centre(a), centre(b)
     (aw, ah), (bw, bh) = size(a), size(b)
     dx, dy = bx - ax, by - ay
+    if down:
+        overlap_along = abs(dy) < (ah + bh) / 2
+        if overlap_along and abs(dx) >= (aw + bw) / 2:
+            return "right" if dx > 0 else "left"
+        if dx == 0 and dy == 0:
+            return "bottom"
+        if overlap_along and abs(dx) > abs(dy):
+            return "right" if dx > 0 else "left"
+        return "bottom" if dy >= 0 else "top"
     overlap_across = abs(dx) < (aw + bw) / 2
     if overlap_across and abs(dy) >= (ah + bh) / 2:
         return "bottom" if dy > 0 else "top"
@@ -64,27 +91,55 @@ def side_toward(a: dict, b: dict) -> str:
     return "right" if dx >= 0 else "left"
 
 
-def side_to_point(node: dict, x: float, y: float) -> str:
+def side_to_point(node: dict, x: float, y: float, down: bool = False) -> str:
     """The side of a part that faces a point (a wire being dragged), by the same rule."""
     cx, cy = centre(node)
     w, h = size(node)
     dx, dy = x - cx, y - cy
+    if down:
+        if abs(dy) <= h / 2 and (abs(dx) > w / 2 or abs(dx) / w > abs(dy) / h):
+            return "right" if dx > 0 else "left"
+        return "bottom" if dy >= 0 else "top"
     if abs(dx) <= w / 2 and (abs(dy) > h / 2 or abs(dy) / h > abs(dx) / w):
         return "bottom" if dy > 0 else "top"
     return "right" if dx >= 0 else "left"
 
 
-def mid_side(node: dict, side: str) -> tuple[float, float]:
-    return _point_on(node, side, 0, 1)
+def mid_side(node: dict, side: str, down: bool = False) -> tuple[float, float]:
+    return _point_on(node, side, 0, 1, down)
 
 
-def _point_on(node: dict, side: str, k: int, n: int) -> tuple[float, float]:
+def _point_on(node: dict, side: str, k: int, n: int, down: bool = False) -> tuple[float, float]:
     w, h = size(node)
     f = (k + 1) / (n + 1)
     x, y = node["x"], node["y"]
     pt = {"right": (x + w, y + h * f), "left": (x, y + h * f),
           "top": (x + w * f, y), "bottom": (x + w * f, y + h)}[side]
-    return on_outline(node, *pt)
+    return on_outline(node, *pt, down=down)
+
+
+# ---------------------------------------------------------------- right-click menus (relay 016)
+MENU_OFFSET = 4                        # px, how far below and right of the pointer a menu's corner sits
+
+
+def menu_place(px: int, py: int, mw: int, mh: int, area: tuple | None, off: int = MENU_OFFSET) -> tuple[int, int]:
+    """Where a right-click menu's top-left corner goes, for the pointer at (px, py) and a menu mw x mh: just below
+    and right of the pointer, so it never covers what was clicked. It flips to the pointer's left (or above it) only
+    where it would run off `area` (left, top, right, bottom, inclusive: the window); if it fits neither way it is
+    held inside the area."""
+    x, y = px + off, py + off
+    if area is None:
+        return x, y
+    left, top, right, bottom = area
+    if x + mw - 1 > right:
+        x = px - off - mw
+        if x < left:
+            x = max(left, right - mw + 1)
+    if y + mh - 1 > bottom:
+        y = py - off - mh
+        if y < top:
+            y = max(top, bottom - mh + 1)
+    return x, y
 
 
 # ---------------------------------------------------------------- shapes (relay 007)
@@ -101,6 +156,10 @@ def outline(shape: str, w: float, h: float):
         poly = [(0, 0), (w, h / 2), (0, h)]
     elif shape == "trapezoid":                  # widens toward its outputs, on the right
         poly = [(0, h * 0.22), (w, 0), (w, h), (0, h * 0.78)]
+    elif shape == "triangle_down":              # relay 016: in a top-to-bottom rig it points down
+        poly = [(0, 0), (w, 0), (w / 2, h)]
+    elif shape == "trapezoid_down":             # and widens toward its outputs, below
+        poly = [(w * 0.22, 0), (w * 0.78, 0), (w, h), (0, h)]
     elif shape == "hexagon":
         i = min(w * 0.2, h * 0.5)
         poly = [(0, h / 2), (i, 0), (w - i, 0), (w, h / 2), (w - i, h), (i, h)]
@@ -120,11 +179,11 @@ def outline(shape: str, w: float, h: float):
     return poly
 
 
-def on_outline(node: dict, px: float, py: float) -> tuple[float, float]:
+def on_outline(node: dict, px: float, py: float, down: bool = False) -> tuple[float, float]:
     """Where a point on a part's box falls on its shape: along the line from the part's centre
     to it, the first place that line leaves the outline. On a box-shaped part, the point itself."""
     w, h = size(node)
-    poly = outline(R.shape_of(node), w, h)
+    poly = outline(oriented(R.shape_of(node), down), w, h)
     if not poly:
         return px, py
     x0, y0 = node["x"], node["y"]
@@ -222,9 +281,12 @@ def anchors(rig: dict) -> dict:
     A wired point sits on the side that faces the part at its other end; points
     sharing a side are spread along it in the order of their far ends, so wires
     leaving one side do not cross each other. Unwired outputs wait on the right,
-    an unwired input on the left; a source has no input."""
+    an unwired input on the left (below and on top in a top-to-bottom rig, relay 016);
+    a source has no input."""
     nodes = {n["id"]: n for n in rig["nodes"]}
     on_side: dict[tuple[str, str], list] = {}      # (node, side) -> [(sort key, key)]
+    down = direction(rig) == "down"
+    out_side, in_side = FLOW[direction(rig)]
 
     def put(nid, side, key, far):
         axis = 1 if side in ("left", "right") else 0
@@ -245,7 +307,7 @@ def anchors(rig: dict) -> dict:
         a, b = nodes.get(w["from"]), nodes.get(w["to"])
         if a is None or b is None:
             continue
-        s = side_toward(a, b)
+        s = side_toward(a, b, down)
         sa = side_of(a, "out", w["port"], s)
         # The far end faces the near end's point: a fixed side on one end turns the other.
         sb = side_of(b, "in", 0, OPPOSITE[sa] if fixed.get(a["id"]) and not fixed.get(b["id"]) else OPPOSITE[s])
@@ -258,17 +320,17 @@ def anchors(rig: dict) -> dict:
     for nid, n in nodes.items():
         for p in range(R.out_ports(n)):
             if (nid, p) not in wired_out:
-                put(nid, side_of(n, "out", p, "right"), (nid, "out", p), None)
+                put(nid, side_of(n, "out", p, out_side), (nid, "out", p), None)
         if nid not in wired_in and not is_source(n):
-            put(nid, side_of(n, "in", 0, "left"), (nid, "in", 0), None)
+            put(nid, side_of(n, "in", 0, in_side), (nid, "in", 0), None)
         elif R.multi_in(n):                  # relay 015: a free input always waits on a PC or hub
             k = R.free_input(rig, nid)
-            put(nid, "left", (nid, "in", k), None)
+            put(nid, in_side, (nid, "in", k), None)
     out = {}
     for (nid, side), items in on_side.items():
         items.sort(key=lambda t: (t[0], t[1][1] == "out", t[1][2]))
         for k, (_, key) in enumerate(items):
-            x, y = _point_on(nodes[nid], side, k, len(items))
+            x, y = _point_on(nodes[nid], side, k, len(items), down)
             out[key] = (x, y, side)
     return out
 
@@ -300,6 +362,8 @@ def tidy(rig: dict, grid: int = R.GRID) -> dict:
     nodes = {n["id"]: n for n in rig["nodes"]}
     if not nodes:
         return {}
+    down = direction(rig) == "down"
+    cross = 0 if down else 1          # the axis branches are spread along: x top to bottom, y left to right
     children: dict[str, list] = {nid: [] for nid in nodes}
     parent = {}
     for w in rig["wires"]:
@@ -307,12 +371,12 @@ def tidy(rig: dict, grid: int = R.GRID) -> dict:
             children[w["from"]].append((w["port"], w["to"]))
             parent[w["to"]] = w["from"]
     for nid in children:
-        children[nid].sort(key=lambda t: (centre(nodes[t[1]])[1], t[0]))
+        children[nid].sort(key=lambda t: (centre(nodes[t[1]])[cross], t[0]))
     wired = set(parent) | {nid for nid, c in children.items() if c}
     roots = sorted((nid for nid in nodes if nid not in parent and nid in wired),
-                   key=lambda nid: (centre(nodes[nid])[1], centre(nodes[nid])[0]))
+                   key=lambda nid: (centre(nodes[nid])[cross], centre(nodes[nid])[1 - cross]))
     loose = sorted((nid for nid in nodes if nid not in wired),
-                   key=lambda nid: (centre(nodes[nid])[0], centre(nodes[nid])[1]))
+                   key=lambda nid: (centre(nodes[nid])[1 - cross], centre(nodes[nid])[cross]))
 
     depth, row = {}, {}
     slot = [0.0]
@@ -334,6 +398,8 @@ def tidy(rig: dict, grid: int = R.GRID) -> dict:
     seen: set = set()
     for r in roots:
         place(r, 0, seen)
+    if down:
+        return _tidy_down(rig, nodes, depth, row, slot[0], loose, grid)
     cols = max(depth.values(), default=-1) + 1
     col_w = [0] * max(cols, 1)
     for nid, d in depth.items():
@@ -360,6 +426,40 @@ def tidy(rig: dict, grid: int = R.GRID) -> dict:
     for nid in loose:
         out[nid] = (R.snap(x, grid), y0)
         x += size(nodes[nid])[0] + GAP_X
+    return out
+
+
+def _tidy_down(rig: dict, nodes: dict, depth: dict, slot_of: dict, slots: float, loose: list, grid: int) -> dict:
+    """Tidy for a top-to-bottom rig (relay 016): the left-to-right arrangement turned a quarter. Each part goes
+    in the row of its distance from the source, branches side by side, a part with several outputs above the
+    middle of what it feeds; parts on no wire line up to the right of the rest."""
+    rows = max(depth.values(), default=-1) + 1
+    row_h = [0] * max(rows, 1)
+    for nid, d in depth.items():
+        row_h[d] = max(row_h[d], size(nodes[nid])[1])
+    col_w = max((size(n)[0] for n in nodes.values()), default=R.PART_W) + GAP_X
+    label_h = 22                                # a cable label's pill, upright on a vertical wire
+    gap_before = [GAP_Y + 20] * len(row_h)
+    for w in rig["wires"]:
+        if w["to"] in depth and depth[w["to"]] > 0 and w.get("cables"):
+            d = depth[w["to"]]
+            gap_before[d] = max(gap_before[d], GAP_Y + label_h + 20)
+    row_y, y = [], 0
+    for d, h in enumerate(row_h):
+        if d:
+            y += gap_before[d]
+        row_y.append(y)
+        y += h
+    out = {}
+    for nid in depth:
+        w = size(nodes[nid])[0]
+        x = slot_of[nid] * col_w + (col_w - GAP_X - w) / 2
+        out[nid] = (R.snap(x, grid), R.snap(row_y[depth[nid]], grid))
+    x0 = R.snap(slots * col_w + (GAP_X if depth else 0), grid)
+    y = 0
+    for nid in loose:
+        out[nid] = (x0, R.snap(y, grid))
+        y += size(nodes[nid])[1] + GAP_Y
     return out
 
 
@@ -477,6 +577,78 @@ def insert_index(a: tuple, b: tuple, points, x: float, y: float) -> int:
     judged on the straight line through the existing points."""
     seq = [(a[0], a[1])] + [tuple(q) for q in (points or [])] + [(b[0], b[1])]
     return min(range(len(seq) - 1), key=lambda i: _seg_dist((x, y), seq[i], seq[i + 1]))
+
+
+def _simplify(seq: list, keep: set) -> list:
+    """A routed line with repeated points and points in the middle of a straight run taken out (except the
+    indices in `keep`)."""
+    out = []
+    for k, p in enumerate(seq):
+        if out and p == out[-1][1] and k not in keep:
+            continue
+        out.append((k, p))
+    clean = []
+    for j, (k, p) in enumerate(out):
+        if 0 < j < len(out) - 1 and k not in keep:
+            q, r = out[j - 1][1], out[j + 1][1]
+            if (q[0] == p[0] == r[0]) or (q[1] == p[1] == r[1]):
+                continue
+        clean.append((k, p))
+    return clean
+
+
+def move_wire(a: tuple, b: tuple, points, style: str, square: bool, grab: tuple, dx: float, dy: float,
+              snap: int | None = None) -> list:
+    """Relay 016: a wire dragged by its body, by (dx, dy) from where it was grabbed. Its ends stay on their
+    parts; the stretch under the pointer moves and the wire is re-routed round it. Returns the wire's new bend
+    points (whole grid units when `snap` is given). Always worked out from the points as they were when the drag
+    began, so a drag can be redone from scratch on every pointer move.
+
+    Right angles (the angled style, or the wire's own choice): the routed line's segment under the pointer moves
+    across itself (a level segment up or down, an upright one sideways), and its neighbours stretch to meet it; a
+    segment that starts at a part's own short stub gets a new corner there, so the part's end stays square. Curved
+    and straight wires: a stretch between two bend points moves with both of them; a stretch from a part's end, or
+    a wire with no bends yet, is pulled out at the place it was grabbed."""
+    def sn(v):
+        return R.snap(v, snap) if snap else int(round(v))
+
+    sa = a[2] if len(a) > 2 else None
+    sb = b[2] if len(b) > 2 else None
+    pts = [(float(q[0]), float(q[1])) for q in (points or [])]
+    if square or style == "angled":
+        kind, P = route_via(a, b, pts, style, sb, square)
+        P = [(float(p[0]), float(p[1])) for p in P]
+        n = len(P)
+        i = min(range(n - 1), key=lambda k: _seg_dist(grab, P[k], P[k + 1]))
+        if sa and i == 0 and n > 3:          # a part's own short stub moves with the stretch after it
+            i = 1
+        if sb and i == n - 2 and n > 3:
+            i = n - 3
+        level, upright = P[i][1] == P[i + 1][1], P[i][0] == P[i + 1][0]
+        mx, my = (0.0, dy) if level else (dx, 0.0) if upright else (dx, dy)
+        fixed = {0, n - 1} | ({1} if sa else set()) | ({n - 2} if sb else set())
+        left, right = P[:i + 1], P[i + 1:]
+        if i in fixed:
+            left = left + [P[i]]
+        if i + 1 in fixed:
+            right = [P[i + 1]] + right
+        p, q = left[-1], right[0]
+        left[-1] = (sn(p[0] + mx) if mx else p[0], sn(p[1] + my) if my else p[1])
+        right[0] = (sn(q[0] + mx) if mx else q[0], sn(q[1] + my) if my else q[1])
+        seq = left + right
+        m = len(seq)
+        ends = {0, m - 1} | ({1} if sa else set()) | ({m - 2} if sb else set())
+        kept = _simplify(seq, ends)
+        return [[int(round(p[0])), int(round(p[1]))] for k, p in kept if k not in ends]
+    seq = [(float(a[0]), float(a[1]))] + pts + [(float(b[0]), float(b[1]))]
+    i = insert_index(a, b, pts, grab[0], grab[1])
+    new = [list(q) for q in pts]
+    if 0 < i and i + 1 < len(seq) - 1:               # between two bend points: both move
+        for j in (i - 1, i):
+            new[j] = [sn(pts[j][0] + dx), sn(pts[j][1] + dy)]
+        return [[int(q[0]), int(q[1])] for q in new]
+    new.insert(i, [sn(grab[0] + dx), sn(grab[1] + dy)])   # from a part's end, or no bends yet: pull it out here
+    return [[int(round(q[0])), int(round(q[1]))] for q in new]
 
 
 def carry_points(rig: dict, ids, dx: float, dy: float) -> int:
@@ -639,7 +811,14 @@ def tidy_all(rig: dict, grid: int = R.GRID) -> tuple[dict, dict]:
         todo.append((blk, dx, dy, union([box_rect(m, dx, dy) for m in blk])))
     for nid in locked - grouped:
         fixed.append(box_rect(nid))
-    todo.sort(key=lambda t: (t[3][1], t[3][0]))
+    down = direction(rig) == "down"
+
+    def clear_of(hit):
+        """Where a box in the way of `hit` moves to: below it, or to its right in a top-to-bottom rig (relay 016),
+        so blocks give way across the flow, not along it."""
+        return ("x", R.snap(hit[0] + hit[2] + GAP_X, grid)) if down else ("y", R.snap(hit[1] + hit[3] + GAP_Y, grid))
+
+    todo.sort(key=lambda t: (t[3][0], t[3][1]) if down else (t[3][1], t[3][0]))
     placed = list(fixed)
     for blk, dx, dy, r in todo:
         x, y, w, h = r
@@ -647,7 +826,12 @@ def tidy_all(rig: dict, grid: int = R.GRID) -> tuple[dict, dict]:
             hit = next((f for f in placed if _overlap((x, y, w, h), f, gap)), None)
             if hit is None:
                 break
-            y = R.snap(hit[1] + hit[3] + GAP_Y, grid)
+            axis, v = clear_of(hit)
+            if axis == "x":
+                x = v
+            else:
+                y = v
+        dx += x - r[0]
         dy += y - r[1]
         placed.append((x, y, w, h))
         for m in blk:
@@ -660,7 +844,7 @@ def tidy_all(rig: dict, grid: int = R.GRID) -> tuple[dict, dict]:
         if nid not in encs:
             out[nid] = now[nid]
     free = sorted((nid for nid in pos if nid not in grouped and nid not in locked),
-                  key=lambda nid: (pos[nid][1], pos[nid][0]))
+                  key=lambda nid: (pos[nid][0], pos[nid][1]) if down else (pos[nid][1], pos[nid][0]))
     for nid in free:
         w, h = size(nodes[nid])
         x, y = pos[nid]
@@ -668,7 +852,11 @@ def tidy_all(rig: dict, grid: int = R.GRID) -> tuple[dict, dict]:
             hit = next((f for f in placed if _overlap((x, y, w, h), f, gap)), None)
             if hit is None:
                 break
-            y = R.snap(hit[1] + hit[3] + GAP_Y, grid)
+            axis, v = clear_of(hit)
+            if axis == "x":
+                x = v
+            else:
+                y = v
         out[nid] = (x, y)
         placed.append((x, y, w, h))
     # A power source in no block keeps its place beside the first part it feeds.
@@ -691,10 +879,18 @@ def power_points(rig: dict) -> tuple[dict, dict]:
     boxes = {b["id"]: b for b in R.power_boxes(rig)}
     feed = {w["to"]: w["from"] for w in R.power_wires(rig) if w["from"] in boxes and w["to"] in nodes}
     inputs, outputs = {}, {}
+    down = direction(rig) == "down"
     for nid, n in nodes.items():
         if not (R.needs_power(n) or nid in feed):
             continue
         w, h = size(n)
+        if down:            # relay 016: top to bottom, RF runs through the top and bottom, so power is on a side
+            side = "right"
+            if nid in feed:
+                b = boxes[feed[nid]]
+                side = "left" if b["x"] + power_size(b)[0] / 2 < n["x"] + w / 2 else "right"
+            inputs[nid] = (*on_outline(n, n["x"] if side == "left" else n["x"] + w, n["y"] + h * 0.8, True), side)
+            continue
         side = "top"
         if nid in feed:
             b = boxes[feed[nid]]

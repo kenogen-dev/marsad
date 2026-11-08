@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 
 from PySide6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QPainter, QPen, QTextOption
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                                QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton,
@@ -573,6 +573,7 @@ class CommandPanel(QFrame):
         self.text.setReadOnly(True)
         self.text.setFont(T.mono_font(8.5))
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.text.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)   # relay 016: long paths wrap
         v.addWidget(self.text, 1)
         self.note = label("This is what is launched (as `marsad --station <folder> ...`, with the device found by "
                           "serial). Every run records it in its sidecar and scan_build.md.", muted=True, wrap=True)
@@ -592,6 +593,7 @@ class CommandPanel(QFrame):
         self.chain_txt.setReadOnly(True)
         self.chain_txt.setFont(T.mono_font(8.5))
         self.chain_txt.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.chain_txt.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         cv.addWidget(self.chain_txt, 1)
         n = label("The full text each run records, exactly as written to its sidecar. Elsewhere the window shows it "
                   "short.", muted=True, wrap=True)

@@ -361,8 +361,9 @@ class RecorderCard(QFrame):
         self.chip.setStyleSheet(f"QLabel#StateChip {{ color: {T.C[chip[1]] if chip[1] != 'muted' else T.C['muted']};"
                                 f" border: 1px solid {T.C[chip[1]] if chip[1] != 'muted' else T.C['lines']};"
                                 f" border-radius: 8px; padding: 1px 8px; }}")
-        self.setStyleSheet(f"QFrame#RecCard {{ background: {T.C['alert_bg'] if view == 'silent' else T.C['panel']};"
-                           f" border: 1px solid {T.C['alert'] if view == 'silent' else T.C['lines']};"
+        # relay 016: a recorder's card sits at the raised level, lit from above (an alert keeps its own red edge)
+        self.setStyleSheet(f"QFrame#RecCard {{ background: {T.C['alert_bg'] if view == 'silent' else T.gradient(T.C['seg_top'], T.C['seg_bottom'])};"
+                           f" {('border: 1px solid ' + T.C['alert'] + ';') if view == 'silent' else T.lit_edges('raised')}"
                            f" border-radius: {T.RADIUS}px; }}")
 
     def _fill(self, st, view):

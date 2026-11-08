@@ -65,7 +65,10 @@ POWER_KINDS = {"biastee": "Bias-tee (from the radio)", "usbc": "USB-C lead", "us
 POWER_W, POWER_H = 140, 48
 NEEDS_POWER_BY_TYPE = {"lna"}              # parts that need power unless the owner says otherwise
 # Rig lists that only the drawing reads.
-DRAWING_ONLY = ("enclosures", "groups", "power", "power_wires")
+DRAWING_ONLY = ("enclosures", "groups", "power", "power_wires", "dir")
+# Relay 016: a rig's layout direction. Left to right is the default and stores nothing, so every drawing made
+# before stays byte for byte; top to bottom is stored as "dir": "down".
+DIRECTIONS = {"right": "Left → right", "down": "Top → bottom"}
 # Keys on a part's node (not on its part) that only the drawing reads. path_parts() copies
 # type, name, detail and FIELDS from node["part"] and nothing else, so none of these can
 # reach a recorded text. The one deliberate exception (relay 006, the owner's decision A2):
@@ -282,12 +285,17 @@ TEMPLATE_NOTES = {"blank": "An empty grid: draw the rig from the Parts list.",
                   "two_radios": "Antenna into a splitter feeding two radios: the start of a two-radio rig."}
 
 
-def template(key: str, labels: dict | None = None, receivers: list | None = None) -> dict:
-    """A starting drawing for New rig. Plain parts in a row, wired; nothing saved until Save."""
+def template(key: str, labels: dict | None = None, receivers: list | None = None, down: bool = False) -> dict:
+    """A starting drawing for New rig. Plain parts in a row, wired; nothing saved until Save. With `down`
+    (relay 016) the same start is built top to bottom: a column, branches side by side."""
     rig = new_rig()
+    if down:
+        rig["dir"] = "down"
     rx = list(receivers or [])
 
     def node(t, x, y, name=None, rx_i=None):
+        if down:               # the row turned a quarter: along becomes down, across becomes sideways
+            x, y = snap(y * 1.6), snap(x / 2)
         n = new_node(rig, t, x, y, labels)
         if name:
             n["part"]["name"] = name
@@ -1310,6 +1318,10 @@ def check_layout(data) -> dict:
         for key, val in (("enclosures", encs), ("groups", grps), ("power", pows), ("power_wires", pw)):
             if val:
                 out["rigs"][str(name)][key] = val
+        if "dir" in r and r["dir"] not in DIRECTIONS:
+            raise ValueError(f"rig {name!r} is laid out in a direction that does not exist")
+        if r.get("dir") == "down":
+            out["rigs"][str(name)]["dir"] = "down"
         if "archived" in r:
             if not isinstance(r["archived"], bool):
                 raise ValueError(f"rig {name!r} is archived neither yes nor no")

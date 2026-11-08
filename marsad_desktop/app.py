@@ -48,6 +48,8 @@ class Window(QMainWindow):
     def __init__(self, service: Service, start: str = "Live Scan"):
         super().__init__()
         self.svc = service
+        from marsad_desktop import tips
+        tips.install()                    # relay 016: long tooltips wrap
         from marsad_desktop import practice
         self.practice = practice.on()
         self.setWindowTitle("Marsad — Practice station" if self.practice else "Marsad")
