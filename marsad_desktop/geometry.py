@@ -595,7 +595,9 @@ def moving_with(rig: dict, ids) -> set:
     out = set(ids)
     for e in R.enclosures(rig):
         if e["id"] in ids and not R.is_locked(e):
-            for bid in inside_any(rig, e):
+            # relay 014: a bulkhead seated on this enclosure's wall always comes along, centre inside or not
+            seated = [n["id"] for n in rig["nodes"] if (n.get("wall") or {}).get("enc") == e["id"]]
+            for bid in list(inside_any(rig, e)) + [s for s in seated if s not in inside_any(rig, e)]:
                 out.add(bid)
                 g = R.group_of(rig, bid)
                 if g:
@@ -767,3 +769,121 @@ def guide_snap(moving: tuple, others: list, tol: float = GUIDE_TOL) -> tuple:
                 xs += [o[0], o[0] + o[2]]
         lines.append(("h", line, min(xs) - 12, max(xs) + 12))
     return dx, dy, lines
+
+
+# ---------------------------------------------------------------- bulkheads on enclosure walls (relay 014)
+# Drawing only. A bulkhead (SMA or USB) near an enclosure's edge seats across the wall: its centre on the wall
+# line, half inside and half outside. The seat is stored on the part as {"wall": {"enc", "side", "t"}}: the
+# enclosure, which side and how far along it (0..1). Seated, it slides along the wall (round the corners too)
+# and comes off with a firm drag away; it always moves with its enclosure and stays seated when the enclosure is
+# resized. Nothing here reaches the recorded text: the bulkhead writes into it by its place in the path.
+BULKHEADS = ("bulkhead_sma", "bulkhead_usb")
+WALL_SNAP = 24          # a bulkhead's centre this close to an edge seats it
+WALL_PULL = 56          # dragged this far off the wall, it comes off
+WALL_SIDES = ("top", "right", "bottom", "left")
+
+
+def is_bulkhead(node: dict) -> bool:
+    return (node.get("part") or {}).get("type") in BULKHEADS
+
+
+def wall_project(enc: dict, cx: float, cy: float) -> tuple[str, float, float]:
+    """The nearest point of an enclosure's outline to (cx, cy): (side, t along that side 0..1, distance)."""
+    x, y, w, h = float(enc["x"]), float(enc["y"]), float(enc["w"]), float(enc["h"])
+    best = None
+    for side in WALL_SIDES:
+        if side in ("top", "bottom"):
+            px, py = min(max(cx, x), x + w), (y if side == "top" else y + h)
+            t = (px - x) / w if w else 0.0
+        else:
+            px, py = (x if side == "left" else x + w), min(max(cy, y), y + h)
+            t = (py - y) / h if h else 0.0
+        d = math.hypot(cx - px, cy - py)
+        if best is None or d < best[2] - 1e-9:
+            best = (side, t, d)
+    return best
+
+
+def wall_point(enc: dict, side: str, t: float) -> tuple[float, float]:
+    x, y, w, h = float(enc["x"]), float(enc["y"]), float(enc["w"]), float(enc["h"])
+    t = min(max(float(t), 0.0), 1.0)
+    return {"top": (x + t * w, y), "bottom": (x + t * w, y + h),
+            "left": (x, y + t * h), "right": (x + w, y + t * h)}[side]
+
+
+def seated_xy(enc: dict, wall: dict, node: dict) -> tuple[int, int]:
+    """Where a seated part's box sits: its centre on the wall point."""
+    w, h = size(node)
+    px, py = wall_point(enc, wall["side"], wall["t"])
+    return int(round(px - w / 2)), int(round(py - h / 2))
+
+
+def _enc(rig: dict, eid) -> dict | None:
+    return next((e for e in R.enclosures(rig) if e["id"] == eid), None)
+
+
+def seat_near(rig: dict, node: dict, x: float, y: float, keep: bool = False):
+    """Where a bulkhead goes when it is put at box position (x, y): seated on the nearest wall within reach
+    (WALL_SNAP to seat, WALL_PULL to stay seated when it already is), else free. Updates node["wall"]; returns
+    the box position to use. Parts that are not bulkheads are returned as they are."""
+    if not is_bulkhead(node):
+        return x, y
+    w, h = size(node)
+    cx, cy = x + w / 2, y + h / 2
+    cur = node.get("wall")
+    if keep and cur and _enc(rig, cur.get("enc")) is not None:
+        enc = _enc(rig, cur["enc"])
+        side, t, d = wall_project(enc, cx, cy)
+        if d <= WALL_PULL:
+            node["wall"] = {"enc": enc["id"], "side": side, "t": round(t, 4)}
+            return seated_xy(enc, node["wall"], node)
+    best = None
+    for enc in R.enclosures(rig):
+        side, t, d = wall_project(enc, cx, cy)
+        if d <= WALL_SNAP and (best is None or d < best[3]):
+            best = (enc, side, t, d)
+    if best is None:
+        node.pop("wall", None)
+        return x, y
+    enc, side, t, _ = best
+    node["wall"] = {"enc": enc["id"], "side": side, "t": round(t, 4)}
+    return seated_xy(enc, node["wall"], node)
+
+
+def reseat(rig: dict, eid=None) -> list[str]:
+    """Put every seated part (or those on one enclosure) back on its stored wall point, as after the enclosure
+    moved or was resized; a seat whose enclosure is gone is dropped. Returns the ids that moved."""
+    moved = []
+    for n in rig["nodes"]:
+        wall = n.get("wall")
+        if not wall or (eid is not None and wall.get("enc") != eid):
+            continue
+        enc = _enc(rig, wall.get("enc"))
+        if enc is None or wall.get("side") not in WALL_SIDES:
+            n.pop("wall", None)
+            continue
+        x, y = seated_xy(enc, wall, n)
+        if (n.get("x"), n.get("y")) != (x, y):
+            n["x"], n["y"] = x, y
+            moved.append(n["id"])
+    return moved
+
+
+def settle_walls(rig: dict) -> list[str]:
+    """After any edit: each seated part is projected back onto its enclosure's outline from where it now is
+    (a nudge slides it along the wall); one pushed further than WALL_PULL comes off. Returns the ids moved."""
+    moved = []
+    for n in rig["nodes"]:
+        if not n.get("wall"):
+            continue
+        x0, y0 = n.get("x", 0), n.get("y", 0)
+        enc = _enc(rig, n["wall"].get("enc"))
+        if enc is not None and n["wall"].get("side") in WALL_SIDES and seated_xy(enc, n["wall"], n) == (x0, y0):
+            continue                                # already in its seat: its stored place stands (no drift)
+        x, y = seat_near(rig, n, x0, y0, keep=True)
+        if not n.get("wall"):
+            continue
+        if (x, y) != (x0, y0):
+            n["x"], n["y"] = x, y
+            moved.append(n["id"])
+    return moved

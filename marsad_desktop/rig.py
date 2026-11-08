@@ -1233,6 +1233,12 @@ def rigs_for_display(chain_doc: dict, layout: dict, labels: dict | None = None) 
             if r.get(key):
                 rig[key] = r[key]
         now = rig_texts(name, rig, labels)
+        if not wrote and name not in chains and not any(n in chains for n in now):
+            # a draft (relay 014): named and kept as a drawing before it has written any chain; its chains
+            # reach chain.json on the first Save that has a path
+            out[name] = {"rig": rig, "chains": {}, "stale_drawing": False, "archived": bool(r.get("archived")),
+                         "history": list(r.get("history") or []), "draft": True}
+            continue
         ok = (bool(wrote) and set(wrote) == set(now)
               and all(n in chains and engine_chain.chain_text(chains[n]["parts"]) == wrote[n] == now[n]
                       for n in wrote))
@@ -1297,6 +1303,25 @@ def apply_rig(chain_doc: dict, layout: dict, rig_name: str, rig: dict, *, static
     if history:
         lay["rigs"][rig_name]["history"] = history
     return doc, lay
+
+
+def add_draft(layout: dict, rig_name: str, rig: dict, chain_doc: dict | None = None) -> dict:
+    """A new layout with a new rig kept as a draft (relay 014): its drawing, under its name, with no chains
+    written yet, so the name exists in the picker from the start. Refused, in words, when the name is taken
+    by a rig or a chain."""
+    name = (rig_name or "").strip()
+    if not name:
+        raise ValueError("give the rig a name")
+    if name in (layout.get("rigs") or {}) or name in ((chain_doc or {}).get("chains") or {}):
+        raise ValueError(f"there is already a rig or chain called “{name}”")
+    lay = copy.deepcopy(layout)
+    entry = {"nodes": copy.deepcopy(rig.get("nodes") or []), "wires": copy.deepcopy(rig.get("wires") or []),
+             "chains": {}}
+    for key in DRAWING_ONLY:
+        if rig.get(key):
+            entry[key] = copy.deepcopy(rig[key])
+    lay.setdefault("rigs", {})[name] = entry
+    return lay
 
 
 def version_of(saved: dict, when: str | None = None) -> dict:

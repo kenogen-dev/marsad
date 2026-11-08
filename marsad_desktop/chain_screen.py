@@ -960,6 +960,8 @@ class PartItem(QGraphicsObject):
             qp.setPen(QPen(edge, T.SELECTED_BORDER if (sel or target) else T.BORDER))
             qp.drawPath(body)
             self._paint_words(qp, shape, w, h, small, main, soft, own, widget)
+        if self.node.get("wall"):                          # relay 014: seated across an enclosure's wall
+            self._paint_mounted(qp, w, h)
         if R.is_locked(self.node):
             dpr = widget.devicePixelRatioF() if widget is not None else 2.0
             qp.drawPixmap(QPointF(w - 20, 6), kind_pixmap("lock", QColor(soft) if own else T.color("lock"), 14, dpr))
@@ -1010,6 +1012,26 @@ class PartItem(QGraphicsObject):
                 qp.drawEllipse(r - here, PORT_R - 1, PORT_R - 1)
         if sel and not R.is_locked(self.node) and self.screen.sel_count == 1:
             draw_handles(qp, w, h)            # resize from any corner or edge
+
+    def _paint_mounted(self, qp, w, h):
+        """A bulkhead seated on a wall: the wall line runs on through the part as a faint line, with a short
+        flange either side of the box, so it reads as mounted through the enclosure."""
+        side = (self.node.get("wall") or {}).get("side")
+        col = category_colour("enclosure") if self.screen.colour_on else T.color("line_strong")
+        faint, strong = QColor(col), QColor(col)
+        faint.setAlphaF(0.4)
+        strong.setAlphaF(0.9)
+        if side in ("top", "bottom"):
+            a, b, ends = QPointF(0, h / 2), QPointF(w, h / 2), ((QPointF(-9, h / 2), QPointF(0, h / 2)),
+                                                                (QPointF(w, h / 2), QPointF(w + 9, h / 2)))
+        else:
+            a, b, ends = QPointF(w / 2, 0), QPointF(w / 2, h), ((QPointF(w / 2, -9), QPointF(w / 2, 0)),
+                                                                (QPointF(w / 2, h), QPointF(w / 2, h + 9)))
+        qp.setPen(QPen(faint, 1.2, Qt.PenStyle.DashLine))
+        qp.drawLine(a, b)
+        qp.setPen(QPen(strong, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for p1, p2 in ends:
+            qp.drawLine(p1, p2)
 
     def _paint_words(self, qp, shape, w, h, small, main, soft, own, widget):
         p = self.node["part"]
@@ -1390,7 +1412,13 @@ class EnclosureItem(QGraphicsObject):
         self.prepareGeometryChange()
         self.enc["w"], self.enc["h"] = int(w), int(h)
         self.setPos(x1, y1)
+        self.enc["x"], self.enc["y"] = int(round(x1)), int(round(y1))
         self.update()
+        for nid in G.reseat(self.screen.rig, self.enc["id"]):        # relay 014: seated bulkheads stay on the wall
+            it = self.screen.box_item(nid)
+            n = R.box(self.screen.rig, nid)
+            if it is not None and n is not None:
+                it.setPos(n["x"], n["y"])
 
     def release_resize(self):
         before = self._resize[2]
@@ -3171,7 +3199,9 @@ class ChainScreen(QWidget):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon if label and text
                                else Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setToolTip(tip)
-        btn.clicked.connect(slot)
+        # relay 014: clicked(bool) must not reach the slot. It passed checked=False as new_rig's name, so a
+        # mouse click on New rig skipped the name prompt and returned at the empty name: nothing happened.
+        btn.clicked.connect(lambda *_: slot())
         btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)       # the arrow keys stay with the grid
         btn.setFixedHeight(T.TOOL_H)
         return btn
@@ -3543,7 +3573,7 @@ class ChainScreen(QWidget):
             a.triggered.connect(self.restore_rig)
         else:
             a = m.addAction(tool_icon("archive"), "Archive rig…")
-            why = self._why_not_archive()
+            why = self._why_not_archive(asks_first=True)
             a.setEnabled(why is None)
             a.setToolTip(why or "Move it to the Archived section of the rig list. Nothing is removed.")
             a.triggered.connect(self.archive_rig)
@@ -3559,13 +3589,15 @@ class ChainScreen(QWidget):
         if self._ask_unsaved() and name in self.display:
             self.open_rig(name)
 
-    def _why_not_archive(self) -> str | None:
+    def _why_not_archive(self, asks_first: bool = False) -> str | None:
+        """Why Archive is refused now; with asks_first, unsaved changes are not a reason (the menu offers it, and
+        archive_rig asks Save / Discard / Cancel first)."""
         d = self.display.get(self.rig_name or "")
         if not d:
             return "Open a rig first"
-        if not d.get("chains"):
+        if not d.get("chains") and not d.get("draft"):
             return "This rig has never been saved: there is nothing to archive"
-        if self.dirty:
+        if self.dirty and not asks_first:
             return "Save it or undo the changes first"
         if self.rig_is_used(d):
             return "This rig is the one runs record now: make another rig current (Use for runs) first"
@@ -3574,6 +3606,8 @@ class ChainScreen(QWidget):
     def archive_rig(self):
         """Archive, never delete (the owner's decision, 2026-11-06): the rig moves to the Archived
         section; its chains stay in chain.json exactly as they are; Restore brings it back."""
+        if self.dirty and not self._ask_unsaved():       # relay 014: the same question as everywhere else
+            return
         why = self._why_not_archive()
         if why:
             self.show_notice(f"Not archived: {why}.")
@@ -4520,6 +4554,7 @@ class ChainScreen(QWidget):
             node = R.new_node(self.rig, type_, x, y, self.labels)
         if not self.snap_on:
             node["x"], node["y"] = int(x), int(y)
+        node["x"], node["y"] = G.seat_near(self.rig, node, node["x"], node["y"])   # relay 014: onto a wall
         if type_ == "sdr" and self.receivers and not node["part"].get("rx"):
             used = {n["part"].get("rx") for n in self.rig["nodes"] if n is not node}
             node["part"]["rx"] = next((r for r in self.receivers if r not in used), self.receivers[0])
@@ -5215,6 +5250,14 @@ class ChainScreen(QWidget):
         d = self._drag
         if not d or d[0] is not item or self.animating:
             return v
+        if isinstance(item, PartItem) and G.is_bulkhead(item.node) and not d[2]:
+            # relay 014: a bulkhead dragged on its own seats across an enclosure wall within reach, slides
+            # along it (round the corners), and comes off with a firm drag away
+            x, y = G.seat_near(self.rig, item.node, v.x(), v.y(), keep=True)
+            if item.node.get("wall"):
+                self._show_guides([])
+                self._show_magnet(None)
+                return QPointF(x, y)
         w, h = item.wh()
         dx, dy, lines = G.guide_snap((v.x(), v.y(), w, h), d[3])
         pulled = self.magnet(item, QPointF(v.x() + dx, v.y() + dy))
@@ -5466,13 +5509,17 @@ class ChainScreen(QWidget):
         read-only: any edit is put back at once, with a word why (relay 007)."""
         if self.read_only and self._last is not None:
             self._restore(self._last)
-            self.show_notice("This rig is archived, so it is read-only. Restore it from the Rig menu to change it.")
+            self.show_notice("This view is read-only: nothing here changes the rig."
+                             if self.version_view else
+                             "This rig is archived, so it is read-only. Restore it from the Rig menu to change it.")
             return
         if self._last is not None and not (merge is not None and merge == self._merge and self.undo_stack):
             self.undo_stack.append(self._last)
             del self.undo_stack[:-UNDO_MAX]
         self._merge = merge
         self.redo_stack.clear()
+        if G.settle_walls(self.rig) and not redraw:          # relay 014: a seated bulkhead stays on its wall
+            redraw = True
         self._last = self._snapshot()
         self.dirty = self._saved is None or self._last != self._saved
         if redraw:
@@ -5889,7 +5936,21 @@ class ChainScreen(QWidget):
                                  | QMessageBox.StandardButton.Cancel)
         if b == QMessageBox.StandardButton.Save:
             return self.save()
-        return b == QMessageBox.StandardButton.Discard
+        if b == QMessageBox.StandardButton.Discard:
+            self.discard_changes()
+            return True
+        return False
+
+    def discard_changes(self):
+        """Discard (relay 014): drop the unsaved edits. A rig that has been saved goes back to its saved
+        drawing and stays in the list; the action that asked then carries on."""
+        name = self.rig_name
+        self.dirty = False
+        if name in self.display:
+            self.open_rig(name)
+        else:
+            self.rig_name, self.rig = None, R.new_rig()
+            self.redraw()
 
     def _picked(self, i: int):
         name = self.pick.itemData(i) or self.pick.itemText(i)
@@ -5905,22 +5966,32 @@ class ChainScreen(QWidget):
         return name in self.display or name in (self.summary.get("chains") or {})
 
     def new_rig(self, name: str | None = None, template: str | None = None):
-        """New rig: a name and a starting drawing - blank, or one of the templates (relay 007).
-        Nothing is saved until Save."""
+        """New rig (relay 014, the owner's flow): unsaved changes first (Save / Discard / Cancel), then a name and
+        a starting drawing - blank, or one of relay 007's templates. A taken name is refused in the prompt. The
+        rig is saved at once as a drawing (chain_layout.json), so it is in the picker from the start; its chains
+        reach chain.json on the first Save that has a path."""
         if not self._ask_unsaved():
-            return
+            return False
         if name is None:
             dlg = QDialog(self)
+            dlg.setObjectName("NewRigDialog")
             dlg.setWindowTitle("New rig")
             lay = QVBoxLayout(dlg)
             lay.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
             lay.setSpacing(T.SPACE)
-            lab = QLabel("Name of the new rig")
+            lab = QLabel("Name the new rig")
             lab.setProperty("muted", True)
             ed = QLineEdit()
+            ed.setObjectName("NewRigName")
             lay.addWidget(lab)
             lay.addWidget(ed)
-            lab2 = QLabel("Start from")
+            err = QLabel("")
+            err.setObjectName("NewRigError")
+            err.setStyleSheet(f"color: {T.C['alert']};")
+            err.setWordWrap(True)
+            err.hide()
+            lay.addWidget(err)
+            lab2 = QLabel("Start from (optional)")
             lab2.setProperty("muted", True)
             lay.addWidget(lab2)
             pick = QListWidget()
@@ -5934,34 +6005,48 @@ class ChainScreen(QWidget):
             lay.addWidget(pick)
             row = QHBoxLayout()
             ok, cancel = QPushButton("Make rig"), QPushButton("Cancel")
+            ok.setObjectName("MakeRig")
             ok.setDefault(True)
-            ok.clicked.connect(dlg.accept)
-            cancel.clicked.connect(dlg.reject)
+
+            def try_ok():
+                n = ed.text().strip()
+                why = ("Type a name for the rig." if not n else
+                       f"There is already a rig or chain called “{n}”: pick another name." if self._taken(n) else "")
+                err.setText(why)
+                err.setVisible(bool(why))
+                if not why:
+                    dlg.accept()
+            ok.clicked.connect(lambda *_: try_ok())
+            cancel.clicked.connect(lambda *_: dlg.reject())
             row.addStretch(1)
             row.addWidget(cancel)
             row.addWidget(ok)
             lay.addLayout(row)
+            self._new_rig_dlg = dlg
             if dlg.exec() != QDialog.DialogCode.Accepted:
-                return
+                return False
             name = ed.text()
             template = pick.currentItem().data(Qt.ItemDataRole.UserRole) if pick.currentItem() else "blank"
         name = (name or "").strip()
         if not name:
-            return
+            return False
         if self._taken(name):
-            self.show_notice(f"There is already a rig or chain called “{name}”.")
-            return
+            self.show_notice(f"Not made: there is already a rig or chain called “{name}”.")
+            return False
         rig = R.template(template or "blank", self.labels, self.receivers)
-        self.rig_name, self.rig, self.static_, self.renamed_from, self.read_only = name, rig, False, None, False
-        self.display[name] = {"rig": R.new_rig(), "chains": {}, "stale_drawing": False, "archived": False, "history": []}
-        self._show_in_pick(name)
-        self.dirty = True
-        self._reset_history(saved=False)
-        self.redraw()
-        QTimer.singleShot(0, self._center)
-        self.show_notice("A new rig" + ("" if (template or "blank") == "blank" else
+        try:
+            lay = R.add_draft(self.layout_doc, name, rig, self.chain_doc())
+            self.svc.save(self.chain_doc(), lay)
+        except (ValueError, ServiceError) as exc:
+            self.show_notice(f"Not made: {exc}")
+            return False
+        if not self.reload(keep=name) or self.rig_name != name:
+            return False
+        self.show_notice(("A new rig" + ("" if (template or "blank") == "blank" else
                                          f", from “{R.TEMPLATES[template]}”") +
-                         ". Drag parts onto the grid, wire them, then Save.")
+                          ". Draw the rig, then Save: runs can use it once it has a path to a radio."), soft=True)
+        self.status.emit(f"made “{name}”")
+        return True
 
     def rename_rig(self):
         if self.rig_name is None:
@@ -5972,6 +6057,19 @@ class ChainScreen(QWidget):
             return
         if self._taken(name):
             self.show_notice(f"There is already a rig or chain called “{name}”.")
+            return
+        if self.display.get(self.rig_name, {}).get("draft") and self.rig_name in (self.layout_doc.get("rigs") or {}):
+            if self.dirty and not self._ask_unsaved():
+                return
+            lay = copy.deepcopy(self.layout_doc)                       # a draft: rename its drawing (relay 014)
+            lay["rigs"][name] = lay["rigs"].pop(self.rig_name)
+            try:
+                self.svc.save(self.chain_doc(), lay)
+            except ServiceError as exc:
+                self.show_notice(f"Not renamed: {exc}")
+                return
+            self.reload(keep=name)
+            self.status.emit(f"renamed to “{name}”")
             return
         if not self.display.get(self.rig_name, {}).get("chains"):     # never saved: just a new name
             self.display[name] = self.display.pop(self.rig_name)

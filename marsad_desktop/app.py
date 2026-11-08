@@ -48,7 +48,9 @@ class Window(QMainWindow):
     def __init__(self, service: Service, start: str = "Live Scan"):
         super().__init__()
         self.svc = service
-        self.setWindowTitle("Marsad")
+        from marsad_desktop import practice
+        self.practice = practice.on()
+        self.setWindowTitle("Marsad — Practice station" if self.practice else "Marsad")
         self.resize(1440, 860)
         central = QWidget()
         root = QVBoxLayout(central)
@@ -111,6 +113,14 @@ class Window(QMainWindow):
         h.addWidget(self.conn)
         self.group.idClicked.connect(self.stack.setCurrentIndex)
         root.addWidget(top)
+        if self.practice:                 # relay 014: never mistaken for the real station
+            band = QLabel("Practice station · made-up radios and rigs · nothing here touches the real station")
+            band.setObjectName("PracticeBand")
+            band.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            band.setFixedHeight(20)
+            band.setStyleSheet(f"background: {T.rgba('anomaly', 0.18)}; color: {T.C['anomaly']}; "
+                               f"font-size: 8.5pt; border-bottom: 1px solid {T.rgba('anomaly', 0.45)};")
+            root.addWidget(band)
         root.addWidget(self.stack, 1)
         self.setCentralWidget(central)
         i = SCREENS.index(start) if start in SCREENS else SCREENS.index("Live Scan")

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLay
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from marsad_desktop import explain as X
+from marsad_desktop import practice
 from marsad_desktop import theme as T
 from marsad_desktop.service import Service
 
@@ -135,6 +136,9 @@ class RadioChip(QFrame):
                          f"<span style='color:{rc}; font-weight:400'>· {ROLE_WORD[role]}</span>")
         short = {"ready": "ready", "absent": "not plugged in", "blocked": "blocked", "unknown": "not known",
                  "surveying": "surveying", "recording": "recording", "disabled": "disabled"}[st]
+        simulated = practice.on() and st in ("absent", "unknown", "ready")
+        if simulated:                                  # relay 014: the practice station's made-up radios
+            short, colour = practice.SIMULATED, "muted"
         if st == "ready" and r["doing"].get("other_busy"):    # relay 012: free while the other radio works
             short = "ready, other radio busy"
         if not enabled and busy:
@@ -302,8 +306,11 @@ class RadioCard(QFrame):
         head.setTextFormat(Qt.TextFormat.RichText)
         self.v.addWidget(head)
         self.v.addWidget(_label(r["label"], muted=True))
+        doing = r["doing"]["text"]
+        if practice.on() and st in ("absent", "unknown", "ready"):
+            doing = practice.SIMULATED + ": a made-up radio on the practice station; nothing is plugged in"
         now = _label(f"<span style='color:{T.C[STATE_COLOUR.get(st, 'muted')]}; font-weight:600'>Now</span>&nbsp; "
-                     f"{r['doing']['text']}")
+                     f"{doing}")
         now.setTextFormat(Qt.TextFormat.RichText)
         self.v.addWidget(now)
         g = QGridLayout()
@@ -442,7 +449,8 @@ class RadiosDialog(QDialog):
     def show_status(self, d: dict):
         self.d = d
         self.checked.setText("checked " + time.strftime("%H:%M:%S", time.localtime(d.get("checked") or time.time())))
-        self.mode.setText(d["mode"]["text"])
+        self.mode.setText((("Practice station: the radios here are made up (simulated), so Windows never finds them "
+                            "plugged in. ") if practice.on() else "") + d["mode"]["text"])
         rs = d.get("radios") or []
         roles = d.get("roles") or {}
         for cb, key in ((self.sur, "surveyor"), (self.rec, "recorder")):
