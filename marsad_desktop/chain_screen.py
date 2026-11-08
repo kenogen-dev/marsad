@@ -55,7 +55,7 @@ DERIVED = ("text", "tail", "receiver", "source", "needs_confirm")
 # The palette's order, as the design lists it; types not named here follow.
 PALETTE_ORDER = ["antenna", "probe", "load", "adapter", "dcblock", "attenuator", "bulkhead_sma",
                  "coax", "filter", "lna", "jumper", R.SPLITTER, "sdr", "usb", "bulkhead_usb",
-                 "isolator", "pc", "custom"]
+                 "isolator", R.HUB, "pc", "custom"]
 LENGTH_TYPES = {"coax", "jumper", "usb"}
 # Colour coding: what each kind of part does. Custom parts stay neutral. Relay 006: each section
 # of the Parts list has a hue of its own (SMA parts were sharing the cables' blue before).
@@ -64,12 +64,15 @@ CATEGORY = {"antenna": "source", "probe": "source", "load": "source",
             "coax": "cable", "jumper": "cable",
             "filter": "condition", "lna": "condition",
             R.SPLITTER: "split", "sdr": "radio", R.ENCLOSURE: "enclosure",
-            "usb": "digital", "bulkhead_usb": "digital", "isolator": "digital", "pc": "digital"}
+            "usb": "digital", "bulkhead_usb": "digital", "isolator": "digital", "pc": "digital",
+            R.HUB: "digital"}
 CATEGORY_NAMES = [("source", "Sources"), ("sma", "SMA adapters, blocks, pads, bulkheads"),
                   ("condition", "Filters and amplifiers"), ("split", "Splitters"),
                   ("radio", "Radios"), ("digital", "USB parts and USB cables"),
                   ("enclosure", "Enclosures (drawing only)")]
 PORT_HIT = 11                  # px (scene), how near a connection point a press must be to start a wire
+BEND_HIT = 8                   # px (scene), how near a bend point or a wire's end handle a press must be (relay 015)
+WIRE_END_AT = 22               # px along a selected wire from each end, where its end handle sits (relay 015)
 PIPE_W = 22                    # px, an adapter's pipe
 MATE_TOL = 22                  # px (scene), how near two connection points must be dropped to mate
 MAGNET = 30                    # px (scene), how near a dragged part's point is pulled onto a matching point
@@ -105,10 +108,19 @@ SHORTCUTS = [
     ("Arranging", "Arrange menu", "Align left, centre, right, top, middle, bottom; distribute", "menu"),
     ("Parts", "Click a part", "Open its card: name, note, fields, colour, shape, text position", "mouse"),
     ("Parts", "Drag a part", "Move it (a drag opens nothing)", "mouse"),
+    ("Resizing", "Drag a handle", "Resize a selected part, enclosure or power source", "mouse"),
+    ("Resizing", "Shift + drag a handle", "Keep the proportions", "mouse"),
+    ("Resizing", "Alt + drag a handle", "Resize from the centre", "mouse"),
+    ("Resizing", "Shift+Alt + drag a handle", "Both: proportions kept, from the centre", "mouse"),
+    ("Resizing", "Ctrl + drag a handle", "Ignore the grid while held, for fine sizing", "mouse"),
     ("Parts", "Right-click a part", "The format and arrange menu: text position, shape, colour, stacking, align, "
                                     "lock, groups, copy and paste", "mouse"),
     ("Wiring", "Drag from a dot", "Wire it to the part you let go over (from an input dot too)", "mouse"),
     ("Wiring", "Drop an SMA part on a dot", "Mate it directly, port to port, with no wire", "mouse"),
+    ("Wiring", "Drag a selected wire's end handle", "Reconnect that end to another part", "mouse"),
+    ("Wiring", "Double-click a wire   ·   drag its middle", "Add a bend point (on the grid when snap is on)", "mouse"),
+    ("Wiring", "Drag a bend point", "Move it", "mouse"),
+    ("Wiring", "Click a bend point, then Delete", "Remove it (the wire's menu: Remove point, Straighten)", "mouse"),
     ("View", "Wheel", "Zoom round the pointer", "mouse"),
     ("View", "Shift + wheel", "Scroll up and down", "mouse"),
     ("View", "Space + drag   ·   middle-button drag", "Pan", "mouse"),
@@ -161,7 +173,17 @@ def route_path(r: tuple) -> QPainterPath:
 
 
 def wire_path(a: tuple, b: tuple, style: str, side_b: str | None = None) -> QPainterPath:
-    r = G.route(a, b, style, side_b)
+    return routed_path(G.route(a, b, style, side_b), a, b)
+
+
+def routed_path(r: tuple, a: tuple, b: tuple) -> QPainterPath:
+    """Any routed wire as a path: a curve, right angles or a straight line, or (relay 015) a smooth curve
+    through bend points."""
+    if r[0] == "spline":
+        path = QPainterPath(QPointF(*r[1][0][0]))
+        for _p0, c1, c2, p1 in r[1]:
+            path.cubicTo(QPointF(*c1), QPointF(*c2), QPointF(*p1))
+        return path
     if r[0] == "cubic":
         path = QPainterPath(QPointF(a[0], a[1]))
         path.cubicTo(QPointF(*r[1]), QPointF(*r[2]), QPointF(b[0], b[1]))
@@ -183,6 +205,17 @@ def category_colour(cat: str | None) -> QColor:
     if cat == "radio":
         return T.color("survey")
     return T.color("cat_" + cat) if cat else T.color("muted")
+
+
+RESIZE_HINT = "resizing: Shift keeps proportions · Alt from the centre · Shift+Alt both · Ctrl ignores the grid"
+
+
+def resize_keys(screen, mods) -> dict:
+    """Relay 015: what the held keys ask of a resize, as in drawing programs. Shift keeps the proportions,
+    Alt resizes about the centre, Ctrl ignores the grid while held."""
+    return {"keep_ratio": bool(mods & Qt.KeyboardModifier.ShiftModifier),
+            "from_centre": bool(mods & Qt.KeyboardModifier.AltModifier),
+            "snap": None if (mods & Qt.KeyboardModifier.ControlModifier) or not screen.snap_on else R.GRID}
 
 
 def not_yet_a_drag(item, ev) -> bool:
@@ -584,6 +617,9 @@ def kind_path(kind: str) -> QPainterPath:
         p.addEllipse(QRectF(1.5, 4.5, 6, 7)); p.addEllipse(QRectF(8.5, 4.5, 6, 7))
     elif kind == "pc":
         p.addRoundedRect(QRectF(1.5, 2, 13, 9), 1.5, 1.5); line((8, 11), (8, 14)); line((5, 14.5), (11, 14.5))
+    elif kind == R.HUB:                         # relay 015: one upstream, several downstream
+        p.addRoundedRect(QRectF(5, 5, 6, 6), 1.5, 1.5); line((11, 8), (15, 8))
+        line((5, 6.5), (1, 3)); line((5, 8), (1, 8)); line((5, 9.5), (1, 13))
     elif kind == R.ENCLOSURE:
         p.addRoundedRect(QRectF(1.5, 3, 13, 10), 3, 3); line((5, 3), (5, 1.5), (11, 1.5), (11, 3))
     elif kind == R.POWER or kind in R.POWER_KINDS:
@@ -695,6 +731,63 @@ def kind_pixmap(kind: str, colour: QColor, size: int = 16, dpr: float = 1.0) -> 
         qp.drawPath(kind_path(kind))
         qp.end()
         _ICON_CACHE[key] = pm
+    return pm
+
+
+TEMPLATE_PREVIEW = (260, 120)
+TEMPLATE_ROW = 40                # px, one row of the New rig template list
+
+
+def template_pixmap(key: str, labels: dict | None, receivers: list | None, dpr: float = 2.0) -> QPixmap:
+    """Relay 015: a small picture of a New rig template's shape, its parts as boxes in their kind colours and
+    its wires as lines; Blank shows an empty dashed grid."""
+    w, h = TEMPLATE_PREVIEW
+    pm = QPixmap(int(w * dpr), int(h * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(T.color("panel"))
+    qp = QPainter(pm)
+    qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rig = R.template(key, labels, receivers)
+    if not rig["nodes"]:
+        pen = QPen(T.color("line_strong"), 1.2, Qt.PenStyle.DashLine)
+        qp.setPen(pen)
+        qp.setBrush(Qt.BrushStyle.NoBrush)
+        qp.drawRoundedRect(QRectF(16, 16, w - 32, h - 32), 6, 6)
+        qp.setPen(T.color("muted"))
+        qp.setFont(T.ui_font(9))
+        qp.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "an empty grid")
+        qp.end()
+        return pm
+    rects = {n["id"]: (n["x"], n["y"], *G.size(n)) for n in rig["nodes"]}
+    x0 = min(r[0] for r in rects.values())
+    y0 = min(r[1] for r in rects.values())
+    x1 = max(r[0] + r[2] for r in rects.values())
+    y1 = max(r[1] + r[3] for r in rects.values())
+    pad = 10
+    k = min((w - 2 * pad) / max(x1 - x0, 1), (h - 2 * pad) / max(y1 - y0, 1))
+    ox, oy = (w - (x1 - x0) * k) / 2, (h - (y1 - y0) * k) / 2
+
+    def box(nid):
+        x, y, bw, bh = rects[nid]
+        return QRectF(ox + (x - x0) * k, oy + (y - y0) * k, bw * k, bh * k)
+    qp.setPen(QPen(T.color("wire"), 1.6))
+    for wre in rig["wires"]:
+        a, b = box(wre["from"]), box(wre["to"])
+        qp.drawLine(QPointF(a.right(), a.center().y()), QPointF(b.left(), b.center().y()))
+    qp.setFont(T.ui_font(7))
+    for n in rig["nodes"]:
+        r = box(n["id"])
+        colour = category_colour(CATEGORY.get(n["part"]["type"]))
+        fill = QColor(colour)
+        fill.setAlphaF(0.22)
+        qp.setPen(QPen(colour, 1.3))
+        qp.setBrush(fill)
+        qp.drawRoundedRect(r, 3, 3)
+        qp.setPen(T.color("text"))
+        label = (labels or R.PART_TYPES).get(n["part"]["type"], {}).get("label", n["part"]["type"])
+        qp.drawText(r.adjusted(2, 0, -2, 0), Qt.AlignmentFlag.AlignCenter,
+                    qp.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, int(r.width() - 4)))
+    qp.end()
     return pm
 
 
@@ -973,7 +1066,8 @@ class PartItem(QGraphicsObject):
             if nid != self.node["id"] or key in self.screen.mated_keys:
                 continue
             wf = self.screen.wiring_from
-            hot = key == self.hot_port or (wf == (nid, port) if kind_ == "out" else wf == ("in", nid))
+            hot = key == self.hot_port or (wf == (nid, port) if kind_ == "out"
+                                           else bool(wf) and wf[:2] == ("in", nid) and (wf + (0,))[2] == port)
             colour = T.color("survey") if hot else T.color("wire")
             r = PORT_R + 2 if key == self.hot_port else PORT_R
             c = QPointF(x, y) - here
@@ -1212,7 +1306,7 @@ class PartItem(QGraphicsObject):
                 if port[0] == "out":
                     self.screen.start_wire(self, port[1], ev.scenePos())
                 else:
-                    self.screen.start_wire_in(self, ev.scenePos())
+                    self.screen.start_wire_in(self, ev.scenePos(), port[1])
                 ev.accept()
                 return
             if self.on_power_input(ev.scenePos()):
@@ -1245,9 +1339,8 @@ class PartItem(QGraphicsObject):
         if self._resize is not None:
             grip, start, rect0 = self._resize
             d = ev.scenePos() - start
-            x, y, w, h = G.resize(rect0, grip, d.x(), d.y(),
-                                  keep_ratio=bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier),
-                                  snap=R.GRID if self.screen.snap_on else None)
+            x, y, w, h = G.resize(rect0, grip, d.x(), d.y(), **resize_keys(self.screen, ev.modifiers()))
+            self.screen.status.emit(RESIZE_HINT)
             if (x, y, w, h) != (self.node["x"], self.node["y"], *self.wh()):
                 self.prepareGeometryChange()
                 self.node["w"], self.node["h"] = w, h
@@ -1404,11 +1497,15 @@ class EnclosureItem(QGraphicsObject):
         self.setSelected(True)
         return True
 
-    def drag_to(self, scene_pt: QPointF, keep: bool = False):
+    def drag_to(self, scene_pt: QPointF, keep: bool = False, mods=None):
+        """Resize to a pointer place. `mods` (the held keys, relay 015) wins over `keep` when given."""
         c, start, rect0 = self._resize
         d = scene_pt - start
-        x1, y1, w, h = G.resize(rect0, c, d.x(), d.y(), keep_ratio=keep, snap=R.GRID if self.screen.snap_on else None,
+        keys = resize_keys(self.screen, mods) if mods is not None else {
+            "keep_ratio": keep, "from_centre": False, "snap": R.GRID if self.screen.snap_on else None}
+        x1, y1, w, h = G.resize(rect0, c, d.x(), d.y(), **keys,
                                 min_w=R.ENC_MIN_W, min_h=R.ENC_MIN_H, max_w=R.ENC_MAX, max_h=R.ENC_MAX)
+        self.screen.status.emit(RESIZE_HINT)
         self.prepareGeometryChange()
         self.enc["w"], self.enc["h"] = int(w), int(h)
         self.setPos(x1, y1)
@@ -1468,7 +1565,7 @@ class EnclosureItem(QGraphicsObject):
 
     def mouseMoveEvent(self, ev):
         if self._resize is not None:
-            self.drag_to(ev.scenePos(), bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            self.drag_to(ev.scenePos(), mods=ev.modifiers())
             return
         if not_yet_a_drag(self, ev):
             return
@@ -1499,7 +1596,11 @@ class EnclosureItem(QGraphicsObject):
 class WireItem(QGraphicsPathItem):
     """A wire between two connection points, drawn in the chosen style. The cables it
     carries (coax, jumper, USB) are named in a label at its middle. Past the radio a
-    wire is the USB side and is drawn dashed when that option is on."""
+    wire is the USB side and is drawn dashed when that option is on.
+
+    Relay 015: a wire can bend. Double-click it, or drag its middle, to make a bend point; drag a point
+    anywhere (on the grid when snap is on); click one and press Delete to remove it. A selected wire shows a
+    handle near each end: drag it to another part to reconnect that end. Bends live in chain_layout.json."""
 
     def __init__(self, screen: "ChainScreen", wire: dict):
         super().__init__()
@@ -1509,20 +1610,32 @@ class WireItem(QGraphicsPathItem):
         self.setZValue(1)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("A wire: click it to give it cables, drop a cable from the Cables list onto it, "
-                        "or right-click for more")
+                        "double-click or drag its middle to bend it, or right-click for more")
         self.color = T.color("wire")
         self.digital = False
         self.hover = False
         self.label_rect = QRectF()
         self.label_text = ""
+        self.route = None
+        self._drag = None            # ("point", i) | ("body", scene pt, screen pt) | ("end", "from"|"to")
         self.refresh()
 
     def cables(self) -> list:
         return self.wire.get("cables") or []
 
+    def points(self) -> list:
+        return self.wire.get("points") or []
+
     def ends(self):
         am = self.screen.anchor_map
-        return am.get((self.wire["from"], "out", self.wire["port"])), am.get((self.wire["to"], "in", 0))
+        return am.get((self.wire["from"], "out", self.wire["port"])), am.get((self.wire["to"], "in", self.in_key()))
+
+    def in_key(self) -> int:
+        """Which of its far part's inputs this wire uses (relay 015: a PC or hub has several)."""
+        return R.in_slot(self.wire) if R.multi_in(R.box(self.screen.rig, self.wire["to"])) else 0
+
+    def key(self) -> tuple:
+        return (self.wire["from"], self.wire["port"])
 
     def is_mated(self) -> bool:
         return R.mated(self.wire)
@@ -1535,6 +1648,12 @@ class WireItem(QGraphicsPathItem):
             return False
         ga, gb = R.port_gender(a, "out", self.wire["port"]), R.port_gender(b, "in")
         return bool(ga and ga == gb)
+
+    def sel_point(self) -> int | None:
+        sp = self.screen.sel_point
+        if sp and sp[:2] == self.key() and sp[2] < len(self.points()):
+            return sp[2]
+        return None
 
     def refresh(self):
         a, b = self.ends()
@@ -1550,7 +1669,8 @@ class WireItem(QGraphicsPathItem):
                             "it is the same as a wire with no cable. Click it, then Delete, to separate them."
                             + ("\nM to M or F to F: these won't screw together." if self.clash() else ""))
             return
-        self.setPath(wire_path(a, b, self.screen.wire_style))
+        self.route = G.route_via(a, b, self.points(), self.screen.wire_style, square=bool(self.wire.get("square")))
+        self.setPath(routed_path(self.route, a, b))
         hot = self.isSelected() or self.hover
         cab = self.cables()
         width = T.WIRE_HOT_W if hot else T.WIRE_W
@@ -1564,13 +1684,42 @@ class WireItem(QGraphicsPathItem):
             fm = QFontMetricsF(T.ui_font(8.5))
             w = min(fm.horizontalAdvance(self.label_text) + 18, 260)
             h = fm.height() + 6
-            mid = self.path().pointAtPercent(0.5)
+            mid = self.label_point()
             self.label_rect = QRectF(mid.x() - w / 2, mid.y() - h / 2, w, h)
         else:
             self.label_rect = QRectF()
 
     def label_point(self) -> QPointF:
-        return self.path().pointAtPercent(0.5)
+        """The middle of the wire, or with bends the middle of its longest stretch, never on a corner."""
+        spot = G.label_spot(self.route) if self.points() and self.route else None
+        return QPointF(*spot) if spot else self.path().pointAtPercent(0.5)
+
+    def end_handles(self) -> dict:
+        """Where the two end handles sit on a selected wire: a little way along it from each end, clear of
+        the parts' own dots (which start new wires)."""
+        if self.is_mated() or not self.isSelected():
+            return {}
+        path = self.path()
+        n = path.length()
+        if n < 3 * BEND_HIT:                       # a stub too short for two handles
+            return {}
+        at = min(WIRE_END_AT, n * 0.3)             # a short wire (parts close together) keeps its handles apart
+        return {"from": path.pointAtPercent(path.percentAtLength(at)),
+                "to": path.pointAtPercent(path.percentAtLength(n - at))}
+
+    def point_at(self, pt: QPointF) -> int | None:
+        best, best_d = None, BEND_HIT
+        for i, q in enumerate(self.points()):
+            d = QLineF(QPointF(q[0], q[1]), pt).length()
+            if d <= best_d:
+                best, best_d = i, d
+        return best
+
+    def end_at(self, pt: QPointF) -> str | None:
+        for which, q in self.end_handles().items():
+            if QLineF(q, pt).length() <= BEND_HIT:
+                return which
+        return None
 
     def joint_rect(self) -> QRectF:
         """The collar half way along the stub between two mated points."""
@@ -1582,11 +1731,21 @@ class WireItem(QGraphicsPathItem):
         w, h = (8, 20) if across else (20, 8)
         return QRectF(mx - w / 2, my - h / 2, w, h)
 
+    def _handle_rects(self) -> list:
+        out = [QRectF(q[0] - BEND_HIT, q[1] - BEND_HIT, 2 * BEND_HIT, 2 * BEND_HIT) for q in self.points()]
+        out += [QRectF(q.x() - BEND_HIT, q.y() - BEND_HIT, 2 * BEND_HIT, 2 * BEND_HIT)
+                for q in self.end_handles().values()]
+        return out
+
     def boundingRect(self):
         if self.is_mated():
             return self.joint_rect().adjusted(-6, -6, 6, 6)
         r = super().boundingRect()
-        return r.united(self.label_rect.adjusted(-2, -2, 2, 2)) if not self.label_rect.isNull() else r
+        if not self.label_rect.isNull():
+            r = r.united(self.label_rect.adjusted(-2, -2, 2, 2))
+        for h in self._handle_rects():
+            r = r.united(h)
+        return r
 
     def shape(self):
         if self.is_mated():
@@ -1596,8 +1755,11 @@ class WireItem(QGraphicsPathItem):
         st = QPainterPathStroker()
         st.setWidth(12)
         out = st.createStroke(self.path())
+        out.setFillRule(Qt.FillRule.WindingFill)
         if not self.label_rect.isNull():
             out.addRoundedRect(self.label_rect, 8, 8)
+        for h in self._handle_rects():
+            out.addEllipse(h)
         return out
 
     def paint(self, qp: QPainter, opt, widget=None):
@@ -1628,6 +1790,25 @@ class WireItem(QGraphicsPathItem):
             qp.drawText(self.label_rect.adjusted(9, 0, -9, 0), Qt.AlignmentFlag.AlignCenter,
                         qp.fontMetrics().elidedText(self.label_text, Qt.TextElideMode.ElideRight,
                                                     int(self.label_rect.width() - 18)))
+        # bend points: small squares, shown while the wire is hovered or selected (the picked one filled)
+        if self.points() and (self.hover or self.isSelected()):
+            sp = self.sel_point()
+            for i, q in enumerate(self.points()):
+                r = QRectF(q[0] - 4.5, q[1] - 4.5, 9, 9)
+                qp.setPen(QPen(T.color("survey") if self.isSelected() else T.color("text2"), 1.6))
+                qp.setBrush(T.color("survey") if i == sp else T.color("background"))
+                qp.drawRect(r)
+        # end handles: small diamonds near each end of a selected wire
+        for q in self.end_handles().values():
+            d = QPainterPath()
+            d.moveTo(q.x(), q.y() - 6)
+            d.lineTo(q.x() + 6, q.y())
+            d.lineTo(q.x(), q.y() + 6)
+            d.lineTo(q.x() - 6, q.y())
+            d.closeSubpath()
+            qp.setPen(QPen(T.color("background"), 1.5))
+            qp.setBrush(T.color("survey"))
+            qp.drawPath(d)
 
     def hoverEnterEvent(self, ev):
         self.hover = True
@@ -1635,7 +1816,98 @@ class WireItem(QGraphicsPathItem):
 
     def hoverLeaveEvent(self, ev):
         self.hover = False
+        self.unsetCursor()
         self.refresh()
+
+    def hoverMoveEvent(self, ev):
+        pt = ev.scenePos()
+        if self.end_at(pt):
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+            self.setToolTip("Drag this end to another part to reconnect it")
+        elif self.point_at(pt) is not None:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+            self.setToolTip("A bend point: drag it, or click it and press Delete to remove it")
+        else:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip("A wire: click it to give it cables, drop a cable from the Cables list onto it, "
+                            "double-click or drag its middle to bend it, or right-click for more")
+
+    def _select_only(self, mods):
+        if mods & Qt.KeyboardModifier.ControlModifier:            # Ctrl+click toggles, as on boxes
+            self.setSelected(not self.isSelected())
+            return
+        if not (mods & Qt.KeyboardModifier.ShiftModifier):
+            if not self.isSelected() or len(self.scene().selectedItems()) > 1:
+                self.scene().clearSelection()
+        self.setSelected(True)
+
+    def mousePressEvent(self, ev):
+        if ev.button() != Qt.MouseButton.LeftButton or self.is_mated() or self.screen.read_only:
+            super().mousePressEvent(ev)
+            return
+        pt = ev.scenePos()
+        which = self.end_at(pt)
+        if which:
+            self._drag = ("end", which)
+            self.screen.start_reconnect(self, which, pt)
+            ev.accept()
+            return
+        i = self.point_at(pt)
+        self._select_only(ev.modifiers())
+        if i is not None:
+            self.screen.sel_point = (*self.key(), i)
+            self._drag = ("point", i, False)
+            self.update()
+            ev.accept()
+            return
+        self.screen.sel_point = None
+        self._drag = ("body", pt, ev.screenPos())
+        ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        d = self._drag
+        if d is None:
+            return
+        pt = ev.scenePos()
+        if d[0] == "end":
+            self.screen.drag_reconnect(pt)
+            return
+        if d[0] == "body":
+            if (ev.screenPos() - d[2]).manhattanLength() < CLICK_TOL * 2:
+                return
+            i = self.screen.add_bend(self.wire, d[1], commit=False)      # dragging the middle makes a point
+            if i is None:
+                self._drag = None
+                return
+            self.screen.sel_point = (*self.key(), i)
+            d = self._drag = ("point", i, True)
+        if d[0] == "point":
+            x, y = self.screen.bend_place(pt)
+            pts = self.wire["points"]
+            if pts[d[1]] != [x, y]:
+                pts[d[1]] = [x, y]
+                self._drag = ("point", d[1], True)
+                self.refresh()
+                self.update()
+
+    def mouseReleaseEvent(self, ev):
+        d, self._drag = self._drag, None
+        if d is None or ev.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(ev)
+            return
+        if d[0] == "end":
+            self.screen.end_reconnect(ev.scenePos())
+        elif d[0] == "point" and d[2]:
+            self.screen.changed()
+        ev.accept()
+
+    def mouseDoubleClickEvent(self, ev):
+        if ev.button() != Qt.MouseButton.LeftButton or self.is_mated() or self.screen.read_only:
+            return
+        if self.point_at(ev.scenePos()) is not None or self.end_at(ev.scenePos()):
+            return
+        self.screen.add_bend(self.wire, ev.scenePos())
+        ev.accept()
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
@@ -1831,10 +2103,9 @@ class PowerItem(QGraphicsObject):
         if self._resize is not None:
             grip, start, rect0 = self._resize
             d = ev.scenePos() - start
-            x, y, w, h = G.resize(rect0, grip, d.x(), d.y(),
-                                  keep_ratio=bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier),
-                                  snap=R.GRID if self.screen.snap_on else None,
+            x, y, w, h = G.resize(rect0, grip, d.x(), d.y(), **resize_keys(self.screen, ev.modifiers()),
                                   min_w=G.POWER_MIN_W, min_h=G.POWER_MIN_H)
+            self.screen.status.emit(RESIZE_HINT)
             self.prepareGeometryChange()
             self.box["w"], self.box["h"] = w, h
             self.screen.animating = True
@@ -2106,6 +2377,7 @@ class ChainView(QGraphicsView):
         elif isinstance(top, (WireItem, PowerWireItem)):
             self.scene().clearSelection()
             top.setSelected(True)
+            self.screen.menu_point = pt
             self.screen.fill_wire_menu(m, top)
         else:
             self.screen.fill_grid_menu(m, pt)
@@ -3125,6 +3397,7 @@ class ChainScreen(QWidget):
         self.grid = dict(GRID_DEFAULTS)
         self.animating = False
         self.drop_target = None
+        self.menu_point = None         # where the last right-click on the grid was (relay 015, the wire menu)
         self.anchor_map: dict = {}
         self.undo_stack: list = []
         self.redo_stack: list = []
@@ -3133,6 +3406,8 @@ class ChainScreen(QWidget):
         self._merge = None
         self._load_prefs()
         self.wiring_from = None
+        self.sel_point = None          # relay 015: the picked bend point, (wire from, port, index)
+        self.reconnecting = None       # relay 015: a wire end being dragged, (wire from, port, "from"|"to")
         self.power_from = None         # a power source whose power wire is being dragged, or ("to", part id)
         self.temp_wire = None
         self.items_by_id: dict[str, PartItem] = {}
@@ -3981,6 +4256,24 @@ class ChainScreen(QWidget):
                 a = sub.addAction(dot_icon(cable_colour(t)), self.labels[t]["label"])
                 a.triggered.connect(lambda _=False, t=t, w=item.wire: self._add_cable_to(w, t))
             m.addMenu(sub)
+            # relay 015: bend points
+            m.addSeparator()
+            pt = self.menu_point or item.label_point()
+            near = item.point_at(pt)
+            a = m.addAction("Add bend point here")
+            a.setToolTip("A point the wire passes through; drag it anywhere on the grid")
+            a.triggered.connect(lambda _=False, w=item.wire, p=QPointF(pt): self.add_bend(w, p))
+            a = m.addAction("Remove point\tDelete")
+            a.setEnabled(near is not None or item.sel_point() is not None)
+            a.triggered.connect(lambda _=False, w=item.wire, i=near: self.remove_bend(w, i))
+            a = m.addAction("Straighten (remove all points)")
+            a.setEnabled(bool(item.points()))
+            a.triggered.connect(lambda _=False, w=item.wire: self.straighten(w))
+            a = m.addAction("Right angles")
+            a.setCheckable(True)
+            a.setChecked(bool(item.wire.get("square")))
+            a.setToolTip("Square corners between this wire's points, whatever the wire style")
+            a.triggered.connect(lambda on, w=item.wire: self.set_square(w, on))
 
     def _add_cable_to(self, wire: dict, type_: str):
         key = (wire["from"], wire["port"])
@@ -4280,6 +4573,9 @@ class ChainScreen(QWidget):
             return "Radio" + (f" · {role}" if role else "") + (f" · {p['rx']}" if p.get("rx") else "")
         if p["type"] == R.SPLITTER:
             return f"Splitter · {R.out_ports(node)} outputs"
+        if R.multi_in(node):
+            n_in = len(R.used_inputs(self.rig, node["id"]))
+            return f"{label} · {n_in} inputs" if n_in > 1 else label
         return label
 
     # -- drawing
@@ -4403,7 +4699,8 @@ class ChainScreen(QWidget):
         out = set()
         for w in self.rig["wires"]:
             if R.mated(w):
-                out |= {(w["from"], "out", w["port"]), (w["to"], "in", 0)}
+                out |= {(w["from"], "out", w["port"]),
+                        (w["to"], "in", R.in_slot(w) if R.multi_in(R.box(self.rig, w["to"])) else 0)}
         return out
 
     def _refresh_wires(self):
@@ -4589,10 +4886,11 @@ class ChainScreen(QWidget):
         item.update()
         self.drag_wire(pt)
 
-    def start_wire_in(self, item: PartItem, pt: QPointF):
+    def start_wire_in(self, item: PartItem, pt: QPointF, slot: int = 0):
         """A wire dragged from an input dot (relay 006: every dot starts a wire). Let go over
-        another part and that part's first free output feeds this input."""
-        self.wiring_from = ("in", item.node["id"])
+        another part and that part's first free output feeds this input. On a PC or hub (relay 015)
+        `slot` says which of its inputs: only the wire on that one is replaced."""
+        self.wiring_from = ("in", item.node["id"], slot)
         self._temp_wire()
         item.update()
         self.drag_wire(pt)
@@ -4633,7 +4931,7 @@ class ChainScreen(QWidget):
             self.scene.removeItem(self.temp_wire)
             self.temp_wire = None
         if wf[0] == "in":
-            return self._end_wire_in(wf[1], pt)
+            return self._end_wire_in(wf[1], pt, wf[2] if len(wf) > 2 else 0)
         src, port = wf
         target = next((i for i in self.scene.items(pt) if isinstance(i, PartItem)), None)
         if target is None or target.node["id"] == src:
@@ -4653,7 +4951,7 @@ class ChainScreen(QWidget):
         self.show_notice(None)
         self.changed()
 
-    def _end_wire_in(self, dst: str, pt: QPointF):
+    def _end_wire_in(self, dst: str, pt: QPointF, slot: int = 0):
         target = next((i for i in self.scene.items(pt) if isinstance(i, PartItem)), None)
         if target is None or target.node["id"] == dst:
             self.items_by_id[dst].update()
@@ -4664,18 +4962,156 @@ class ChainScreen(QWidget):
                              "Take one of its wires out first, or drag from its output dot instead.")
             self.items_by_id[dst].update()
             return
-        old = [w for w in self.rig["wires"] if w["to"] == dst]
-        self.rig["wires"] = [w for w in self.rig["wires"] if w["to"] != dst]   # dragging from a wired input re-wires it
+        many = R.multi_in(self.items_by_id[dst].node)
+        mine = (lambda w: w["to"] == dst and R.in_slot(w) == slot) if many else (lambda w: w["to"] == dst)
+        old = [w for w in self.rig["wires"] if mine(w)]
+        self.rig["wires"] = [w for w in self.rig["wires"] if not mine(w)]   # dragging from a wired input re-wires it
         why = R.connect(self.rig, target.node["id"], free[0], dst)
         if why:
             self.rig["wires"] += old
             self.show_notice(f"Not wired: {why}.")
             self.items_by_id[dst].update()
             return
+        new = R.wire_of(self.rig, target.node["id"], free[0])
+        if many:
+            new["in"] = slot
         if old and old[0].get("cables"):
-            R.wire_of(self.rig, target.node["id"], free[0])["cables"] = old[0]["cables"]
+            new["cables"] = old[0]["cables"]
         self.show_notice(None)
         self.changed()
+
+    # -- bend points and moving a wire's end (relay 015)
+    def bend_place(self, pt: QPointF) -> tuple[int, int]:
+        """Where a bend point goes for a pointer place: on the grid when snap is on."""
+        if self.snap_on:
+            return R.snap(pt.x()), R.snap(pt.y())
+        return int(round(pt.x())), int(round(pt.y()))
+
+    def add_bend(self, wire: dict, pt: QPointF, commit: bool = True) -> int | None:
+        """Make a bend point on a wire at pt, in the stretch of the wire it is nearest. Returns its index.
+        commit=False leaves the undo step to the drag that follows (WireItem)."""
+        if self.read_only or R.mated(wire):
+            return None
+        it = self.wire_item(wire["from"], wire["port"])
+        a, b = it.ends() if it else (None, None)
+        if a is None or b is None:
+            return None
+        x, y = self.bend_place(pt)
+        pts = wire.setdefault("points", [])
+        i = G.insert_index(a, b, pts, x, y)
+        pts.insert(i, [x, y])
+        self.sel_point = (wire["from"], wire["port"], i)
+        if commit:
+            self.changed()
+            self.select_wire(wire["from"], wire["port"])
+        else:
+            it.refresh()
+            it.update()
+        self.status.emit("bend point made: drag it anywhere, or click it and press Delete to remove it")
+        return i
+
+    def remove_bend(self, wire: dict, i: int | None = None) -> bool:
+        """Take a bend point off a wire (the picked one when i is None)."""
+        pts = wire.get("points") or []
+        if i is None:
+            sp = self.sel_point
+            i = sp[2] if sp and sp[:2] == (wire["from"], wire["port"]) else None
+        if i is None or not 0 <= i < len(pts):
+            return False
+        del pts[i]
+        if not pts:
+            wire.pop("points", None)
+        self.sel_point = None
+        self.changed()
+        self.select_wire(wire["from"], wire["port"])
+        return True
+
+    def straighten(self, wire: dict) -> bool:
+        """Take every bend point off a wire."""
+        if not wire.get("points"):
+            return False
+        wire.pop("points", None)
+        self.sel_point = None
+        self.changed()
+        self.select_wire(wire["from"], wire["port"])
+        return True
+
+    def set_square(self, wire: dict, on: bool):
+        """Right angles between this wire's points, whatever the drawing's wire style."""
+        if on:
+            wire["square"] = True
+        else:
+            wire.pop("square", None)
+        self.changed()
+        self.select_wire(wire["from"], wire["port"])
+
+    def start_reconnect(self, item: "WireItem", which: str, pt: QPointF):
+        self.reconnecting = (item.wire["from"], item.wire["port"], which)
+        self._temp_wire()
+        self.drag_reconnect(pt)
+
+    def _reconnect_target(self, pt: QPointF):
+        return next((i for i in self.scene.items(pt) if isinstance(i, PartItem)), None)
+
+    def _reconnect_why(self, target) -> str | None:
+        """Would this end go onto `target`? Tried on a copy of the rig, so nothing changes."""
+        src, port, which = self.reconnecting
+        trial = copy.deepcopy(self.rig)
+        return R.reconnect(trial, src, port, which, target.node["id"])
+
+    def drag_reconnect(self, pt: QPointF):
+        if self.reconnecting is None or self.temp_wire is None:
+            return
+        src, port, which = self.reconnecting
+        it = self.wire_item(src, port)
+        a, b = it.ends() if it else (None, None)
+        fixed = b if which == "from" else a
+        if fixed is None:
+            return
+        target = self._reconnect_target(pt)
+        why = self._reconnect_why(target) if target is not None else None
+        end = (pt.x(), pt.y())
+        path = QPainterPath(QPointF(fixed[0], fixed[1]))
+        path.lineTo(QPointF(*end))
+        self.temp_wire.setPath(path)
+        new = target.node["id"] if target is not None and why is None else None
+        if target is not None and why:
+            self.show_notice(f"Can't connect here: {why}.", soft=True)
+        elif target is not None:
+            self.show_notice(None)
+        if new != self.drop_target:
+            old, self.drop_target = self.drop_target, new
+            for i in (old, new):
+                if i in self.items_by_id:
+                    self.items_by_id[i].update()
+
+    def end_reconnect(self, pt: QPointF) -> bool:
+        rc, self.reconnecting = self.reconnecting, None
+        old_target, self.drop_target = self.drop_target, None
+        if self.temp_wire is not None:
+            self.scene.removeItem(self.temp_wire)
+            self.temp_wire = None
+        if old_target in self.items_by_id:
+            self.items_by_id[old_target].update()
+        if rc is None:
+            return False
+        target = self._reconnect_target(pt)
+        if target is None:
+            self.status.emit("let go over a part to reconnect the wire's end there")
+            return False
+        src, port, which = rc
+        why = R.reconnect(self.rig, src, port, which, target.node["id"])
+        if why:
+            self.show_notice(f"Not reconnected: {why}.")
+            return False
+        self.show_notice(None)
+        self.sel_point = None
+        self.changed()
+        w = next((w for w in self.rig["wires"] if (w["from"], w["port"]) == (src, port)
+                  or (which == "from" and w["from"] == target.node["id"])), None)
+        if w is not None:
+            self.select_wire(w["from"], w["port"])
+        return True
 
     # -- power wires
     def start_power_wire(self, item: "PowerItem", pt: QPointF):
@@ -5303,7 +5739,12 @@ class ChainScreen(QWidget):
                     it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
                 except RuntimeError:
                     pass
-        return bool(d and d[0] is lead and lead.pos() != d[1])
+        moved = bool(d and d[0] is lead and lead.pos() != d[1])
+        if moved:                     # relay 015: wires whose two ends moved together keep their bends
+            step = lead.pos() - d[1]
+            ids = [self.box_id(lead)] + [self.box_id(it) for it in d[2]]
+            G.carry_points(self.rig, ids, step.x(), step.y())
+        return moved
 
     # -- selecting, nudging, the clipboard, lock, align (relay 005)
     def shift_toggle(self, item):
@@ -5330,6 +5771,10 @@ class ChainScreen(QWidget):
             self.nudge(dx * n, dy * n)
             return True
         if k in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            sel = self.scene.selectedItems()
+            if self.sel_point and len(sel) == 1 and isinstance(sel[0], WireItem) and sel[0].sel_point() is not None:
+                self.remove_bend(sel[0].wire)               # relay 015: Delete on a picked bend point removes it
+                return True
             self.take_out_selected()
             return True
         if k == Qt.Key.Key_Escape:
@@ -5591,12 +6036,16 @@ class ChainScreen(QWidget):
             a.setEasingCurve(QEasingCurve.Type.OutCubic)
             group.addAnimation(a)
 
+        before = {n["id"]: (n["x"], n["y"]) for n in self.rig["nodes"]}
+
         def done():
             for nid, (x, y) in moves.items():      # exact grid places, whatever the last frame was
                 b = R.box(self.rig, nid)
                 b["x"], b["y"] = x, y
             for ei, (x, y, w, h) in boxes.items():
                 ei.enc.update(x=x, y=y, w=w, h=h)
+            G.bends_after_move(self.rig, before)    # relay 015: bends that no longer fit come off (Undo keeps them)
+            G.reseat(self.rig)
             self.animating = False
             self.view.setInteractive(True)
             self.changed()
@@ -5999,10 +6448,39 @@ class ChainScreen(QWidget):
             for key, label in R.TEMPLATES.items():
                 it = QListWidgetItem(label)
                 it.setData(Qt.ItemDataRole.UserRole, key)
+                it.setSizeHint(QSize(0, TEMPLATE_ROW))     # room for the theme's padded row box
                 pick.addItem(it)
+            pick.setFixedHeight(len(R.TEMPLATES) * TEMPLATE_ROW + 8)
+            pick.setFixedWidth(250)
+            # relay 015: the choice shows plainly - the picked start highlighted, a small preview of its shape
+            # and one line saying what it gives. Blank is picked to begin with.
+            prev = QLabel()
+            prev.setObjectName("TemplatePreview")
+            prev.setFixedSize(*TEMPLATE_PREVIEW)
+            prev.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            note = QLabel("")
+            note.setObjectName("TemplateNote")
+            note.setProperty("muted", True)
+            note.setWordWrap(True)
+            side = QVBoxLayout()
+            side.addWidget(prev)
+            side.addWidget(note)
+            side.addStretch(1)
+            both = QHBoxLayout()
+            both.addWidget(pick)
+            both.addLayout(side, 1)
+            lay.addLayout(both)
+
+            def show_pick(*_):
+                it = pick.currentItem()
+                key = it.data(Qt.ItemDataRole.UserRole) if it else "blank"
+                prev.setPixmap(template_pixmap(key, self.labels, self.receivers,
+                                               dpr=dlg.devicePixelRatioF() if dlg.isVisible() else 2.0))
+                note.setText(R.TEMPLATE_NOTES.get(key, ""))
+            pick.currentRowChanged.connect(show_pick)
             pick.setCurrentRow(0)
-            pick.setFixedHeight(4 * 36)
-            lay.addWidget(pick)
+            pick.item(0).setSelected(True)
+            show_pick()
             row = QHBoxLayout()
             ok, cancel = QPushButton("Make rig"), QPushButton("Cancel")
             ok.setObjectName("MakeRig")

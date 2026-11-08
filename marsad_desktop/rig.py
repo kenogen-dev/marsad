@@ -35,8 +35,15 @@ ROW_STEP = 180                 # spacing of an automatic straight row
 
 # The palette: today's part types, plus the splitter, which exists only in drawings.
 SPLITTER = "splitter"
+# Relay 015: a USB hub, also drawing-only as a type. In a path it is written as a custom part named
+# "USB hub", as the splitter is, because the old app rejects part types it does not know.
+HUB = "usb_hub"
 PART_TYPES = {**copy.deepcopy(engine_chain.PART_TYPES),
-              SPLITTER: {"group": "RF", "label": "Splitter", "fields": ["ports"]}}
+              SPLITTER: {"group": "RF", "label": "Splitter", "fields": ["ports"]},
+              HUB: {"group": "USB", "label": "USB hub", "fields": []}}
+# Relay 015: end devices that take several inputs - both radios plug into one PC, several radios into one hub.
+# A free input appears whenever all are used. Every other part has one input.
+MULTI_IN_TYPES = ("pc", HUB)
 FIELDS = ("length", "db", "rx")    # the extra fields chain.json keeps per part
 # Cables are drawn on the wire between two parts, not as parts. In the recorded text a
 # wire's cables are written, in order, between the two parts it joins, exactly where a
@@ -81,6 +88,7 @@ def labels_from(part_types: dict | None) -> dict:
     """The service's palette (station's chain_labels applied) plus the splitter."""
     out = copy.deepcopy(part_types or engine_chain.PART_TYPES)
     out.setdefault(SPLITTER, PART_TYPES[SPLITTER])
+    out.setdefault(HUB, PART_TYPES[HUB])
     return out
 
 
@@ -120,6 +128,30 @@ def _free_id(prefix: str, taken) -> str:
 
 def snap(v: float, grid: int = GRID) -> int:
     return int(round(float(v) / grid) * grid)
+
+
+def multi_in(node: dict | None) -> bool:
+    """Relay 015: a part that takes several inputs (the PC, a USB hub)."""
+    return bool(node) and node["part"]["type"] in MULTI_IN_TYPES
+
+
+def in_slot(w: dict) -> int:
+    """Which input of its far part a wire uses: always 0 on a one-input part."""
+    v = w.get("in", 0)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
+def used_inputs(rig: dict, nid: str) -> list[int]:
+    return sorted(in_slot(w) for w in rig["wires"] if w["to"] == nid)
+
+
+def free_input(rig: dict, nid: str) -> int:
+    """The input a new wire into this part would take: the lowest one not in use."""
+    used = set(used_inputs(rig, nid))
+    k = 0
+    while k in used:
+        k += 1
+    return k
 
 
 def out_ports(node: dict) -> int:
@@ -243,6 +275,11 @@ def antenna_lines(node: dict) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------- templates (relay 007)
 TEMPLATES = {"blank": "Blank", "one_radio": "Antenna to one radio",
              "lna_radio": "Antenna, LNA, one radio", "two_radios": "Antenna, splitter, two radios"}
+# Relay 015: one line under the preview in New rig, saying what each start gives.
+TEMPLATE_NOTES = {"blank": "An empty grid: draw the rig from the Parts list.",
+                  "one_radio": "Antenna, coax, one radio and the PC, wired in a row.",
+                  "lna_radio": "Antenna, LNA, coax, one radio and the PC, wired in a row.",
+                  "two_radios": "Antenna into a splitter feeding two radios: the start of a two-radio rig."}
 
 
 def template(key: str, labels: dict | None = None, receivers: list | None = None) -> dict:
@@ -388,14 +425,70 @@ def connect(rig: dict, src: str, port: int, dst: str) -> str | None:
         return "that output does not exist"
     if engine_chain.PART_TYPES.get(nodes[dst]["part"]["type"], {}).get("source"):
         return f"{nodes[dst]['part']['name']} is a source: nothing feeds it"
+    many = multi_in(nodes[dst])
     for w in rig["wires"]:
         if w["from"] == src and w["port"] == port:
             return "that output is already wired"
-        if w["to"] == dst:
+        if w["to"] == dst and not many:
             return f"{nodes[dst]['part']['name']} already has an input"
+        if w["to"] == dst and w["from"] == src:
+            return f"{nodes[src]['part']['name']} is already wired into {nodes[dst]['part']['name']}"
     if _reaches(rig, dst, src):
         return "that wire would make a loop"
-    rig["wires"].append({"from": src, "port": port, "to": dst})
+    w = {"from": src, "port": port, "to": dst}
+    if many:                               # relay 015: which of the PC's (or hub's) inputs it takes; drawing only
+        w["in"] = free_input(rig, dst)
+    rig["wires"].append(w)
+    return None
+
+
+WIRE_KEEP = ("cables", "points", "square")      # what a wire carries when one of its ends is moved (relay 015)
+
+
+def free_outputs(rig: dict, nid: str) -> list[int]:
+    node = next((n for n in rig["nodes"] if n["id"] == nid), None)
+    if node is None:
+        return []
+    used = {w["port"] for w in rig["wires"] if w["from"] == nid}
+    return [i for i in range(out_ports(node)) if i not in used]
+
+
+def reconnect(rig: dict, src: str, port: int, end: str, part: str, part_port: int | None = None) -> str | None:
+    """Relay 015: move one end of a placed wire to another part. end="to" moves the far end onto `part`'s input
+    (a free one on a PC or hub); end="from" moves the near end onto one of `part`'s outputs (`part_port` if it is
+    free, else its first free output). The wire keeps its cables, bend points and right-angle choice, and its
+    place in the list. Returns why not (and changes nothing), or None when done."""
+    w = wire_of(rig, src, port)
+    if w is None:
+        return "that wire is not in the rig"
+    if mated(w):
+        return "a direct mating has no wire ends: separate the parts first"
+    if (end == "to" and part == w["to"]) or (end == "from" and part == src and part_port in (None, port)):
+        return None                                   # put back where it was
+    k = rig["wires"].index(w)
+    rig["wires"].remove(w)
+    if end == "to":
+        why, new_from, new_port, dst = None, src, port, part
+    else:
+        free = free_outputs(rig, part)
+        if part == src:
+            free = sorted(set(free) | {port})
+        new_port = part_port if part_port in free else (free[0] if free else None)
+        nodes = {n["id"]: n for n in rig["nodes"]}
+        name = (nodes.get(part) or {}).get("part", {}).get("name") or "that part"
+        why = None if new_port is not None else f"{name} has no free output"
+        new_from, dst = part, w["to"]
+    why = why or connect(rig, new_from, new_port, dst)
+    if why:
+        rig["wires"].insert(k, w)
+        return why
+    new = rig["wires"].pop()
+    if end == "from" and "in" in w and "in" in new:  # the far end stays on the same input of a PC or hub
+        new["in"] = w["in"]
+    for key in WIRE_KEEP:
+        if key in w:
+            new[key] = w[key]
+    rig["wires"].insert(k, new)
     return None
 
 
@@ -467,6 +560,9 @@ def path_parts(rig: dict, path, labels: dict | None = None) -> list[dict]:
             port_label = str(ports[port]).strip() if port is not None and port < len(ports) else ""
             q = {"type": "custom", "name": str(p.get("name") or "").strip(),
                  "detail": port_label or str(p.get("detail") or "").strip()}
+        elif p["type"] == HUB:              # relay 015: written as a custom part, like the splitter
+            q = {"type": "custom", "name": str(p.get("name") or "").strip() or PART_TYPES[HUB]["label"],
+                 "detail": str(p.get("detail") or "").strip()}
         else:
             q = {"type": p["type"], "name": str(p.get("name") or "").strip(),
                  "detail": str(p.get("detail") or "").strip()}
@@ -1164,6 +1260,21 @@ def check_layout(data) -> dict:
                 _check_number(c.get("gain_db"), f"rig {name!r} has a cable whose loss is not a number")
             if "mated" in w and (not isinstance(w["mated"], bool) or (w["mated"] and w.get("cables"))):
                 raise ValueError(f"rig {name!r} has a direct mating that is not yes or no, or carries a cable")
+            if "in" in w and (isinstance(w["in"], bool) or not isinstance(w["in"], int) or w["in"] < 0):
+                raise ValueError(f"rig {name!r} has a wire into an input that does not exist")
+            pts = w.get("points")
+            if pts is not None and (not isinstance(pts, list) or any(
+                    not isinstance(q, list) or len(q) != 2
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in q) for q in pts)):
+                raise ValueError(f"rig {name!r} has a wire with bend points that are not places on the grid")
+            if "square" in w and not isinstance(w["square"], bool):
+                raise ValueError(f"rig {name!r} has a wire whose right-angle choice is not yes or no")
+        into: dict = {}
+        for w in r["wires"]:
+            key = (w["to"], w.get("in", 0))
+            if key in into:
+                raise ValueError(f"rig {name!r} has two wires into the same input")
+            into[key] = True
         boxes = list(ids) + [e["id"] for e in encs] + list(pids)
         if len(set(boxes)) != len(boxes):
             raise ValueError(f"rig {name!r} has two boxes with the same id")

@@ -286,6 +286,7 @@ def stylesheet() -> str:
     QListWidget::item {{ background: {C['panel']}; border: 1px solid {C['lines']}; border-radius: {r6}px;
                    padding: 6px 10px; margin: 2px 0; }}
     QListWidget::item:hover {{ background: {C['raised']}; }}
+    #Templates::item:selected {{ background: {C['raised2']}; border: 1px solid {C['survey']}; color: {C['text']}; }}
     QCheckBox {{ background: transparent; spacing: 8px; }}
     #Card {{ background: {rgba('raised', FLOAT_ALPHA)}; border: 1px solid {C['line_strong']}; border-radius: {RADIUS}px; }}
     #Card QLabel, #Card QCheckBox {{ background: transparent; }}

@@ -150,10 +150,12 @@ HANDLES = ("tl", "t", "tr", "r", "br", "b", "bl", "l")
 
 
 def resize(rect: tuple, handle: str, dx: float, dy: float, *, keep_ratio: bool = False, snap: int | None = None,
-           min_w: float = MIN_W, min_h: float = MIN_H, max_w: float = MAX_W, max_h: float = MAX_H) -> tuple:
+           min_w: float = MIN_W, min_h: float = MIN_H, max_w: float = MAX_W, max_h: float = MAX_H,
+           from_centre: bool = False) -> tuple:
     """A box (x, y, w, h) dragged by one of its eight handles by (dx, dy). The opposite edge stays
-    put; edges snap to the grid when `snap` is given; with keep_ratio (Shift) the box keeps its
-    proportions. Sizes are held between the limits."""
+    put; edges snap to the grid when `snap` is given (Ctrl held: None, fine sizing); with keep_ratio
+    (Shift) the box keeps its proportions; with from_centre (Alt, relay 015) the opposite edge moves
+    the other way, so the box grows or shrinks about its centre. Sizes are held between the limits."""
     x, y, w, h = rect
     x1, y1, x2, y2 = x, y, x + w, y + h
     if "l" in handle:
@@ -167,6 +169,15 @@ def resize(rect: tuple, handle: str, dx: float, dy: float, *, keep_ratio: bool =
     if snap:
         x1, x2 = (R.snap(x1, snap) if "l" in handle else x1), (R.snap(x2, snap) if "r" in handle else x2)
         y1, y2 = (R.snap(y1, snap) if "t" in handle else y1), (R.snap(y2, snap) if "b" in handle else y2)
+    if from_centre:                             # the opposite edge mirrors the dragged one
+        if "l" in handle:
+            x2 = x + w + (x - x1)
+        if "r" in handle:
+            x1 = x - (x2 - (x + w))
+        if "t" in handle:
+            y2 = y + h + (y - y1)
+        if "b" in handle:
+            y1 = y - (y2 - (y + h))
     nw, nh = x2 - x1, y2 - y1
     if keep_ratio and w and h:
         ratio = w / h
@@ -190,6 +201,8 @@ def resize(rect: tuple, handle: str, dx: float, dy: float, *, keep_ratio: bool =
         nx = x + (w - nw) / 2
     if handle in ("l", "r") and keep_ratio:
         ny = y + (h - nh) / 2
+    if from_centre:                             # held about the centre, whatever the limits did
+        nx, ny = x + (w - nw) / 2, y + (h - nh) / 2
     return (round(nx), round(ny), round(nw), round(nh))
 
 
@@ -228,6 +241,7 @@ def anchors(rig: dict) -> dict:
 
     wired_in, wired_out = set(), set()
     for w in rig["wires"]:
+        k_in = R.in_slot(w) if R.multi_in(nodes.get(w["to"])) else 0
         a, b = nodes.get(w["from"]), nodes.get(w["to"])
         if a is None or b is None:
             continue
@@ -238,7 +252,7 @@ def anchors(rig: dict) -> dict:
         if fixed.get(b["id"]) and not fixed.get(a["id"]):
             sa = OPPOSITE[sb]
         put(a["id"], sa, (a["id"], "out", w["port"]), b)
-        put(b["id"], sb, (b["id"], "in", 0), a)
+        put(b["id"], sb, (b["id"], "in", k_in), a)
         wired_out.add((a["id"], w["port"]))
         wired_in.add(b["id"])
     for nid, n in nodes.items():
@@ -247,6 +261,9 @@ def anchors(rig: dict) -> dict:
                 put(nid, side_of(n, "out", p, "right"), (nid, "out", p), None)
         if nid not in wired_in and not is_source(n):
             put(nid, side_of(n, "in", 0, "left"), (nid, "in", 0), None)
+        elif R.multi_in(n):                  # relay 015: a free input always waits on a PC or hub
+            k = R.free_input(rig, nid)
+            put(nid, "left", (nid, "in", k), None)
     out = {}
     for (nid, side), items in on_side.items():
         items.sort(key=lambda t: (t[0], t[1][1] == "out", t[1][2]))
@@ -385,6 +402,127 @@ def route(a: tuple, b: tuple, style: str = "curved", side_b: str | None = None) 
     return "poly", out
 
 
+# ---------------------------------------------------------------- bend points (relay 015)
+def _square_through(seq: list, sa: str | None, sb: str | None) -> list:
+    """Right angles through a list of points: each step goes across then up or down (or the other way, by
+    which is longer). The first step leaves square to its part's edge and the last arrives square."""
+    off = 20
+    a, b = seq[0], seq[-1]
+    out = [a]
+    cur = a
+    if sa:
+        cur = (a[0] + NORMAL[sa][0] * off, a[1] + NORMAL[sa][1] * off)
+        out.append(cur)
+    goals = list(seq[1:-1])
+    end = (b[0] + NORMAL[sb][0] * off, b[1] + NORMAL[sb][1] * off) if sb else b
+    goals.append(end)
+    across = sa in ("left", "right") if sa else True
+    for k, q in enumerate(goals):
+        if k:
+            across = abs(q[0] - cur[0]) >= abs(q[1] - cur[1])
+        out += [(q[0], cur[1]) if across else (cur[0], q[1]), q]
+        cur = q
+    if sb:
+        out.append(b)
+    clean = [out[0]]
+    for p in out[1:]:
+        if p != clean[-1]:
+            clean.append(p)
+    return clean
+
+
+def route_via(a: tuple, b: tuple, points=None, style: str = "curved", side_b: str | None = None,
+              square: bool = False) -> tuple:
+    """A wire through its bend points (relay 015). With none, exactly route(). With points: ("poly", pts) for
+    straight and right-angled wires, or ("spline", [(p0, c1, c2, p1), ...]) for curved ones, a smooth curve
+    through every point. `square` asks for right angles on this one wire whatever the style."""
+    sb = side_b or (b[2] if len(b) > 2 else None)
+    pts = [(float(q[0]), float(q[1])) for q in (points or [])]
+    if not pts:
+        return route(a, b, "angled" if square else style, sb)
+    seq = [(float(a[0]), float(a[1]))] + pts + [(float(b[0]), float(b[1]))]
+    sa = a[2] if len(a) > 2 else None
+    if square or style == "angled":
+        return "poly", _square_through(seq, sa, sb)
+    if style == "straight":
+        return "poly", seq
+
+    def tangent(i):                     # Catmull-Rom, the ends along their sides' normals
+        if i == 0 and sa:
+            d = math.dist(seq[0], seq[1])
+            return (NORMAL[sa][0] * d, NORMAL[sa][1] * d)
+        if i == len(seq) - 1 and sb:
+            d = math.dist(seq[-1], seq[-2])
+            return (-NORMAL[sb][0] * d, -NORMAL[sb][1] * d)
+        p, q = seq[max(i - 1, 0)], seq[min(i + 1, len(seq) - 1)]
+        return ((q[0] - p[0]) / 2, (q[1] - p[1]) / 2)
+
+    segs = []
+    for i in range(len(seq) - 1):
+        p0, p1 = seq[i], seq[i + 1]
+        t0, t1 = tangent(i), tangent(i + 1)
+        segs.append((p0, (p0[0] + t0[0] / 3, p0[1] + t0[1] / 3), (p1[0] - t1[0] / 3, p1[1] - t1[1] / 3), p1))
+    return "spline", segs
+
+
+def _seg_dist(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L = dx * dx + dy * dy
+    t = 0.0 if not L else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
+    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
+
+
+def insert_index(a: tuple, b: tuple, points, x: float, y: float) -> int:
+    """Where a new bend point at (x, y) goes in a wire's list: in the stretch of the wire it is nearest,
+    judged on the straight line through the existing points."""
+    seq = [(a[0], a[1])] + [tuple(q) for q in (points or [])] + [(b[0], b[1])]
+    return min(range(len(seq) - 1), key=lambda i: _seg_dist((x, y), seq[i], seq[i + 1]))
+
+
+def carry_points(rig: dict, ids, dx: float, dy: float) -> int:
+    """Bend points of every wire whose two ends both moved by (dx, dy) move with them, so a moved group keeps
+    its wires' shapes. Returns how many wires were carried."""
+    ids = set(ids)
+    k = 0
+    for w in rig["wires"]:
+        if w.get("points") and w["from"] in ids and w["to"] in ids:
+            w["points"] = [[int(round(q[0] + dx)), int(round(q[1] + dy))] for q in w["points"]]
+            k += 1
+    return k
+
+
+def bends_after_move(rig: dict, before: dict) -> None:
+    """After many boxes moved at once (Tidy): a wire whose two ends moved by the same step keeps its bends,
+    moved with them; any other wire's bends no longer fit the drawing and are taken off (Undo puts them
+    back). `before` is {part id: (x, y)} from before the move."""
+    nodes = {n["id"]: n for n in rig["nodes"]}
+    for w in rig["wires"]:
+        if not w.get("points") or w["from"] not in nodes or w["to"] not in nodes:
+            continue
+        a, b = nodes[w["from"]], nodes[w["to"]]
+        da = (a["x"] - before.get(a["id"], (a["x"], a["y"]))[0], a["y"] - before.get(a["id"], (a["x"], a["y"]))[1])
+        db = (b["x"] - before.get(b["id"], (b["x"], b["y"]))[0], b["y"] - before.get(b["id"], (b["x"], b["y"]))[1])
+        if da == db:
+            w["points"] = [[q[0] + da[0], q[1] + da[1]] for q in w["points"]]
+        else:
+            w.pop("points", None)
+
+
+def label_spot(r: tuple) -> tuple[float, float] | None:
+    """Where a cable label sits on a routed wire with bends: the middle of its longest straight stretch
+    (poly), or the middle of its longest curve segment (spline), so it never sits on a corner."""
+    if r[0] == "poly" and len(r[1]) > 2:
+        p = r[1]
+        i = max(range(len(p) - 1), key=lambda k: math.dist(p[k], p[k + 1]))
+        return ((p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2)
+    if r[0] == "spline":
+        segs = r[1]
+        s = max(segs, key=lambda q: math.dist(q[0], q[3]))
+        p0, c1, c2, p1 = s                     # the cubic's own middle (t = 0.5)
+        return ((p0[0] + 3 * c1[0] + 3 * c2[0] + p1[0]) / 8, (p0[1] + 3 * c1[1] + 3 * c2[1] + p1[1]) / 8)
+    return None
+
+
 # ---------------------------------------------------------------- enclosures
 ENC_PAD, ENC_HEAD = 20, 36             # room around the parts, and for the box's name
 
@@ -434,10 +572,15 @@ def _overlap(a: tuple, b: tuple, gap: float = 0) -> bool:
             and a[1] < b[1] + b[3] + gap and b[1] < a[1] + a[3] + gap)
 
 
-def rigid_sets(rig: dict) -> list[dict]:
-    """Pieces that keep their shape through Tidy: each group, and each set of parts mated
-    port to port (relay 006), merged where they share a box. [{"members": [...]}]"""
+def blocks(rig: dict) -> list[list[str]]:
+    """Relay 015: the pieces Tidy keeps in one piece, each a list of box ids: every group, every set of parts
+    mated port to port, and every enclosure with what it owns (owners()), merged where they share a box. An
+    enclosure's block never takes another enclosure's parts, so two enclosures stay two blocks unless a group
+    or a mating joins them."""
+    own = owners(rig)
     sets = [set(g["members"]) for g in R.groups(rig)]
+    for e in R.enclosures(rig):
+        sets.append({e["id"]} | {b for b, eid in own.items() if eid == e["id"]})
     seen = set()
     for n in rig["nodes"]:
         if n["id"] in seen:
@@ -453,88 +596,89 @@ def rigid_sets(rig: dict) -> list[dict]:
             merged.remove(m)
         merged.append(s)
     order = {b["id"]: k for k, b in enumerate(R._boxes(rig))}
-    return [{"members": sorted(m, key=lambda b: order.get(b, 0))} for m in merged]
+    out = [sorted(m, key=lambda b: order.get(b, 0)) for m in merged if len(m) > 1 or R.kind_of(rig, next(iter(m))) == "enclosure"]
+    out.sort(key=lambda m: order.get(m[0], 0))
+    return out
 
 
 def tidy_all(rig: dict, grid: int = R.GRID) -> tuple[dict, dict]:
-    """Tidy, keeping each group in one piece: ({node id: (x, y)}, {enclosure id: (x, y, w, h)}).
+    """Tidy, keeping each block in one piece: ({box id: (x, y)}, {enclosure id: (x, y, w, h)}).
 
-    A group moves as a rigid whole, by the step its first tidied part takes, so its
-    members keep their places relative to one another (an enclosure in the group moves
-    with it, unresized). A locked box stays where it is. Every other part goes where
-    tidy() puts it, and is then moved down out of the way of any rigid group or locked
-    box it would overlap (relay 005: a rigid group never overlaps a tidied part). An
-    enclosure outside any group is re-drawn round the parts that were in it."""
+    Relay 015: each group, each mated piece and each enclosure with what it owns is one rigid block. A block
+    moves by the step its first tidied part takes (an enclosure with nothing in it stays where it is), and
+    keeps its shape; a block with a locked box in it stays where it is, as does a locked box. Blocks are then
+    laid out so none overlaps another (one in the way is moved down), and every other part goes where tidy()
+    puts it and is moved down out of the way of the blocks (relay 005). Nothing ends up overlapping."""
     pos = tidy(rig, grid)
-    rigid = rigid_sets(rig)
-    now = {n["id"]: (n["x"], n["y"]) for n in rig["nodes"]}
+    now = {b["id"]: (b["x"], b["y"]) for b in R._boxes(rig)}
     nodes = {n["id"]: n for n in rig["nodes"]}
     encs = {e["id"]: e for e in R.enclosures(rig)}
     locked = {b["id"] for b in R._boxes(rig) if R.is_locked(b)}
-    rects, grouped = {}, set()
-    for g in rigid:
-        lead = next((m for m in g["members"] if m in pos and m in now and m not in locked), None)
-        if lead is None:
+    gap = GAP_Y / 2 - 1
+
+    def box_rect(bid, dx=0, dy=0):
+        r = rect(rig, bid)
+        return (r[0] + dx, r[1] + dy, r[2], r[3])
+
+    def union(rs):
+        x0, y0 = min(r[0] for r in rs), min(r[1] for r in rs)
+        return (x0, y0, max(r[0] + r[2] for r in rs) - x0, max(r[1] + r[3] for r in rs) - y0)
+
+    out, rects, grouped = {}, {}, set()
+    fixed, todo = [], []
+    for blk in blocks(rig):
+        grouped |= set(blk)
+        if any(m in locked for m in blk):
+            fixed.append(union([box_rect(m) for m in blk]))     # a locked box holds its whole block
+            continue
+        lead = next((m for m in blk if m in pos and m in nodes), None)
+        if lead is None:                                         # an empty enclosure keeps its place
+            fixed.append(union([box_rect(m) for m in blk]))
             continue
         dx, dy = pos[lead][0] - now[lead][0], pos[lead][1] - now[lead][1]
-        for m in g["members"]:
-            grouped.add(m)
-            if m in locked:
-                continue
-            if m in now:
-                pos[m] = (now[m][0] + dx, now[m][1] + dy)
-            elif m in encs:
+        todo.append((blk, dx, dy, union([box_rect(m, dx, dy) for m in blk])))
+    for nid in locked - grouped:
+        fixed.append(box_rect(nid))
+    todo.sort(key=lambda t: (t[3][1], t[3][0]))
+    placed = list(fixed)
+    for blk, dx, dy, r in todo:
+        x, y, w, h = r
+        for _ in range(len(placed) + 1):
+            hit = next((f for f in placed if _overlap((x, y, w, h), f, gap)), None)
+            if hit is None:
+                break
+            y = R.snap(hit[1] + hit[3] + GAP_Y, grid)
+        dy += y - r[1]
+        placed.append((x, y, w, h))
+        for m in blk:
+            if m in encs:
                 e = encs[m]
-                rects[m] = (e["x"] + dx, e["y"] + dy, e["w"], e["h"])
-    for nid in locked & set(now):
-        pos[nid] = now[nid]
-    # Rigid pieces (each group, each locked part) are fixed; tidied parts make way for them.
-    fixed = []
-    for g in rigid:
-        r = None
-        for m in g["members"]:
-            if m in nodes:
-                x, y = pos[m]
-                w, h = size(nodes[m])
-                box = (x, y, w, h)
-            elif m in rects:
-                box = rects[m]
+                rects[m] = (int(e["x"] + dx), int(e["y"] + dy), e["w"], e["h"])
             else:
-                continue
-            r = box if r is None else (min(r[0], box[0]), min(r[1], box[1]),
-                                       max(r[0] + r[2], box[0] + box[2]) - min(r[0], box[0]),
-                                       max(r[1] + r[3], box[1] + box[3]) - min(r[1], box[1]))
-        if r is not None:
-            fixed.append(r)
+                out[m] = (int(now[m][0] + dx), int(now[m][1] + dy))
     for nid in locked & set(now):
-        if nid not in grouped:
-            fixed.append((*now[nid], *size(nodes[nid])))
+        if nid not in encs:
+            out[nid] = now[nid]
     free = sorted((nid for nid in pos if nid not in grouped and nid not in locked),
                   key=lambda nid: (pos[nid][1], pos[nid][0]))
     for nid in free:
         w, h = size(nodes[nid])
         x, y = pos[nid]
-        for _ in range(len(fixed) + len(free) + 1):
-            hit = next((f for f in fixed if _overlap((x, y, w, h), f, GAP_Y / 2 - 1)), None)
+        for _ in range(len(placed) + 1):
+            hit = next((f for f in placed if _overlap((x, y, w, h), f, gap)), None)
             if hit is None:
                 break
             y = R.snap(hit[1] + hit[3] + GAP_Y, grid)
-        pos[nid] = (x, y)
-        fixed.append((x, y, w, h))
-    # A power source keeps its place beside the first part it feeds (or with its group).
+        out[nid] = (x, y)
+        placed.append((x, y, w, h))
+    # A power source in no block keeps its place beside the first part it feeds.
     for p in R.power_boxes(rig):
-        if p["id"] in locked:
+        if p["id"] in locked or p["id"] in grouped:
             continue
-        g = R.group_of(rig, p["id"])
-        lead = next((m for m in (g or {}).get("members", []) if m in now and m not in locked), None)
-        if lead is None:
-            lead = next((w["to"] for w in R.power_wires(rig) if w["from"] == p["id"]), None)
-        if lead is not None and lead in pos:
-            pos[p["id"]] = (p["x"] + pos[lead][0] - now[lead][0], p["y"] + pos[lead][1] - now[lead][1])
-    for eid, rect in tidy_enclosures(rig, pos).items():
-        if eid not in grouped and eid not in locked:
-            rects[eid] = rect
-    return pos, rects
+        lead = next((w["to"] for w in R.power_wires(rig) if w["from"] == p["id"]), None)
+        if lead is not None and lead in out:
+            out[p["id"]] = (p["x"] + out[lead][0] - now[lead][0], p["y"] + out[lead][1] - now[lead][1])
+    return out, rects
 
 
 # ---------------------------------------------------------------- power wires (relay 005)
@@ -595,9 +739,9 @@ def moving_with(rig: dict, ids) -> set:
     out = set(ids)
     for e in R.enclosures(rig):
         if e["id"] in ids and not R.is_locked(e):
-            # relay 014: a bulkhead seated on this enclosure's wall always comes along, centre inside or not
-            seated = [n["id"] for n in rig["nodes"] if (n.get("wall") or {}).get("enc") == e["id"]]
-            for bid in list(inside_any(rig, e)) + [s for s in seated if s not in inside_any(rig, e)]:
+            # relay 014: a bulkhead seated on this enclosure's wall always comes along (owners() says so);
+            # relay 015: only what this enclosure owns, never another enclosure's parts
+            for bid in inside_any(rig, e):
                 out.add(bid)
                 g = R.group_of(rig, bid)
                 if g:
@@ -616,14 +760,48 @@ def moving_with(rig: dict, ids) -> set:
     return {b for b in out if not R.is_locked(R.box(rig, b))}
 
 
-def inside_any(rig: dict, enc: dict) -> list[str]:
-    """Parts and power sources whose centre sits inside an enclosure."""
-    out = list(inside(rig, enc))
-    for p in R.power_boxes(rig):
-        cx, cy = p["x"] + power_size(p)[0] / 2, p["y"] + power_size(p)[1] / 2
-        if enc["x"] <= cx <= enc["x"] + enc["w"] and enc["y"] <= cy <= enc["y"] + enc["h"]:
-            out.append(p["id"])
+def _holds(enc: dict, cx: float, cy: float) -> bool:
+    return enc["x"] <= cx <= enc["x"] + enc["w"] and enc["y"] <= cy <= enc["y"] + enc["h"]
+
+
+def owners(rig: dict) -> dict:
+    """Relay 015: which enclosure each part and power source belongs to, {box id: enclosure id}. A box
+    belongs to at most one: a bulkhead seated on a wall to that enclosure; otherwise, of the enclosures
+    holding its centre, one in the same group as the box first (so two grouped enclosures that Tidy once
+    overlapped keep their own parts), then the smallest, then the last drawn. An enclosure never owns
+    another enclosure or what another one owns."""
+    encs = R.enclosures(rig)
+    if not encs:
+        return {}
+    gid = {}
+    for g in R.groups(rig):
+        for m in g["members"]:
+            gid[m] = g["id"]
+    order = {e["id"]: k for k, e in enumerate(encs)}
+    out = {}
+    boxes = [(n["id"], n["x"] + size(n)[0] / 2, n["y"] + size(n)[1] / 2, n) for n in rig["nodes"]]
+    boxes += [(p["id"], p["x"] + power_size(p)[0] / 2, p["y"] + power_size(p)[1] / 2, p) for p in R.power_boxes(rig)]
+    for bid, cx, cy, b in boxes:
+        seat = (b.get("wall") or {}).get("enc")
+        if seat is not None and seat in order:
+            out[bid] = seat
+            continue
+        cands = [e for e in encs if _holds(e, cx, cy)]
+        if not cands:
+            continue
+        mine = gid.get(bid)
+        cands.sort(key=lambda e: (not (mine is not None and gid.get(e["id"]) == mine),
+                                  e["w"] * e["h"], -order[e["id"]]))
+        out[bid] = cands[0]["id"]
     return out
+
+
+def inside_any(rig: dict, enc: dict) -> list[str]:
+    """Parts and power sources that belong to an enclosure (owners(): the smallest one holding the centre,
+    relay 015), seated bulkheads included."""
+    own = owners(rig)
+    return [bid for bid in [n["id"] for n in rig["nodes"]] + [p["id"] for p in R.power_boxes(rig)]
+            if own.get(bid) == enc["id"]]
 
 
 def shift(rig: dict, ids, dx: float, dy: float) -> bool:
@@ -631,10 +809,12 @@ def shift(rig: dict, ids, dx: float, dy: float) -> bool:
     if not dx and not dy:
         return False
     hit = False
-    for bid in moving_with(rig, ids):
+    moved = moving_with(rig, ids)
+    for bid in moved:
         b = R.box(rig, bid)
         b["x"], b["y"] = int(round(b["x"] + dx)), int(round(b["y"] + dy))
         hit = True
+    carry_points(rig, moved, dx, dy)                # relay 015: a moved group keeps its wires' bends
     return hit
 
 
