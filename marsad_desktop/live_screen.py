@@ -68,6 +68,10 @@ COLOUR_MAPS = {
 
 
 # ---------------------------------------------------------------- the poller
+class _Blank(Exception):
+    """The poller's way out of a cycle while Live Scan is blank (relay 018)."""
+
+
 class Poller(QObject):
     """Asks the service from its own thread and hands each answer to the window as a signal, so a
     slow answer (opening a big finished survey) never freezes zooming or the recorder panel."""
@@ -78,6 +82,7 @@ class Poller(QObject):
         super().__init__()
         self.svc = svc
         self.view_file: str | None = None       # None: follow the newest recording
+        self.blank = False                       # relay 018: nothing open; progress is still asked, no sweeps fetched
         self.have = 0                            # sweeps the window holds for the current file
         self.file_seen: str | None = None
         self.running = False
@@ -101,9 +106,10 @@ class Poller(QObject):
     def poke(self):
         self._wake.set()
 
-    def reset(self, view_file: str | None):
+    def reset(self, view_file: str | None, blank: bool = False):
         with self.lock:
             self.view_file = view_file
+            self.blank = blank
             self.have = 0
             self.file_seen = None
             self.int_for = None
@@ -119,8 +125,11 @@ class Poller(QObject):
                     self.got.emit("config", self.svc.config())
                     cfg_sent = True
                 with self.lock:
-                    vf = self.view_file
+                    vf, blank = self.view_file, self.blank
                 p = self.svc.progress(vf)
+                if blank:                                # relay 018: only "is something running?" while blank
+                    self.got.emit("blank", p)
+                    raise _Blank
                 self.got.emit("progress", (vf, p))      # labelled with the view it was asked for
                 f = p.get("file")
                 with self.lock:
@@ -151,6 +160,8 @@ class Poller(QObject):
                         self.got.emit("internal", (want_int, self.svc.internal(want_int)))
                     except ServiceError as exc:
                         self.got.emit("internal", (want_int, {"found": False, "reason": f"could not ask the service: {exc}"}))
+            except _Blank:
+                pass
             except ServiceError as exc:
                 self.failed.emit("progress", str(exc))
             if t - last_rec >= 1.0:
@@ -606,8 +617,13 @@ class LiveScreen(QWidget):
         self.opening = False                       # a finished survey is being read
         self.recwatch = L.RecorderWatch()
         self.rec_views: list = []
+        # relay 018: opens with no scan loaded. MARSAD_LIVE_FOLLOW=1 opens following the newest recording, as before
+        # (for the older window checks, which were written for that).
+        self.blank = os.environ.get("MARSAD_LIVE_FOLLOW") != "1"
+        self.blank_prog: dict = {}
         self._build()
         self.poller = Poller(svc)
+        self.poller.blank = self.blank
         self.poller.got.connect(self._got)
         self.poller.failed.connect(self._failed)
         self.clock = QTimer(self)
@@ -716,6 +732,26 @@ class LiveScreen(QWidget):
         self.fp.setToolTip("The comparability fingerprint: two runs compare only if theirs match")
         rows.addWidget(self.fp)
         root.addWidget(bar)
+        # relay 018: a run in progress is never hidden by the blank start
+        self.banner = QFrame()
+        self.banner.setObjectName("Banner")
+        bl = QHBoxLayout(self.banner)
+        bl.setContentsMargins(T.SPACE * 2, T.SPACE - 2, T.SPACE * 2, T.SPACE - 2)
+        bl.setSpacing(T.SPACE)
+        self.banner_dot = QLabel("●")
+        self.banner_text = QLabel()
+        self.banner_text.setObjectName("BannerText")
+        self.banner_text.setWordWrap(True)
+        self.banner_show = QToolButton()
+        self.banner_show.setObjectName("Primary")
+        self.banner_show.setText("Show it")
+        self.banner_show.setToolTip("Follow the scan being written now")
+        self.banner_show.clicked.connect(lambda *_: self.open_survey(None))
+        bl.addWidget(self.banner_dot)
+        bl.addWidget(self.banner_text, 1)
+        bl.addWidget(self.banner_show)
+        self.banner.hide()
+        root.addWidget(self.banner)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setHandleWidth(6)
@@ -840,7 +876,18 @@ class LiveScreen(QWidget):
         split.setStretchFactor(0, 1)
         split.setSizes([1100, 340])
         root.addWidget(split, 1)
+        # relay 018: the quiet centre message while no scan is open
+        self.blank_msg = QLabel("No scan open.\nStart a scan, or open a finished one (File > Open a finished survey).",
+                                self.glw)
+        self.blank_msg.setObjectName("BlankMessage")
+        self.blank_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.blank_msg.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.blank_msg.setStyleSheet(f"QLabel#BlankMessage {{ color: {T.C['muted']}; background: {T.C['panel']};"
+                                     f" border: 1px dashed {T.C['line_strong']}; border-radius: {T.RADIUS}px;"
+                                     f" padding: {T.SPACE * 2}px {T.SPACE * 3}px; font-size: 10.5pt; }}")
+        self.glw.installEventFilter(self)
         self._show_mode()
+        self._show_blank()
 
     def _waterfall_controls(self) -> QWidget:
         """Under the waterfall, as on the page: sweep height, the three layers with the signal
@@ -1008,12 +1055,87 @@ class LiveScreen(QWidget):
             self.follow_lbl.setStyleSheet(f"color: {T.C['alert']};")
             self.status.emit(f"Live Scan: {msg}")
 
+    # -- relay 018: the blank start
+    def _show_blank(self):
+        """No scan loaded: empty spectrum and waterfall, no title, a quiet centre message. The radio cards and the
+        recorder panel go on showing their state; the banner names anything running."""
+        on = self.blank
+        self.blank_msg.setVisible(on)
+        self.facts.setVisible(not on)                # no empty rows in the header while blank
+        self.fp.setVisible(not on)
+        if on:
+            self._place_blank()
+            self.tag.setText("")
+            self.facts.setText("")
+            self.fp.setText("")
+            self.engine_lbl.setText("")
+            self.engine_lbl.setStyleSheet("")
+            self.btn_rig.hide()
+            self.follow_lbl.setText("◻ No scan open")
+            self.follow_lbl.setStyleSheet(f"color: {T.C['muted']};")
+            self.btn_follow.setVisible(True)
+            self.btn_follow.setText("Follow live")
+            self.btn_stop.setEnabled(False)
+            self.btn_stop.setToolTip("No scan is open here. A running scan shows in the banner; Show it, then Stop")
+        self._update_banner()
+
+    def _place_blank(self):
+        m = self.blank_msg
+        m.adjustSize()
+        m.move(max(8, (self.glw.width() - m.width()) // 2), max(8, (self.glw.height() - m.height()) // 3))
+        m.raise_()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.glw and ev.type() == ev.Type.Resize and self.blank_msg.isVisible():
+            self._place_blank()
+        return super().eventFilter(obj, ev)
+
+    def _update_banner(self):
+        """The banner while blank: a scan or recorder running is named, with how long it has run and one click to
+        follow it; a recorder that stopped reporting is said to be silent (rule 9)."""
+        if not self.blank:
+            self.banner.hide()
+            return
+        b = L.running_banner(self.blank_prog, self.rec_views, dt.datetime.now())
+        if not b:
+            self.banner.hide()
+            return
+        colour = {"scan": "open", "recorder": "recorder", "silent": "anomaly"}[b["kind"]]
+        self.banner_dot.setStyleSheet(f"color: {T.C[colour]};")
+        self.banner_text.setText(b["text"])
+        self.banner_show.setVisible(b["kind"] == "scan")
+        self.banner.setStyleSheet(f"QFrame#Banner {{ background: {T.rgba(colour, 0.12)};"
+                                  f" border-bottom: 1px solid {T.rgba(colour, 0.45)}; }}")
+        self.banner.show()
+
+    def close_survey(self):
+        """File > Close: back to the blank screen (nothing stops; a running scan shows in the banner)."""
+        self.blank = True
+        self.view_file = None
+        self._held, self._held_since = [], None
+        self._clear(None)
+        self.prog = {}
+        self.opening = False
+        self.poller.reset(None, blank=True)
+        self._show_mode()
+        self._show_blank()
+
     def _got(self, what: str, d):
+        if what == "blank":
+            self.blank_prog = d or {}
+            if self.blank and self.prefs.value("start/live_follow", False, type=bool) \
+                    and L.scan_running(self.blank_prog):
+                self.open_survey(None)          # Settings: open on the running scan automatically
+                return
+            self._update_banner()
+            return
         if what == "config":
             self.cfg = d or {}
             self._draw_grid()
         elif what in ("progress", "data"):
             vf, d = d
+            if self.blank:
+                return      # an answer asked before the screen went blank
             if vf != self.view_file:
                 return      # asked for the view just left (the poller was mid-cycle when the survey changed)
             if what == "progress":
@@ -1034,6 +1156,8 @@ class LiveScreen(QWidget):
             # freshness is noted the moment the answer arrives (the 15 s rule stays exact);
             # only the redraw waits while the view is moving
             self.rec_views = self.recwatch.update(d.get("recorders") or [])
+            if self.blank:
+                self._update_banner()
             if self._held or self._is_moving():
                 self._hold(("recorders", None))
             else:
@@ -1532,6 +1656,8 @@ class LiveScreen(QWidget):
 
     # -- the header, the bar and the hover readout
     def _show_mode(self):
+        if self.blank:
+            return
         live = self.view_file is None
         text, colour = ("● Following live", "open") if live else ("◼ Finished survey", "muted")
         if self.follow_lbl.text() != text:                  # restyled only on a change (runs four times a second)
@@ -1609,6 +1735,12 @@ class LiveScreen(QWidget):
                                 else "Levels are relative dB on rtl_power's scale, not calibrated.")
 
     def _tick(self):
+        if self.blank:
+            self.bar.set({"kind": "waiting", "fraction": None, "text": "no scan open"})
+            if any(v.get("view") in ("silent", "running", "starting") for v in self.rec_views):
+                self.rec_views = self.recwatch.update([{k: v for k, v in r.items() if k not in ("view", "silent_s")}
+                                                       for r in self.rec_views])
+            return
         if self.opening:
             self.bar.set({"kind": "busy", "fraction": None,
                           "text": "reading the survey…" if self.view_file else "finding the newest recording…"})
@@ -1701,6 +1833,12 @@ class LiveScreen(QWidget):
         """Show a finished survey (name), or go back to following the newest recording (None). A big
         file takes a while to read (relay C will make it faster); the header says so meanwhile."""
         self.view_file = name
+        self.blank = False                          # relay 018: something is open now
+        self.blank_msg.hide()
+        self.facts.show()
+        self.fp.show()
+        self.banner.hide()
+        self.btn_follow.setText("Follow live")
         self._held, self._held_since = [], None
         self._clear(None)
         self.prog = {}
@@ -1710,6 +1848,91 @@ class LiveScreen(QWidget):
             self.facts.setText("Opening… a big survey can take most of a minute to read (relay C will make it faster)")
         self._show_mode()
         self.poller.reset(name)
+
+    # -- relay 018: the menu bar's Live Scan menus
+    def build_menus(self, settings, about) -> list:
+        """File (open a finished survey, follow live, close), View (marks and colours, layers, sweep height), Tools
+        (start a scan, start recording, the radios, stop the run, Settings) and Help."""
+        from .chain_screen import Menu
+        out = []
+
+        def menu(title):
+            m = Menu(self)
+            m.setTitle(title)
+            out.append(m)
+            return m
+
+        f = menu("&File")
+        sub = Menu(f)
+        sub.setTitle("Open a finished survey")
+        sub.aboutToShow.connect(lambda: self._fill_survey_menu(sub))
+        f.addMenu(sub)
+        a = f.addAction("Follow live (the scan being written now)")
+        a.triggered.connect(lambda *_: self.open_survey(None))
+        a = f.addAction("Close (back to a blank screen)")
+        f.aboutToShow.connect(lambda a=a: a.setEnabled(not self.blank))
+        a.setToolTip("Nothing stops: a running scan carries on, and the banner names it")
+        a.triggered.connect(lambda *_: self.close_survey())
+        f.addSeparator()
+        a = f.addAction("Exit")
+        a.triggered.connect(lambda *_: self.window().close())
+
+        v = menu("&View")
+        marks = self.btn_view.menu()
+        marks.setTitle("Marks and waterfall colours")
+        v.addAction(marks.menuAction())
+        v.add_heading("Layers")
+        for key, text in (("noise", "Noise"), ("signal", "Signal over the floor"), ("internal", "Internal")):
+            a = v.addAction(text)
+            a.setCheckable(True)
+            v.aboutToShow.connect(lambda a=a, k=key: a.setChecked(self.ly_boxes[k].isChecked()))
+            a.triggered.connect(lambda on, k=key: self.ly_boxes[k].setChecked(on))
+        v.add_heading("Sweep height")
+        for k, ry in enumerate(SWEEP_HEIGHTS):
+            a = v.addAction("Fit every sweep" if ry == "fit" else f"{ry} px per sweep")
+            a.setCheckable(True)
+            v.aboutToShow.connect(lambda a=a, ry=ry: a.setChecked((self.fit and ry == "fit") or
+                                                                  (not self.fit and ry == self.ry)))
+            a.triggered.connect(lambda _=False, ry=ry: self.set_height(ry))
+        v.addSeparator()
+        from . import explain as X
+        a = v.addAction("Explanations (the ⓘ marks)")
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(X.shown()))
+        a.triggered.connect(X.set_shown)
+
+        t = menu("&Tools")
+        for text, slot in (("Start a scan…", self.open_start), ("Start recording…", self.open_watch),
+                           ("Radios…", self.open_radios)):
+            a = t.addAction(text)
+            a.triggered.connect(lambda *_, s=slot: s())
+        a = t.addAction("Stop run…")
+        t.aboutToShow.connect(lambda a=a: (a.setEnabled(self.btn_stop.isEnabled()), a.setToolTip(self.btn_stop.toolTip())))
+        a.triggered.connect(lambda *_: self.stop_run())
+        t.addSeparator()
+        a = t.addAction("Settings…")
+        a.triggered.connect(lambda *_: settings())
+
+        h = menu("&Help")
+        a = h.addAction("About Marsad")
+        a.triggered.connect(lambda *_: about())
+        return out
+
+    def _fill_survey_menu(self, m):
+        m.clear()
+        try:
+            got = self.svc.surveys()
+        except ServiceError as exc:
+            a = m.addAction(f"Cannot read the list: {exc}")
+            a.setEnabled(False)
+            return
+        for s in (got.get("surveys") or [])[:60]:
+            a = m.addAction(f"{s['name']}   ·   {s.get('mb', 0):g} MB")
+            a.setToolTip(f"{s.get('engine')} · {s.get('lo')}–{s.get('hi')} MHz · started {s.get('started')}")
+            a.triggered.connect(lambda _=False, n=s["name"]: self.open_survey(n))
+        if not m.actions():
+            a = m.addAction("No surveys yet")
+            a.setEnabled(False)
 
     # -- starting scans and recorder sessions (relay 010)
     def open_start(self):
@@ -1729,7 +1952,7 @@ class LiveScreen(QWidget):
         up as soon as it writes its first sweep."""
         self.status.emit(f"Started outside the window (pid {out.get('pid')}); what it prints goes to "
                          f"{out.get('log')}")
-        if self.view_file is not None:
+        if self.view_file is not None or self.blank:
             self.open_survey(None)
 
     def mark_seen(self, serial):

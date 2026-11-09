@@ -389,4 +389,18 @@ def stylesheet() -> str:
     QScrollBar::handle:hover {{ background: {C['edge_top']}; }}
     QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
     QToolTip {{ background: {C['elev_overlay']}; color: {C['text']}; border: 1px solid {C['line_strong']}; padding: 4px; }}
+    QMenuBar {{ background: {C['elev_ground']}; color: {C['text2']}; border-bottom: {b}px solid {C['lines']};
+                   padding: 2px {s}px; }}
+    QMenuBar::item {{ background: transparent; padding: 4px {s + 2}px; border-radius: {r4}px; }}
+    QMenuBar::item:selected {{ background: {C['menu_hover']}; color: {C['text']}; }}
+    QMenuBar::item:pressed {{ background: {C['raised2']}; color: {C['text']}; }}
+    #FormatBar {{ background: transparent; }}
+    #Footer {{ background: {gradient(C['bar'], C['elev_ground'])}; border-top: {b}px solid {C['lines']}; }}
+    #Footer QLabel {{ background: transparent; }}
+    #StartPanel {{ background: {rgba('elev_overlay', FLOAT_ALPHA)}; {lit_edges('overlay', 'line_strong')}
+                   border-radius: {RADIUS}px; }}
+    #StartPanel QLabel {{ background: transparent; }}
+    QPushButton#RecentRig {{ text-align: left; padding: 6px 12px; }}
+    #Banner QLabel {{ background: transparent; }}
+    #StationSummary {{ color: {C['text2']}; padding-left: {s}px; }}
     """

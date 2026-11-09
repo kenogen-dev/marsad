@@ -2364,6 +2364,168 @@ def _setupapi_rtl() -> dict:
     return found
 
 
+_USB_DETAIL_CACHE: list = [0.0, None]
+USB_SPEEDS = {0: "low speed (USB 1.x)", 1: "full speed (USB 1.1, 12 Mb/s)", 2: "high speed (USB 2.0, 480 Mb/s)",
+              3: "SuperSpeed (USB 3)"}
+
+
+def usb_details() -> dict:
+    """Relay 018: {serial: {"name", "port", "hub", "location", "path", "speed"}} for every RTL-SDR
+    plugged in now. Where it is plugged comes from the same Windows device list as presence
+    (SetupAPI: "Port_#0004.Hub_#0003" and the location path); the speed from the hub the radio
+    hangs off (the hub's own connection query, as Device Manager's USB tree reads it). Neither
+    opens the radio. Empty where Windows will not say. Cached for 5 s."""
+    if time.time() - _USB_DETAIL_CACHE[0] < 5.0 and _USB_DETAIL_CACHE[1] is not None:
+        return _USB_DETAIL_CACHE[1]
+    out: dict = {}
+    if host.IS_WINDOWS:
+        try:
+            out = _setupapi_rtl_details()
+        except (OSError, AttributeError, ValueError):
+            out = {}
+    _USB_DETAIL_CACHE[:] = [time.time(), out]
+    return out
+
+
+def usb_location_words(loc: str | None) -> dict:
+    """"Port_#0004.Hub_#0003" -> {"port": 4, "hub": 3}; anything else -> {}."""
+    import re
+    m = re.match(r"\s*Port_#0*(\d+)\.Hub_#0*(\d+)", str(loc or ""))
+    return {"port": int(m.group(1)), "hub": int(m.group(2))} if m else {}
+
+
+def _setupapi_rtl_details() -> dict:
+    import ctypes
+    import uuid
+    from ctypes import wintypes
+
+    class DEVINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("ClassGuid", ctypes.c_byte * 16),
+                    ("DevInst", wintypes.DWORD), ("Reserved", ctypes.c_void_p)]
+    sa = ctypes.WinDLL("setupapi", use_last_error=True)
+    cm = ctypes.WinDLL("cfgmgr32")
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    sa.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    sa.SetupDiGetClassDevsW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD]
+    sa.SetupDiEnumDeviceInfo.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(DEVINFO)]
+    sa.SetupDiGetDeviceInstanceIdW.argtypes = [ctypes.c_void_p, ctypes.POINTER(DEVINFO), wintypes.LPWSTR,
+                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    sa.SetupDiGetDeviceRegistryPropertyW.argtypes = [ctypes.c_void_p, ctypes.POINTER(DEVINFO), wintypes.DWORD,
+                                                     ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
+                                                     wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    sa.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    k32.CreateFileW.restype = ctypes.c_void_p
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    k32.DeviceIoControl.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                    ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    hub_guid = (ctypes.c_byte * 16).from_buffer_copy(uuid.UUID("f18a0e88-c30c-11d0-8815-00a0c906bed8").bytes_le)
+
+    def prop(h, info, code):
+        raw = ctypes.create_string_buffer(2048)
+        kind = wintypes.DWORD()
+        if not sa.SetupDiGetDeviceRegistryPropertyW(h, ctypes.byref(info), code, ctypes.byref(kind), raw, 2048, None):
+            return None
+        if kind.value == 4:                                         # REG_DWORD
+            return int.from_bytes(raw.raw[:4], "little")
+        return raw.raw.decode("utf-16-le", "ignore").split("\0\0")[0].split("\0")
+
+    def speed_of(parent_id: str, port: int):
+        lst = ctypes.create_unicode_buffer(2048)
+        if cm.CM_Get_Device_Interface_ListW(ctypes.byref(hub_guid), ctypes.c_wchar_p(parent_id), lst, 2048, 0) != 0:
+            return None
+        path = lst.value
+        if not path:
+            return None
+        hh = k32.CreateFileW(path, 0x40000000, 0x2, None, 3, 0, None)   # as Device Manager's USB tree opens a hub
+        if not hh or hh == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            buf = ctypes.create_string_buffer(512)
+            ctypes.memmove(buf, int(port).to_bytes(4, "little"), 4)
+            n = wintypes.DWORD()
+            # IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX: the byte after the 18-byte device descriptor
+            # and the configuration value is the speed the port runs at
+            if not k32.DeviceIoControl(hh, 0x220448, buf, 512, buf, 512, ctypes.byref(n), None):
+                return None
+            return buf.raw[23]
+        finally:
+            k32.CloseHandle(hh)
+
+    h = sa.SetupDiGetClassDevsW(None, "USB", None, 0x2 | 0x4)
+    if not h or h == ctypes.c_void_p(-1).value:
+        raise OSError("SetupDiGetClassDevs failed")
+    found = {}
+    try:
+        i = 0
+        info = DEVINFO()
+        info.cbSize = ctypes.sizeof(DEVINFO)
+        buf = ctypes.create_unicode_buffer(512)
+        while sa.SetupDiEnumDeviceInfo(h, i, ctypes.byref(info)):
+            i += 1
+            if not sa.SetupDiGetDeviceInstanceIdW(h, ctypes.byref(info), buf, 512, None):
+                continue
+            if not any(k in buf.value.upper() for k in RTL_USB_IDS):
+                continue
+            serial = buf.value.split("\\")[-1]
+            name = (prop(h, info, 0xC) or prop(h, info, 0x0) or [""])[0]
+            loc = (prop(h, info, 0x0D) or [""])[0]                   # SPDRP_LOCATION_INFORMATION
+            paths = prop(h, info, 0x23) or []                        # SPDRP_LOCATION_PATHS
+            addr = prop(h, info, 0x1C)                               # SPDRP_ADDRESS: the port on its hub
+            words = usb_location_words(loc)
+            port = words.get("port") or (addr if isinstance(addr, int) else None)
+            speed = None
+            par = wintypes.DWORD()
+            if port and cm.CM_Get_Parent(ctypes.byref(par), info.DevInst, 0) == 0:
+                pb = ctypes.create_unicode_buffer(512)
+                if cm.CM_Get_Device_IDW(par, pb, 512, 0) == 0:
+                    try:
+                        speed = speed_of(pb.value, port)
+                    except OSError:
+                        speed = None
+            found[serial] = {"name": name, "location": loc, "port": port, "hub": words.get("hub"),
+                             "path": paths[0] if paths else "",
+                             "speed": USB_SPEEDS.get(speed) if speed is not None else None}
+    finally:
+        sa.SetupDiDestroyDeviceInfoList(h)
+    return found
+
+
+def radio_last_runs(station: Station) -> dict:
+    """Relay 018, Check rig against the last run: for each receiver, its most recent survey's own record of
+    the chain (the sidecar's chain_order, word for word), when it started, its tag, the device index it
+    used and its rig reference. Read-only; a broken sidecar is skipped."""
+    out: dict = {}
+    if not station.surveys.exists():
+        return {"radios": out}
+    for side in station.surveys.glob("*.json"):
+        try:
+            d = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict) or not d.get("receiver"):
+            continue
+        rx = str(d["receiver"])
+        started = str(d.get("started_local") or "")
+        if rx in out and out[rx]["started"] >= started:
+            continue
+        eng = d.get("engine") or "rtl_power"
+        sect = d.get(eng) if isinstance(d.get(eng), dict) else {}
+        out[rx] = {"run": side.stem, "tag": d.get("preset"), "started": started,
+                   "finished": d.get("finished_local"),
+                   "chain": str((d.get("chain") or {}).get("chain_order") or ""),
+                   "device": sect.get("device"), "rig_reference": d.get("rig_reference")}
+    return {"radios": out}
+
+
+def station_json_copy(station: Station) -> dict:
+    """Relay 018, File > Export a copy of station.json: the file exactly as it is on disk, read fresh. Never the
+    loaded settings, which carry station.local.json's overlay (the location, rule 10); that file is not read."""
+    p = Path(station.root) / "station.json"
+    return {"name": "station.json", "text": p.read_text(encoding="utf-8")}
+
+
 def radio_roles(station: Station) -> dict:
     """Which radio surveys and which records: the window's own choice (saved_scans.json "roles"),
     else station.json's recorder.roles, else the first and second receivers (watch.survey_roles).
@@ -2486,6 +2648,7 @@ def radios_status(station: Station) -> dict:
     from . import capture as cap, catalogue
     cfg = cap.settings(station)
     usb = usb_radios()
+    details = usb_details() if usb else {}           # relay 018: which port, how fast (nothing opened)
     programs = host.running_sdr_programs()
     roles = radio_roles(station)
     off = disabled_radios(station)
@@ -2558,6 +2721,7 @@ def radios_status(station: Station) -> dict:
         radios.append({
             "name": name, "label": r.get("label", name), "tuner": tuner, "serial": serial,
             "usb_name": (usb or {}).get(serial or "", ""), "present": present, "enabled": enabled,
+            "usb": (details or {}).get(serial or "") if present else None,
             "doing": doing, "role": role,
             "range_mhz": rng, "gaps_mhz": r.get("gaps_mhz") or [], "tunable_mhz": tunable,
             "gains": gains, "gain_text": (f"{len(gains)} steps, {jsnum(gains[0])}–{jsnum(gains[-1])} dB" if gains else ""),
@@ -2880,6 +3044,12 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 try:
                     body = json.dumps(radios_status(station)).encode()
                 except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
+            elif u.path in ("/chain/last_runs", "/station/json"):
+                try:                     # relay 018: read-only, for the window's Tools and File menus
+                    body = json.dumps(radio_last_runs(station) if u.path == "/chain/last_runs"
+                                      else station_json_copy(station)).encode()
+                except (OSError, ValueError) as exc:
                     body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/explain/defaults":
                 try:

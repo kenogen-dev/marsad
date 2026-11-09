@@ -1387,7 +1387,8 @@ def estimate_text(e: dict | None) -> str:
 # in the private backup, like the drawings). Dropping an entry copies it: a rig keeps its copy
 # whatever later happens to the entry, so nothing in a saved rig changes silently.
 LIB_PART_KEYS = ("type", "name", "detail") + FIELDS
-LIB_NODE_KEYS = ("w", "h", "ports", "needs_power", "gain_db", "colour", "sma", "shape", "antenna", "text_pos")
+LIB_NODE_KEYS = ("w", "h", "ports", "needs_power", "gain_db", "colour", "sma", "shape", "antenna", "text_pos",
+                 "font_size", "bold")                        # relay 018: the format bar's font, kept in My parts
 
 
 def library(layout: dict) -> list[dict]:
@@ -1429,6 +1430,7 @@ def check_library(lst) -> list:
         seen.add(e["id"])
         _check_number(e.get("gain_db"), "the parts library has a gain that is not a number")
         _check_look(e, "the parts library")
+        check_font(e, "the parts library")
     return lst
 
 
@@ -1626,9 +1628,10 @@ def check_layout(data) -> dict:
             if seen & set(g["members"]):
                 raise ValueError(f"rig {name!r} has a part in two groups")
             seen |= set(g["members"])
-        for n in list(r["nodes"]) + list(pows):
+        for n in list(r["nodes"]) + list(pows) + list(encs):
             if "text_pos" in n and n["text_pos"] not in TEXT_POS:
                 raise ValueError(f"rig {name!r} has text in a position that does not exist")
+            check_font(n, f"rig {name!r}")
         for n in r["nodes"]:
             if "shape" in n and n["shape"] not in SHAPES:
                 raise ValueError(f"rig {name!r} has a part of unknown shape")
@@ -1861,3 +1864,289 @@ def checks_for_runs(summary: dict) -> list:
             except (KeyError, TypeError, ValueError):
                 return []
     return []
+
+
+# ---------------------------------------------------------------- relay 018: checks by level
+CHECK_LEVELS = ("problem", "warning", "note")
+
+
+def check_level(c: dict) -> str:
+    """How serious a check is, for the footer's colours: a problem (a radio no antenna reaches, a chain that reaches
+    no radio, two radios the same), a warning (no power feed, two males or two females, nothing wired in) or a note
+    (an unused output, a part or power source on its own)."""
+    kind, text = c.get("kind"), str(c.get("text") or "")
+    if kind == "radio":
+        return "problem"
+    if kind == "power":
+        return "warning"
+    if kind == "wiring":
+        return "note" if "with nothing on it" in text else "warning"
+    return "note"
+
+
+def checks_by_level(rig: dict) -> list[dict]:
+    """rig.checks with each one's level, problems first."""
+    out = [dict(c, level=check_level(c)) for c in checks(rig)]
+    return sorted(out, key=lambda c: CHECK_LEVELS.index(c["level"]))
+
+
+def check_counts(items: list[dict]) -> dict:
+    return {lv: sum(1 for c in items if c.get("level") == lv) for lv in CHECK_LEVELS}
+
+
+# ---------------------------------------------------------------- relay 018: the format bar's font
+FONT_MIN, FONT_MAX = 6, 28
+FONT_SIZES = (7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24)
+
+
+def font_size(b: dict | None) -> float | None:
+    """A box's own font size in points, or None for the standard size. Drawing only."""
+    v = (b or {}).get("font_size")
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and FONT_MIN <= v <= FONT_MAX else None
+
+
+def check_font(b: dict, where: str) -> None:
+    v = b.get("font_size")
+    if "font_size" in b and (isinstance(v, bool) or not isinstance(v, (int, float)) or not FONT_MIN <= v <= FONT_MAX):
+        raise ValueError(f"{where} has a font size that is not {FONT_MIN} to {FONT_MAX} points")
+    if "bold" in b and not isinstance(b["bold"], bool):
+        raise ValueError(f"{where} has bold that is not yes or no")
+
+
+# ---------------------------------------------------------------- relay 018: comparing chain texts
+def split_text(text: str) -> list[str]:
+    """A chain text cut into its parts at each " > " outside brackets (a note may hold one)."""
+    out, cur, depth, i, s = [], [], 0, 0, str(text or "")
+    while i < len(s):
+        ch = s[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if depth == 0 and s.startswith(" > ", i):
+            out.append("".join(cur).strip())
+            cur, i = [], i + 3
+            continue
+        cur.append(ch)
+        i += 1
+    if "".join(cur).strip():
+        out.append("".join(cur).strip())
+    return out
+
+
+def _plain(part: str) -> str:
+    """A part's words with the wording taken out: case, punctuation, inch and foot marks, and the old words
+    (jumper, SMA, cable) gone, so "6\\" SMA jumper" and "6 in coax" read the same."""
+    import re
+    s = part.lower()
+    s = re.sub(r"(\d)\s*(\"|''|inches|inch|in\b)", r"\1 in", s)
+    s = re.sub(r"(\d)\s*('|feet|foot|ft\b)", r"\1 ft", s)
+    s = re.sub(r"(\d)\s*(millimetres|millimeters|mm\b)", r"\1 mm", s)
+    s = re.sub(r"\bjumpers?\b", "coax", s)
+    s = re.sub(r"\b(sma|cable|cables|lead)\b", " ", s)
+    s = re.sub(r"\bwith chokes?\b", " ", s)
+    s = re.sub(r"[^a-z0-9.]+", " ", s)
+    return " ".join(sorted(s.split()))
+
+
+def wording_only(a: str, b: str) -> bool:
+    return a != b and _plain(a) == _plain(b)
+
+
+def compare_texts(old: str, new: str) -> list[dict]:
+    """Two chain texts part by part, in plain words: [{"kind": "same" | "added" | "removed" | "changed", "was",
+    "now", "wording_only"}]. A changed part whose words differ only in wording (jumper and coax, 6" and 6 in,
+    capitals, punctuation) is marked wording_only."""
+    import difflib
+    a, b = split_text(old), split_text(new)
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=[_plain(x) for x in a], b=[_plain(x) for x in b],
+                                                      autojunk=False).get_opcodes():
+        if op == "equal":
+            for i, j in zip(range(i1, i2), range(j1, j2)):
+                same = a[i] == b[j]
+                out.append({"kind": "same" if same else "changed", "was": a[i], "now": b[j],
+                            "wording_only": not same})
+            continue
+        olds, news = a[i1:i2], b[j1:j2]
+        for k in range(max(len(olds), len(news))):
+            was = olds[k] if k < len(olds) else None
+            now = news[k] if k < len(news) else None
+            if was is not None and now is not None:
+                out.append({"kind": "changed", "was": was, "now": now, "wording_only": wording_only(was, now)})
+            elif was is not None:
+                out.append({"kind": "removed", "was": was, "now": None, "wording_only": False})
+            else:
+                out.append({"kind": "added", "was": None, "now": now, "wording_only": False})
+    return out
+
+
+def compare_words(diff: list[dict]) -> list[str]:
+    """compare_texts as sentences; an empty list when the two texts are the same."""
+    lines = []
+    for d in diff:
+        if d["kind"] == "added":
+            lines.append(f"Added: {d['now']}")
+        elif d["kind"] == "removed":
+            lines.append(f"Removed: {d['was']}")
+        elif d["kind"] == "changed":
+            lines.append(f"{'Wording only' if d['wording_only'] else 'Changed'}: {d['was']}  →  {d['now']}")
+    return lines
+
+
+def text_of_radio(texts: dict[str, str], chains: dict[str, list], rx: str) -> str | None:
+    """The recorded text of the rig's path that ends at the radio set to receiver rx."""
+    for name, parts in chains.items():
+        r = radio_of(parts)
+        if r is not None and str(r.get("rx") or "") == str(rx):
+            return texts.get(name)
+    return None
+
+
+def check_against_runs(rig_name: str, rig: dict, runs: dict, labels: dict | None = None) -> list[dict]:
+    """Relay 018, Tools > Check rig against the last run: for each radio in the rig, its path's recorded text now
+    against the chain text that radio's most recent run recorded (runs: the service's /chain/last_runs "radios").
+    [{"rx", "radio", "run", "started", "was", "now", "diff", "same", "wording_only"}], read-only."""
+    texts, chains = rig_texts(rig_name, rig, labels), rig_chains(rig_name, rig, labels)
+    out = []
+    for name, parts in chains.items():
+        r = radio_of(parts)
+        if r is None or not r.get("rx"):
+            continue
+        rx = str(r["rx"])
+        last = (runs or {}).get(rx)
+        now = texts.get(name, "")
+        if not last:
+            out.append({"rx": rx, "radio": _pname({"part": r}), "run": None, "started": None, "was": None,
+                        "now": now, "diff": [], "same": False, "wording_only": False})
+            continue
+        diff = compare_texts(last.get("chain") or "", now)
+        changes = [d for d in diff if d["kind"] != "same"]
+        out.append({"rx": rx, "radio": _pname({"part": r}), "run": last.get("tag") or last.get("run"),
+                    "started": last.get("started"), "was": last.get("chain") or "", "now": now, "diff": diff,
+                    "same": not changes, "wording_only": bool(changes) and all(d["wording_only"] for d in changes)})
+    return out
+
+
+# ---------------------------------------------------------------- relay 018: comparing two versions of a rig
+def _where(rig: dict, labels: dict | None) -> dict:
+    """part id -> the names of the paths it is on, by the radio each reaches."""
+    out: dict = {}
+    for p in paths(rig):
+        r = radio_of(path_parts(rig, p, labels))
+        label = _pname({"part": r}) if r else "no radio"
+        for nid, _ in p:
+            out.setdefault(nid, set()).add(label)
+    return out
+
+
+def rig_diff(old: dict, new: dict, labels: dict | None = None, name: str = "rig") -> dict:
+    """Relay 018, Tools > Compare rig versions: what changed between two saved drawings of one rig, in words.
+    {"added", "removed", "renamed", "moved", "cables", "texts"}: lists of sentences; "texts" compares each path's
+    recorded text by radio."""
+    a = {n["id"]: n for n in old.get("nodes") or []}
+    b = {n["id"]: n for n in new.get("nodes") or []}
+    out = {"added": [], "removed": [], "renamed": [], "moved": [], "cables": [], "texts": []}
+    for nid in b:
+        if nid not in a:
+            out["added"].append(engine_chain.part_text(b[nid]["part"]))
+    for nid in a:
+        if nid not in b:
+            out["removed"].append(engine_chain.part_text(a[nid]["part"]))
+    for nid in a.keys() & b.keys():
+        ta, tb = engine_chain.part_text(a[nid]["part"]), engine_chain.part_text(b[nid]["part"])
+        if ta != tb:
+            out["renamed"].append(f"{ta}  →  {tb}" + ("  (wording only)" if wording_only(ta, tb) else ""))
+    wa, wb = _where(old, labels), _where(new, labels)
+    for nid in a.keys() & b.keys():
+        pa, pb = wa.get(nid, set()), wb.get(nid, set())
+        if pa != pb:
+            out["moved"].append(f"{engine_chain.part_text(b[nid]['part'])}: on the path to "
+                                f"{', '.join(sorted(pa)) or 'nothing'}, now to {', '.join(sorted(pb)) or 'nothing'}")
+    ca = {(w["from"], w["port"]): w for w in old.get("wires") or []}
+    cb = {(w["from"], w["port"]): w for w in new.get("wires") or []}
+    for key in ca.keys() | cb.keys():
+        xa = [cable_part(c)["name"] + (f" ({cable_part(c)['detail']})" if cable_part(c).get("detail") else "")
+              for c in (ca.get(key) or {}).get("cables") or []]
+        xb = [cable_part(c)["name"] + (f" ({cable_part(c)['detail']})" if cable_part(c).get("detail") else "")
+              for c in (cb.get(key) or {}).get("cables") or []]
+        if xa != xb and key[0] in a.keys() | b.keys():
+            src = (b.get(key[0]) or a.get(key[0]))["part"]
+            out["cables"].append(f"After {engine_chain.part_text(src)}: {' + '.join(xa) or 'no cable'}  →  "
+                                 f"{' + '.join(xb) or 'no cable'}")
+    def by_radio(rig):
+        res = {}
+        for nm, parts in rig_chains(name, rig, labels).items():
+            r = radio_of(parts)
+            res[_pname({"part": r}) if r else nm] = engine_chain.chain_text(parts)
+        return res
+    ta, tb = by_radio(old), by_radio(new)
+    for k in sorted(ta.keys() | tb.keys()):
+        if ta.get(k) != tb.get(k):
+            if k not in ta:
+                out["texts"].append(f"{k}: a new path, recorded as: {tb[k]}")
+            elif k not in tb:
+                out["texts"].append(f"{k}: no longer a path (it was: {ta[k]})")
+            else:
+                out["texts"] += [f"{k}: {line}" for line in compare_words(compare_texts(ta[k], tb[k]))]
+    return out
+
+
+# ---------------------------------------------------------------- relay 018: Find (Ctrl+F)
+def find_boxes(rig: dict, query: str, labels: dict | None = None) -> list[str]:
+    """Box ids whose name, note, kind or receiver contains the query (any case), in the drawing's order: parts,
+    then enclosures and power sources."""
+    q = str(query or "").strip().lower()
+    if not q:
+        return []
+    out = []
+    for n in rig.get("nodes") or []:
+        p = n["part"]
+        kind = (labels or {}).get(p["type"], {}).get("label") or PART_TYPES.get(p["type"], {}).get("label", p["type"])
+        words = " ".join(str(x) for x in (p.get("name"), p.get("detail"), kind, p["type"], p.get("rx"), p.get("length"))
+                         if x)
+        if q in words.lower():
+            out.append(n["id"])
+    for b in list(enclosures(rig)) + list(power_boxes(rig)):
+        words = " ".join(str(x) for x in (b.get("name"), POWER_KINDS.get(b.get("kind"), ""),
+                                          "enclosure" if b in enclosures(rig) else "power") if x)
+        if q in words.lower():
+            out.append(b["id"])
+    return out
+
+
+# ---------------------------------------------------------------- relay 018: the PC's USB inputs
+def upstream_radio(rig: dict, nid: str, slot: int = 0) -> dict | None:
+    """The radio whose wire arrives at input `slot` of part `nid` (a PC with several inputs), walking back through
+    whatever lies between (a USB cable part, a bulkhead, an isolator, a hub). None when no radio feeds it."""
+    nodes = {n["id"]: n for n in rig.get("nodes") or []}
+    wire = next((w for w in rig.get("wires") or [] if w["to"] == nid and int(w.get("in", 0)) == int(slot)), None)
+    seen = set()
+    cur = wire["from"] if wire else None
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        n = nodes.get(cur)
+        if n is None:
+            return None
+        if n["part"]["type"] == "sdr":
+            return n
+        w = next((x for x in rig.get("wires") or [] if x["to"] == cur), None)
+        cur = w["from"] if w else None
+    return None
+def usb_moved_text(word: str, before: dict | None, now: dict | None, since: str) -> str | None:
+    """"v5 moved from port 3 to port 5 since run x" when a radio's USB place differs from the one remembered; None
+    when it is the same, or either is not known."""
+    def place(d):
+        if not d or not d.get("location"):
+            return None
+        return (d.get("hub"), d.get("port"), d.get("location"))
+    a, b = place(before), place(now)
+    if a is None or b is None or a == b:
+        return None
+    def words(d):
+        if d.get("port") and d.get("hub") is not None:
+            return f"port {d['port']} (hub {d['hub']})"
+        return str(d.get("location"))
+    if before.get("hub") == now.get("hub") and before.get("port") and now.get("port"):
+        return f"{word} moved from port {before['port']} to port {now['port']} {since}"
+    return f"{word} moved from {words(before)} to {words(now)} {since}"

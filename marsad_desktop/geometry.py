@@ -119,7 +119,7 @@ def _point_on(node: dict, side: str, k: int, n: int, down: bool = False) -> tupl
 
 
 # ---------------------------------------------------------------- right-click menus (relay 016)
-MENU_OFFSET = 4                        # px, how far below and right of the pointer a menu's corner sits
+MENU_OFFSET = 16                       # px, how far below and right of the pointer a menu's corner sits
 
 
 def menu_place(px: int, py: int, mw: int, mh: int, area: tuple | None, off: int = MENU_OFFSET) -> tuple[int, int]:

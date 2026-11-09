@@ -44,6 +44,14 @@ def empty_station(tmp_path_factory):
         os.environ["SDR_STATION"] = old
 
 
+@pytest.fixture(autouse=True)
+def no_usb_details(monkeypatch):
+    """Relay 018: where each radio is plugged comes from Windows' device list. Never this computer's own in the
+    suite; a test that wants USB places patches marsad.live.usb_details itself."""
+    from marsad import live
+    monkeypatch.setattr(live, "usb_details", lambda: {})
+
+
 _RIG = {}
 
 

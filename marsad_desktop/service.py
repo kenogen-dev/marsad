@@ -128,6 +128,15 @@ class Service:
     def watch_start(self, body: dict) -> dict:
         return self._call("/watch/start", body, timeout=150)
 
+    # -- Relay 018: read-only, for the menu bar's Tools and File menus
+    def last_runs(self) -> dict:
+        """Each radio's most recent run: the chain text it recorded, when, its tag and device index."""
+        return self._call("/chain/last_runs", timeout=30)
+
+    def station_json(self) -> dict:
+        """station.json exactly as it is on disk ({"text"}); station.local.json is never read."""
+        return self._call("/station/json", timeout=30)
+
     # -- The radios (owner, 2026-11-07): presence by serial from Windows' device list, nothing opened
     def radios(self) -> dict:
         return self._call("/radios", timeout=30)

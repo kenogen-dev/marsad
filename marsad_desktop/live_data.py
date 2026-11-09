@@ -71,6 +71,57 @@ def silent_text(seconds: float) -> str:
     return f"silent {seconds:.0f} s" if seconds < 120 else f"silent {seconds / 60:.0f} min"
 
 
+# ---------------------------------------------------------------- relay 018: what runs while Live Scan is blank
+def scan_running(p: dict) -> bool:
+    """Is the newest recording still being written? Its sidecar has no end, and a sweep finished recently
+    (within three intervals, at least 90 s): a killed run that never wrote an end stops counting by the clock."""
+    if not p or not p.get("file") or p.get("finished"):
+        return False
+    age = p.get("last_finish_age_s")
+    integ = float(p.get("integration_s") or 0) or 0.0
+    return age is None or float(age) <= max(90.0, 3 * integ)
+
+
+def elapsed_text(started_local: str | None, now) -> str | None:
+    """"1 h 12 min" since a sidecar's started_local, or None."""
+    import datetime as _dt
+    if not started_local:
+        return None
+    try:
+        t0 = _dt.datetime.fromisoformat(started_local)
+    except ValueError:
+        return None
+    s = max(0, int((now - t0).total_seconds()))
+    return f"{s // 3600} h {s % 3600 // 60} min" if s >= 3600 else f"{max(1, s // 60)} min"
+
+
+def running_banner(p: dict, rec_views: list, now) -> dict | None:
+    """Relay 018: Live Scan opens blank, but a run in progress is never hidden. {"text", "kind": "scan" | "recorder"
+    | "silent"} for the banner, or None when nothing runs. A recorder that has stopped reporting is said to be silent
+    (rule 9), never running."""
+    bits, kind = [], None
+    if scan_running(p):
+        f = p.get("facts") or {}
+        tag = f.get("tag") or p.get("file")
+        el = elapsed_text(f.get("started_local"), now)
+        bits.append(f"A scan is running: {tag}" + (f", {el}" if el else "")
+                    + (f" (radio {f['receiver']})" if f.get("receiver") else ""))
+        kind = "scan"
+    live = [v for v in rec_views or [] if v.get("view") in ("running", "starting")]
+    silent = [v for v in rec_views or [] if v.get("view") == "silent"]
+    for v in live:
+        job = v.get("job") or {}
+        where = f" on {job['target_mhz']:.4f} MHz" if isinstance(job.get("target_mhz"), (int, float)) else ""
+        bits.append(f"A recorder is running: {v.get('receiver') or v.get('serial') or 'radio'}"
+                    f" ({v.get('mode') or 'watch'}){where}")
+        kind = kind or "recorder"
+    for v in silent:
+        bits.append(f"The recorder on {v.get('receiver') or v.get('serial') or 'a radio'} has stopped reporting "
+                    f"({silent_text(v.get('silent_s') or 0)})")
+        kind = kind or "silent"
+    return {"text": ". ".join(bits) + ".", "kind": kind} if bits else None
+
+
 # ---------------------------------------------------------------- the survey's position
 def progress(p: dict, fetched_at: float, now: float) -> dict:
     """Where the survey is, for the thin bar along the spectrum's top (rtl_power) or the current-hop

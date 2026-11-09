@@ -89,6 +89,10 @@ FRAGMENT_MIME = "application/x-marsad-rig-fragment"
 # text box on the card keeps its own Ctrl+C or arrow keys), "menu" = on a menu entry,
 # "mouse" = a pointer gesture. The window check script tests that every key listed works.
 SHORTCUTS = [
+    ("Rigs", "Ctrl+N", "New rig", "window"),
+    ("Rigs", "Ctrl+O", "Open rig… (the rig used for runs is marked)", "window"),
+    ("Rigs", "Ctrl+S", "Save", "window"),
+    ("Rigs", "Ctrl+F", "Find a part by name or kind; Enter for the next, Esc to close", "window"),
     ("Editing", "Ctrl+Z", "Undo", "window"),
     ("Editing", "Ctrl+Y   ·   Ctrl+Shift+Z", "Redo", "window"),
     ("Editing", "Ctrl+C", "Copy the selected boxes, with the wires between them", "grid"),
@@ -160,6 +164,13 @@ def palette_colour(cat: str | None, on: bool = True) -> QColor:
     return category_colour(cat)
 
 
+def section_colour(cat: str | None, on: bool = True) -> QColor:
+    """A Parts-list section's colour (relay 018); My parts takes the accent."""
+    if on and cat == "mine":
+        return T.color("survey")
+    return palette_colour(cat, on)
+
+
 def cable_summary(c: dict) -> str:
     """A cable's label on its wire: what the recorded text calls it (a new cable's name holds its length)."""
     if c.get("auto"):
@@ -210,10 +221,24 @@ def _when(stamp: str | None) -> str:
     return stamp.replace("T", " ")[:16] if stamp else ""
 
 
+def _esc(text) -> str:
+    """Plain text for a rich-text label (relay 018's reports)."""
+    import html
+    return html.escape(str(text))
+
+
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.now().isoformat(timespec="seconds")
+
+
 def prefs() -> QSettings:
     """The window's own preferences (grid look, panel sizes), in one small file in
-    the user's home folder, never in the registry and never in the station."""
-    return QSettings(str(Path.home() / ".marsad_desktop.ini"), QSettings.Format.IniFormat)
+    the user's home folder, never in the registry and never in the station. MARSAD_DESKTOP_INI points it elsewhere
+    (relay 018: the window checks use a file of their own, so they never change the owner's)."""
+    import os
+    return QSettings(os.environ.get("MARSAD_DESKTOP_INI") or str(Path.home() / ".marsad_desktop.ini"),
+                     QSettings.Format.IniFormat)
 
 
 def category_colour(cat: str | None) -> QColor:
@@ -920,6 +945,21 @@ def tool_path(name: str) -> QPainterPath:
     elif name == "dir_down":             # and top to bottom
         p.addRoundedRect(QRectF(5, 1, 6, 5), 1, 1); p.addRoundedRect(QRectF(5, 10, 6, 5), 1, 1)
         line((8, 6), (8, 10)); line((6.5, 8.5), (8, 10), (9.5, 8.5))
+    elif name == "textpos":              # relay 018, the format bar: a 3 x 3 with lines in one corner
+        p.addRoundedRect(QRectF(1.5, 1.5, 13, 13), 2, 2); line((4, 5), (10, 5)); line((4, 8), (8, 8))
+    elif name == "colour":
+        p.addEllipse(QRectF(2, 2, 12, 12)); p.addEllipse(QRectF(5, 4.5, 2, 2)); p.addEllipse(QRectF(9, 4.5, 2, 2))
+        p.addEllipse(QRectF(4, 8.5, 2, 2))
+    elif name == "shape":
+        p.addRoundedRect(QRectF(1.5, 5, 7, 7), 1.5, 1.5); p.addEllipse(QRectF(8, 2, 6.5, 6.5))
+    elif name == "lock":
+        p.addRoundedRect(QRectF(3, 7, 10, 7.5), 1.5, 1.5); p.moveTo(5, 7); p.cubicTo(5, 1.5, 11, 1.5, 11, 7)
+    elif name == "find":
+        p.addEllipse(QRectF(2, 2, 8.5, 8.5)); line((9.5, 9.5), (14.5, 14.5))
+    elif name == "minimap":
+        p.addRoundedRect(QRectF(1.5, 3, 13, 10), 1.5, 1.5); p.addRect(QRectF(8, 7, 5, 4.5))
+    elif name == "check":
+        line((2, 8.5), (6, 12.5), (14, 3.5))
     else:
         p.addRect(QRectF(3, 3, 10, 10))
     return p
@@ -1062,28 +1102,65 @@ class TileDelegate(QStyledItemDelegate):
             qp.restore()
             return
         if index.data(ROLE_KIND) == "heading":
+            # relay 018: each section has a header in its colour: a coloured bar, the title in a readable shade of
+            # that colour, and a hairline in it running on to the edge
             x0 = 2
             cat = index.data(ROLE_CAT)
-            if cat and self.lst.colour_on:            # the section's own colour, as a short bar
+            col = section_colour(cat, self.lst.colour_on)
+            if cat and self.lst.colour_on:
                 qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(palette_colour(cat))
-                qp.drawRoundedRect(QRectF(r.left() + 2, r.bottom() - 15, 3, 10), 1.5, 1.5)
-                x0 = 10
-            qp.setPen(T.color("muted"))
-            qp.setFont(T.ui_font(7.5, QFont.Weight.DemiBold))
+                qp.setBrush(col)
+                qp.drawRoundedRect(QRectF(r.left() + 2, r.bottom() - 16, 4, 12), 2, 2)
+                x0 = 12
+            ink = QColor(T.readable_on(col.name(), T.C["side"])) if cat and self.lst.colour_on else T.color("muted")
+            qp.setPen(ink)
+            qp.setFont(T.ui_font(7.5, QFont.Weight.Bold))
+            fm = QFontMetricsF(qp.font())
             qp.drawText(r.adjusted(x0, 0, 0, -4), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom), text)
+            if cat and self.lst.colour_on:
+                line = QColor(col)
+                line.setAlphaF(0.28)
+                qp.setPen(QPen(line, 1))
+                x1 = r.left() + x0 + fm.horizontalAdvance(text) + 8
+                if x1 < r.right() - 4:
+                    qp.drawLine(QPointF(x1, r.bottom() - 9.5), QPointF(r.right() - 4, r.bottom() - 9.5))
             qp.restore()
             return
         tile = r.adjusted(0, 2, -2, -2)
         hover = bool(opt.state & QStyle.StateFlag.State_MouseOver)
         pressed = self.lst.pressed_row == index.row()
-        fill = T.color("tile_pressed" if pressed else ("tile_hover" if hover else "tile"))
-        qp.setBrush(fill)
-        qp.setPen(QPen(T.color("survey") if pressed else (T.color("line_strong") if hover else T.color("tile_edge")),
-                       T.BORDER))
-        rad = round(T.RADIUS * 0.5)
-        qp.drawRoundedRect(tile.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
         colour = palette_colour(index.data(ROLE_CAT), self.lst.colour_on)
+        rad = round(T.RADIUS * 0.5)
+        body = tile.adjusted(0.5, 0.5, -0.5, -0.5)
+        # relay 018: a tile keeps its section's colour - a tint mixed into the raised fill, lit from above as in relay
+        # 016, a coloured edge on the left and a coloured icon - so the list reads by colour, not grey
+        base = T.C["tile_pressed" if pressed else ("tile_hover" if hover else "tile")]
+        tint = 0.0 if not self.lst.colour_on or not index.data(ROLE_CAT) else (0.16 if hover else 0.10)
+        top = QColor(T.mix(T.mix(base, colour.name(), tint), "#FFFFFF", 0.035))
+        bottom = QColor(T.mix(base, colour.name(), tint * 0.6))
+        g = QLinearGradient(body.topLeft(), body.bottomLeft())
+        g.setColorAt(0, top)
+        g.setColorAt(1, bottom)
+        for dy, _s, alpha in T.SHADOWS["raised"][:1]:        # a soft shadow under the tile
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(T.qc("shadow", alpha))
+            qp.drawRoundedRect(body.translated(0, dy), rad, rad)
+        qp.setBrush(QBrush(g))
+        edge = T.color("survey") if pressed else (QColor(T.mix(T.C["line_strong"], colour.name(), 0.45 if hover else 0.25))
+                                                   if tint else (T.color("line_strong") if hover else T.color("tile_edge")))
+        qp.setPen(QPen(edge, T.BORDER))
+        qp.drawRoundedRect(body, rad, rad)
+        if tint:
+            qp.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(body, rad, rad)
+            qp.setClipPath(clip)
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.setBrush(colour)
+            qp.drawRect(QRectF(body.left(), body.top(), 3, body.height()))
+            qp.restore()
+        qp.setPen(QPen(T.color("highlight", T.HIGHLIGHT_ALPHA["raised"]), 1))     # the lit top edge
+        qp.drawLine(QPointF(body.left() + rad, body.top() + 1), QPointF(body.right() - rad, body.top() + 1))
         dpr = self.lst.devicePixelRatioF()
         pm = kind_pixmap(index.data(ROLE_ICON) or "custom", colour, 16, dpr)
         qp.drawPixmap(QPointF(tile.left() + 10, tile.center().y() - 8), pm)
@@ -1385,31 +1462,33 @@ class PartItem(QGraphicsObject):
         top = max(box.top() + 4, top)
         halign = {"l": Qt.AlignmentFlag.AlignLeft, "c": Qt.AlignmentFlag.AlignHCenter,
                   "r": Qt.AlignmentFlag.AlignRight}[pos[1]]
+        k = wd["k"]                                       # relay 018: the part's own font size, as a scale
         qp.setPen(small)
-        qp.setFont(T.ui_font(8.5))
-        qp.drawText(QRectF(x0, top, tw, 16), halign, wd["kind_line"])
+        qp.setFont(wd["f_kind"])
+        qp.drawText(QRectF(x0, top, tw, 16 * k), halign, wd["kind_line"])
         # relay 016: the name and the note wrap inside the part; what does not fit ends in "…" (the whole text is
         # in the part's tooltip), and the part grows to fit when its words are edited and there is room
-        y = top + WORDS_KIND
+        y = top + WORDS_KIND * k
         qp.setPen(main)
-        qp.setFont(T.ui_font(10, QFont.Weight.DemiBold))
+        qp.setFont(wd["f_name"])
         for line in wd["name"]:
-            qp.drawText(QRectF(x0, y, tw, WORDS_NAME + 2), halign, line)
-            y += WORDS_NAME
+            qp.drawText(QRectF(x0, y, tw, (WORDS_NAME + 2) * k), halign, line)
+            y += WORDS_NAME * k
         if wd["note"]:
             qp.setPen(soft)
-            qp.setFont(T.ui_font(8))
+            qp.setFont(wd["f_note"])
             y += 2
             for line in wd["note"]:
-                qp.drawText(QRectF(x0, y, tw, WORDS_NOTE + 2), halign, line)
-                y += WORDS_NOTE
+                qp.drawText(QRectF(x0, y, tw, (WORDS_NOTE + 2) * k), halign, line)
+                y += WORDS_NOTE * k
 
     def words(self, shape: str, w: float, h: float, x0: float | None = None) -> dict:
         """Relay 016: how a part's words lay out in its box: the kind line, the name and the note wrapped into the
         room there is (the name first, then the note), whether anything was cut, and the height the part would
         need to show them all. Painting and growing to fit both ask this, so they always agree. Kept until the next
         edit (the screen's words_gen), so a drag repaints from the cache."""
-        key = (shape, w, h, x0, self.screen.show_notes, self.screen.words_gen)
+        key = (shape, w, h, x0, self.screen.show_notes, self.screen.words_gen, self.node.get("font_size"),
+               self.node.get("bold"))
         hit = getattr(self, "_words", None)
         if hit is not None and hit[0] == key:
             return hit[1]
@@ -1433,23 +1512,32 @@ class PartItem(QGraphicsObject):
             name = f"{p['db']} dB"
         detail = str(self._detail() or "")
         note_on = bool(detail and self.screen.show_notes)
-        f_name, f_note = T.ui_font(10, QFont.Weight.DemiBold), T.ui_font(8)
+        # relay 018: the format bar's font size (per part, drawing only) scales the three lines together; bold makes
+        # the name heavier and the kind line demi-bold
+        fs = R.font_size(self.node) or 10.0
+        k = fs / 10.0
+        bold = bool(self.node.get("bold"))
+        f_name = T.ui_font(fs, QFont.Weight.Bold if bold else QFont.Weight.DemiBold)
+        f_note = T.ui_font(8 * k)
+        f_kind = T.ui_font(8.5 * k, QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
+        kh, nh, th = WORDS_KIND * k, WORDS_NAME * k, WORDS_NOTE * k
         name_all = wrap_lines(f_name, name, tw, 99)[0]
         note_all = wrap_lines(f_note, detail, tw, 99)[0] if note_on else []
-        room = box.height() - 12 - WORDS_KIND
-        n_name = max(1, min(len(name_all), int(room // WORDS_NAME)))
-        n_note = min(len(note_all), int(max(0, room - n_name * WORDS_NAME - 2) // WORDS_NOTE)) if note_on else 0
+        room = box.height() - 12 - kh
+        n_name = max(1, min(len(name_all), int(room // nh)))
+        n_note = min(len(note_all), int(max(0, room - n_name * nh - 2) // th)) if note_on else 0
         if note_on and n_note == 0 and n_name > 1:          # keep one line of the note in sight
             n_name -= 1
-            n_note = min(len(note_all), int(max(0, room - n_name * WORDS_NAME - 2) // WORDS_NOTE))
+            n_note = min(len(note_all), int(max(0, room - n_name * nh - 2) // th))
         name_lines, cut = wrap_lines(f_name, name, tw, n_name)
         note_lines, cut2 = wrap_lines(f_note, detail, tw, n_note) if n_note else ([], note_on)
-        block = WORDS_KIND + len(name_lines) * WORDS_NAME + (2 + len(note_lines) * WORDS_NOTE if note_lines else 0)
-        need = 14 + WORDS_KIND + len(name_all) * WORDS_NAME + (2 + len(note_all) * WORDS_NOTE if note_on else 0)
+        block = kh + len(name_lines) * nh + (2 + len(note_lines) * th if note_lines else 0)
+        need = 14 + kh + len(name_all) * nh + (2 + len(note_all) * th if note_on else 0)
         need = need * h / max(box.height(), 1)                # a shape whose words sit in part of its box
-        kind_line = QFontMetricsF(T.ui_font(8.5)).elidedText(kind, Qt.TextElideMode.ElideRight, int(tw))
+        kind_line = QFontMetricsF(f_kind).elidedText(kind, Qt.TextElideMode.ElideRight, int(tw))
         return {"kind": kind, "kind_line": kind_line, "name": name_lines, "note": note_lines, "cut": bool(cut or cut2), "tw": tw,
-                "block": block, "need": need, "full": name + (f"\n{detail}" if detail else "")}
+                "block": block, "need": need, "full": name + (f"\n{detail}" if detail else ""),
+                "k": k, "f_name": f_name, "f_note": f_note, "f_kind": f_kind}
 
     def _detail(self) -> str:
         p = self.node["part"]
@@ -1558,6 +1646,12 @@ class PartItem(QGraphicsObject):
                     return wd["full"] + "\n\n" + hint
             return hint
         _nid, kind, port = hot
+        if kind == "in" and self.node["part"]["type"] == "pc":       # relay 018: which radio, where it is plugged
+            radio = R.upstream_radio(self.screen.rig, self.node["id"], port)
+            lines = self.screen.usb_lines(radio)
+            return (f"USB input {port + 1}" + (f": {R._pname(radio)}" if radio else ": no radio wired here yet")
+                    + ("\n" + "\n".join(lines) if lines else "") + "\n\nDrawing and Output only: never in the "
+                    "recorded text.")
         g = R.port_gender(self.node, kind, port)
         what = ("Output" if kind == "out" else "Input") + (f", SMA {R.GENDER_WORD[g]}" if g else "")
         return f"{what}: drag from here to another part to wire it"
@@ -2906,72 +3000,85 @@ class PartsList(QListWidget):
                 shown_under[head] = True
         for i, any_shown in shown_under.items():
             self.item(i).setHidden(bool(q) and not any_shown)
-        if self.cables and self.count():
-            self.setFixedHeight(sum(self.sizeHintForRow(i) for i in range(self.count())
-                                    if not self.item(i).isHidden()) + 6)
 
     def set_colour_on(self, on: bool):
         """Colour coding on or off: nothing is rebuilt; the tiles are simply painted again."""
         self.colour_on = on
         self.viewport().update()
 
+    # Relay 018: the sections, in the owner's order, each with its own colour (a part keeps its kind's colour).
+    SECTIONS = (("ANTENNAS", "source", ("antenna", "probe", "load")),
+                ("RF PARTS", "condition", ("filter", "lna", R.SPLITTER, "custom")),
+                ("RADIOS AND PC", "radio", ("sdr", "bulkhead_usb", "isolator", R.HUB, "pc")))
+
     def set_labels(self, labels: dict):
+        """The palette, one list (relay 018): My parts, Housings, Antennas, RF parts, SMA, Cables, On cables,
+        Power, Radios and PC, each section headed in its colour. Cables (and the choke) drop onto wires; their
+        keys carry the cable prefix, so a drag from this list says what it is."""
         self.labels = labels
         self.clear()
-        if not self.cables:
-            self._heading("MY PARTS")
-            if not self.library:
-                self._hint("Nothing here yet. Right-click a part on the grid and choose \"Save to my parts\" "
-                           "to keep it, with its name and note, for next time.")
-            for e in self.library:
-                t = e["part"]["type"]
-                name = e["part"].get("name") or labels.get(t, {}).get("label", t)
-                if e["part"].get("detail"):
-                    name += f" ({e['part']['detail']})"
-                self._entry(name, LIB_MIME_PREFIX + e["id"], t, CATEGORY.get(t),
-                            "Your own part: drops with this name and note every time. Right-click to rename, "
-                            "edit or remove it from this list (rigs that used it keep their parts).")
-            self._heading("HOUSINGS · drawing only", "enclosure")
-            for key, name in (("aluminium", "Enclosure (aluminium)"), ("plastic", "Enclosure (plastic)")):
-                self._entry(name, f"{R.ENCLOSURE}:{key}", R.ENCLOSURE, "enclosure",
-                            f"Drag onto the grid: a box called '{R.ENC_PRESETS[key]}' drawn behind parts, such as "
-                            "the radio's cage. Drawing only: it writes nothing into the recorded text.")
-            self._heading("POWER · drawing only", R.POWER)
-            for key, name in R.POWER_KINDS.items():
-                self._entry(name, POWER_MIME_PREFIX + key, R.POWER, R.POWER,
-                            "Drag onto the grid, then drag from its dot to the part it powers. Power wires are "
-                            "drawing only: they never enter the recorded text.")
-            self._heading("SMA · drop onto a dot to mate", "sma")
-            for t in R.SMA_TYPES:
+
+        def note_of(t):
+            tip = labels[t].get("note") or f"Drag onto the grid to add a {labels[t]['label']}."
+            return tip[0].upper() + tip[1:] + ("" if tip.endswith(".") else ".")
+
+        self._heading("MY PARTS", "mine")
+        if not self.library:
+            self._hint("Nothing here yet. Right-click a part on the grid and choose \"Save to my parts\" "
+                       "to keep it, with its name and note, for next time.")
+        for e in self.library:
+            t = e["part"]["type"]
+            name = e["part"].get("name") or labels.get(t, {}).get("label", t)
+            if e["part"].get("detail"):
+                name += f" ({e['part']['detail']})"
+            self._entry(name, LIB_MIME_PREFIX + e["id"], t, CATEGORY.get(t),
+                        "Your own part: drops with this name and note every time. Right-click to rename, "
+                        "edit or remove it from this list (rigs that used it keep their parts).")
+        self._heading("HOUSINGS · drawing only", "enclosure")
+        for key, name in (("aluminium", "Enclosure (aluminium)"), ("plastic", "Enclosure (plastic)")):
+            self._entry(name, f"{R.ENCLOSURE}:{key}", R.ENCLOSURE, "enclosure",
+                        f"Drag onto the grid: a box called '{R.ENC_PRESETS[key]}' drawn behind parts, such as "
+                        "the radio's cage. Drawing only: it writes nothing into the recorded text.")
+        placed = set()
+        sections = list(self.SECTIONS)
+        for title, cat, types in sections[:2]:
+            self._heading(title, cat)
+            for t in types:
                 if t in labels:
-                    self._entry(labels[t]["label"], t, t, "sma",
-                                f"Drag onto the grid to add a {labels[t]['label']}. Drop it with a dot on another "
-                                "part's dot and the two mate directly, port to port, with no wire.")
-            self._heading("PARTS")
-        if self.cables:
-            self._heading("CABLES · drop onto a wire")
-        order = PALETTE_ORDER + [t for t in labels if t not in PALETTE_ORDER]
-        for t in order:
-            if (t not in labels or t in R.OLD_CABLE_TYPES or ((t in R.CABLE_TYPES) != self.cables)
-                    or (not self.cables and t in R.SMA_TYPES)):
-                continue
-            if self.cables:
-                cat = t
-                tip = (f"Drop onto a wire: the wire then carries a {labels[t]['label']}. Give it a length on its "
-                       "card; the recorded text says it, e.g. "
-                       + ("\"3 ft RG316 coax\"." if t == "coax" else "\"16 ft USB cable\"."))
-            else:
-                cat = CATEGORY.get(t)
-                tip = labels[t].get("note") or f"Drag onto the grid to add a {labels[t]['label']}."
-                tip = tip[0].upper() + tip[1:] + ("" if tip.endswith(".") else ".")
-            self._entry(labels[t]["label"], t, t, cat, tip)
-        if self.cables:
-            self._heading("ON CABLES · drop onto a cable")
-            self._entry("Choke", R.CHOKE, R.CHOKE, R.CHOKE,
-                        "A ferrite bead or loop that stops the cable's outside carrying noise. Drop it onto a cable, "
-                        "then slide it along the wire. The cable's text then says \"with choke\".")
-        if self.cables and self.count():
-            self.setFixedHeight(sum(self.sizeHintForRow(i) for i in range(self.count())) + 6)
+                    self._entry(labels[t]["label"], t, t, CATEGORY.get(t), note_of(t))
+                    placed.add(t)
+        self._heading("SMA · drop onto a dot to mate", "sma")
+        for t in R.SMA_TYPES:
+            if t in labels:
+                self._entry(labels[t]["label"], t, t, "sma",
+                            f"Drag onto the grid to add a {labels[t]['label']}. Drop it with a dot on another "
+                            "part's dot and the two mate directly, port to port, with no wire.")
+                placed.add(t)
+        self._heading("CABLES · drop onto a wire", "coax")
+        for t in R.CABLE_TYPES:
+            if t in labels:
+                self._entry(labels[t]["label"], CABLE_MIME_PREFIX + t, t, t,
+                            f"Drop onto a wire: the wire then carries a {labels[t]['label']}. Give it a length on its "
+                            "card; the recorded text says it, e.g. "
+                            + ("\"3 ft RG316 coax\"." if t == "coax" else "\"16 ft USB cable\"."))
+        self._heading("ON CABLES · drop onto a cable", R.CHOKE)
+        self._entry("Choke", CABLE_MIME_PREFIX + R.CHOKE, R.CHOKE, R.CHOKE,
+                    "A ferrite bead or loop that stops the cable's outside carrying noise. Drop it onto a cable, "
+                    "then slide it along the wire. The cable's text then says \"with choke\".")
+        self._heading("POWER · drawing only", R.POWER)
+        for key, name in R.POWER_KINDS.items():
+            self._entry(name, POWER_MIME_PREFIX + key, R.POWER, R.POWER,
+                        "Drag onto the grid, then drag from its dot to the part it powers. Power wires are "
+                        "drawing only: they never enter the recorded text.")
+        title, cat, types = sections[2]
+        self._heading(title, cat)
+        rest = [t for t in PALETTE_ORDER + [t for t in labels if t not in PALETTE_ORDER]
+                if t in labels and t not in placed and t not in R.CABLE_TYPES and t not in R.OLD_CABLE_TYPES
+                and t not in R.SMA_TYPES and t not in ("usb",)]
+        for t in list(types) + [t for t in rest if t not in types]:
+            if t in labels and t not in placed:
+                self._entry(labels[t]["label"], t, t, CATEGORY.get(t), note_of(t))
+                placed.add(t)
 
     def _heading(self, text: str, cat: str | None = None):
         it = QListWidgetItem(text)
@@ -3004,7 +3111,7 @@ class PartsList(QListWidget):
         super().leaveEvent(ev)
 
     def contextMenuEvent(self, ev):
-        if self.cables or self.on_library_menu is None:
+        if self.on_library_menu is None:
             return
         it = self.itemAt(ev.pos())
         key = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
@@ -3020,8 +3127,8 @@ class PartsList(QListWidget):
         if not it or not it.data(Qt.ItemDataRole.UserRole):
             return
         md = QMimeData()
-        key = it.data(Qt.ItemDataRole.UserRole)
-        md.setData(MIME, ((CABLE_MIME_PREFIX if self.cables else "") + key).encode())
+        key = it.data(Qt.ItemDataRole.UserRole)       # relay 018: a cable's key already carries its prefix
+        md.setData(MIME, key.encode())
         d = QDrag(self)
         d.setMimeData(md)
         colour = palette_colour(it.data(ROLE_CAT), self.colour_on)
@@ -3282,6 +3389,8 @@ class EditCard(QFrame):
         self.wire = None
         self.enc = None
         self.power = None
+        self._hold = None              # relay 018: the wire whose card is rebuilt in place (no hide, no flicker)
+        self._anim = None
         self.hide()
 
     # the shadow follows the card wherever it is placed, and shows and hides with it (relay 016)
@@ -3363,11 +3472,67 @@ class EditCard(QFrame):
         b.clicked.connect(lambda: self.screen.set_lock([bid], not R.is_locked(box)))
         return b
 
+    WIDTHS = (300, 360, 420, 480)      # relay 018: a card widens before it would ever need a scroll bar
+
+    def _need(self, width: int) -> int:
+        """The height the card's contents need at this width (wrapped text counted at that width)."""
+        lay = self.inner.layout()
+        inner_w = width - 2
+        h = lay.totalHeightForWidth(inner_w) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+        return max(h, lay.totalMinimumSize().height()) + 2
+
+    def _target(self) -> int:
+        """Relay 018: no scroll bar and no cut-off text. The card is as tall as what it holds; where the grid is too
+        short for that, it widens (text wraps into fewer lines) until it fits. Only a card taller than the grid even
+        at its widest falls back to scrolling. Returns the height and sets the width."""
+        room = self.screen.card_room()
+        self.inner.layout().activate()
+        least = self.inner.layout().totalMinimumSize().width() + 4      # what its widest row cannot do without
+        for wd in self.WIDTHS:
+            if wd < least and wd != self.WIDTHS[-1]:
+                continue
+            need = self._need(wd)
+            if need <= room:
+                self.setFixedWidth(wd)
+                self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                return max(120, need)
+        self.setFixedWidth(self.WIDTHS[-1])
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        return max(120, room)
+
     def _fit(self):
-        """As tall as what it holds, but never taller than the grid it sits on: then it scrolls."""
-        self.inner.adjustSize()
-        room = self.parent().viewport().height() - 16 if self.parent() is not None else 2000
-        self.setFixedHeight(max(120, min(self.inner.sizeHint().height() + 2, room)))
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        self.setFixedHeight(self._target())
+
+    def _ease_to(self, old_h: int):
+        """Relay 018: after an in-place rebuild, the card eases from its old height to the new one (about 120 ms);
+        the scroll bar stays off throughout, so none flashes up mid-way."""
+        new_h = self._target()
+        bar = self.scroll.verticalScrollBarPolicy()
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        if self._anim is not None:
+            self._anim.stop()
+        if old_h == new_h or old_h <= 0:
+            self.setFixedHeight(new_h)
+            self.scroll.setVerticalScrollBarPolicy(bar)
+            return
+        anim = QVariantAnimation(self)
+        anim.setDuration(120)
+        anim.setStartValue(int(old_h))
+        anim.setEndValue(int(new_h))
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.valueChanged.connect(lambda v: self.setFixedHeight(int(v)))
+
+        def done():
+            self.setFixedHeight(new_h)
+            self.scroll.setVerticalScrollBarPolicy(bar)
+            self._anim = None
+            self.screen._place_card()
+        anim.finished.connect(done)
+        self._anim = anim
+        anim.start()
 
     def _note(self, text: str):
         lab = QLabel(text)
@@ -3376,6 +3541,48 @@ class EditCard(QFrame):
         lab.setFont(T.ui_font(8.5))
         self.lay.addWidget(lab)
         return lab
+
+    _look_open = False                  # relay 018: the card's Look section, folded unless the owner opened it
+
+    def _look_section(self, box: dict, bid: str, shape: bool = True, textpos: bool = True):
+        """Relay 018: shape, text position, colour and lock are the format bar's now (one place, for every box
+        selected). The card keeps them too, folded under one line, so it stays short enough never to scroll."""
+        head = QPushButton(("Look ▾" if self._look_open else "Look ▸") + "   shape, text, colour, lock")
+        head.setObjectName("LookToggle")
+        head.setToolTip("Also on the format bar above the grid, for every box selected")
+        head.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)     # never wider than the card
+        head.setFlat(True)
+        head.setStyleSheet(f"QPushButton#LookToggle {{ background: transparent; border: none; text-align: left;"
+                           f" padding: 4px 0; min-height: 0; color: {T.C['muted']}; }}"
+                           f"QPushButton#LookToggle:hover {{ color: {T.C['text']}; }}")
+        self.lay.addWidget(head)
+        box_w = QWidget()
+        box_w.setObjectName("LookBox")
+        box_w.setStyleSheet("QWidget#LookBox { background: transparent; }")
+        inner = QVBoxLayout(box_w)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(6)
+        outer, self.lay = self.lay, inner
+        try:
+            if shape:
+                self._shape_row(box, bid)
+            if textpos:
+                self._textpos_row(box, bid)
+            self._colour_row(box, bid)
+            self._row(self._lock_button(box, bid))
+        finally:
+            self.lay = outer
+        self.lay.addWidget(box_w)
+        box_w.setVisible(self._look_open)
+
+        def flip():
+            EditCard._look_open = not EditCard._look_open
+            box_w.setVisible(EditCard._look_open)
+            head.setText(("Look ▾" if EditCard._look_open else "Look ▸") + head.text()[6:])
+            old = self.height()
+            self.inner.adjustSize()
+            self._ease_to(old)
+        head.clicked.connect(flip)
 
     def _colour_row(self, box: dict, bid: str):
         """A row of palette swatches, a custom colour and "Use kind colour" (relay 006). The
@@ -3508,7 +3715,32 @@ class EditCard(QFrame):
         hint.setProperty("muted", True)
         g.addWidget(hint, 4, 0, 1, 3)
         g.setColumnStretch(1, 1)
+        # relay 018: folded while the antenna has no lead, so the card stays short enough never to scroll
+        rows = [g.itemAt(i).widget() for i in range(g.count())
+                if g.getItemPosition(i)[0] >= 1 and g.itemAt(i).widget() is not None]
+        has = bool(lead)
+        tog = QToolButton()
+        tog.setObjectName("Tool")
+        tog.setAutoRaise(True)
+        tog.setToolTip("Show or hide the lead's length, connector and note")
+        g.addWidget(tog, 0, 2, Qt.AlignmentFlag.AlignRight)
+
+        def show(on):
+            for w_ in rows:
+                w_.setVisible(on)
+            tog.setText("Hide ▾" if on else ("Show ▸" if has else "Add ▸"))
+        show(has or EditCard._lead_open)
+
+        def flip():
+            EditCard._lead_open = not rows[0].isVisible()
+            old = self.height()
+            show(EditCard._lead_open)
+            self.inner.adjustSize()
+            self._ease_to(old)
+        tog.clicked.connect(lambda *_: flip())
         self.lay.addWidget(box)
+
+    _lead_open = False
 
     def _sma_rows(self, node: dict):
         """An SMA part's kind: an adapter's shape, gender and turn (written into the recorded text
@@ -3554,6 +3786,8 @@ class EditCard(QFrame):
     def show_for(self, item: PartItem | None):
         # Hidden while rebuilt: widgets added to a panel already on screen stay
         # hidden until shown, so the card is rebuilt off screen and shown whole.
+        if item is None and self._hold is not None:
+            return                       # relay 018: a wire card being rebuilt in place stays on screen
         self.hide()
         self._clear()
         self.wire, self.enc, self.power = None, None, None
@@ -3644,18 +3878,15 @@ class EditCard(QFrame):
             self._sma_rows(node)
         if p["type"] == "antenna":
             self._antenna_rows(node)
-        self._shape_row(node, node["id"])
-        self._textpos_row(node, node["id"])
-        self._colour_row(node, node["id"])
+        self._look_section(node, node["id"])
         save = QPushButton("Save to my parts")
         save.setToolTip("Keep this part (kind, name, note, fields, size, figures) in My parts, to drop again "
                         "with the same name and note")
         save.clicked.connect(lambda: self.screen.save_to_library(node))
-        self._row(self._lock_button(node, node["id"]), save)
         out = QPushButton("Take out of rig")
         out.setToolTip("Removes this part from the drawing. Nothing is saved until Save.")
         out.clicked.connect(self.screen.take_out_selected)
-        self.lay.addWidget(out)
+        self._row(save, out)
         self._fit()
         self.show()
         self.raise_()
@@ -3709,13 +3940,11 @@ class EditCard(QFrame):
         hint.setFont(T.ui_font(8.5))
         self.lay.addWidget(hint)
         self._note("Drawing only: power sources and power wires never enter the recorded text.")
-        self._shape_row(item.box, item.box["id"])
-        self._textpos_row(item.box, item.box["id"])
-        self._colour_row(item.box, item.box["id"])
+        self._look_section(item.box, item.box["id"])
         out = QPushButton("Take out of rig")
         out.setToolTip("Removes this power source and its power wires from the drawing. Nothing is saved until Save.")
         out.clicked.connect(self.screen.take_out_selected)
-        self._row(self._lock_button(item.box, item.box["id"]), out)
+        self._row(out)
         self._fit()
         self.show()
         self.raise_()
@@ -3756,11 +3985,11 @@ class EditCard(QFrame):
         hint.setProperty("muted", True)
         hint.setFont(T.ui_font(8.5))
         self.lay.addWidget(hint)
-        self._colour_row(item.enc, item.enc["id"])
+        self._look_section(item.enc, item.enc["id"], shape=False, textpos=False)
         out = QPushButton("Take out of rig")
         out.setToolTip("Removes the box only; the parts in it stay. Nothing is saved until Save.")
         out.clicked.connect(self.screen.take_out_selected)
-        self._row(self._lock_button(item.enc, item.enc["id"]), out)
+        self._row(out)
         self._fit()
         self.show()
         self.raise_()
@@ -3773,9 +4002,16 @@ class EditCard(QFrame):
         for it in self.screen.enc_items:
             it.update()
 
-    def show_for_wire(self, item: "WireItem"):
-        """The card for a wire: the cables it carries, in order from its start."""
-        self.hide()
+    def show_for_wire(self, item: "WireItem", smooth: bool = False):
+        """The card for a wire: the cables it carries, in order from its start. smooth (relay 018): rebuilt in place
+        on screen after an edit on it (a cable's type, a cable or choke added or removed), with updates held so
+        nothing flickers, then eased to its new height."""
+        smooth = smooth and self.isVisible()
+        old_h = self.height()
+        if smooth:
+            self.setUpdatesEnabled(False)
+        else:
+            self.hide()
         self._clear()
         self.node, self.wire, self.enc, self.power = None, item.wire, None, None
         nodes = {n["id"]: n for n in self.screen.rig["nodes"]}
@@ -3795,9 +4031,7 @@ class EditCard(QFrame):
             sep.setToolTip("Unscrew them: the mating is taken out and the second part steps away. Undo puts it back.")
             sep.clicked.connect(self.screen.take_out_selected)
             self._row(sep)
-            self._fit()
-            self.show()
-            self.raise_()
+            self._finish(smooth, old_h)
             return
         cables = self.wire.get("cables") or []
         if not cables:
@@ -3826,6 +4060,20 @@ class EditCard(QFrame):
         out.setToolTip("Removes this wire (and its cables) from the drawing. Nothing is saved until Save.")
         out.clicked.connect(self.screen.take_out_selected)
         self.lay.addWidget(out)
+        self._finish(smooth, old_h)
+
+    def _finish(self, smooth: bool, old_h: int):
+        if smooth:
+            for w in self.inner.findChildren(QWidget):     # widgets added to a shown card start hidden
+                if not w.isHidden() or w.parent() is None:
+                    continue
+                if not w.testAttribute(Qt.WidgetAttribute.WA_WState_ExplicitShowHide):
+                    w.show()
+            self.inner.adjustSize()
+            self._ease_to(old_h)
+            self.setUpdatesEnabled(True)
+            self.raise_()
+            return
         self._fit()
         self.show()
         self.raise_()
@@ -4085,9 +4333,21 @@ class EditCard(QFrame):
         self._wire_changed()
 
     def _wire_changed(self):
+        """An edit on the wire's card that changes what the card shows: the drawing is redrawn, the wire stays
+        selected, and the card is rebuilt in place, never hidden and shown again (relay 018: no flicker)."""
         key = (self.wire["from"], self.wire["port"])
-        self.screen.changed()
-        self.screen.select_wire(*key)
+        self._hold = key
+        try:
+            self.screen.changed()
+            self.screen.select_wire(*key)
+            wi = self.screen.wire_item(*key)
+            if wi is not None:
+                self.show_for_wire(wi, smooth=True)
+        finally:
+            self._hold = None
+        if self.screen.wire_item(*key) is None:
+            self.show_for(None)
+        self.screen._place_card()
 
     def _set(self, key, value):
         if self.node is None:
@@ -4117,6 +4377,255 @@ class EditCard(QFrame):
 
 
 # ---------------------------------------------------------------- the screen
+# ---------------------------------------------------------------- relay 018: the blank start, the minimap, the footer
+class StartPanel(QFrame):
+    """What the grid shows when no rig is open (the Chain screen opens blank, relay 018): New rig, Open rig… and the
+    last three rigs worked on. Sits in the middle of the grid, like the empty-grid hint, but can be clicked."""
+
+    def __init__(self, screen: "ChainScreen", parent):
+        super().__init__(parent)
+        self.screen = screen
+        self.setObjectName("StartPanel")
+        self.setFixedWidth(440)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(T.SPACE * 3, T.SPACE * 3, T.SPACE * 3, T.SPACE * 3)
+        lay.setSpacing(T.SPACE)
+        t = QLabel("No rig is open")
+        t.setFont(T.ui_font(13, QFont.Weight.DemiBold))
+        lay.addWidget(t)
+        s = QLabel("Start a new rig, or open one you have drawn. Nothing on the grid changes a saved rig until Save.")
+        s.setProperty("muted", True)
+        s.setWordWrap(True)
+        lay.addWidget(s)
+        row = QHBoxLayout()
+        row.setSpacing(T.SPACE)
+        self.btn_new = QToolButton()
+        self.btn_new.setObjectName("Primary")
+        self.btn_new.setText("New rig")
+        self.btn_new.setIcon(tool_icon("new", "background"))
+        self.btn_new.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_new.setFixedHeight(T.TOOL_H)
+        self.btn_new.clicked.connect(lambda *_: screen.new_rig())
+        self.btn_open = QToolButton()
+        self.btn_open.setObjectName("Tool")
+        self.btn_open.setText("Open rig…")
+        self.btn_open.setIcon(tool_icon("rig"))
+        self.btn_open.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_open.setFixedHeight(T.TOOL_H)
+        self.btn_open.setToolTip("Every rig, with the one used for runs marked (Ctrl+O)")
+        self.btn_open.clicked.connect(lambda *_: screen.open_rig_dialog())
+        row.addWidget(self.btn_new)
+        row.addWidget(self.btn_open)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.recent_title = QLabel("RECENT")
+        self.recent_title.setProperty("muted", True)
+        self.recent_title.setFont(T.ui_font(7.5, QFont.Weight.DemiBold))
+        self.recent_title.setContentsMargins(0, T.SPACE, 0, 0)
+        lay.addWidget(self.recent_title)
+        self.recent_box = QVBoxLayout()
+        self.recent_box.setSpacing(4)
+        lay.addLayout(self.recent_box)
+        self.recent_buttons: list = []
+
+    def refresh(self):
+        while self.recent_box.count():
+            w = self.recent_box.takeAt(0).widget()
+            if w:
+                w.hide()
+                w.deleteLater()
+        self.recent_buttons = []
+        names = self.screen.recent_rigs()[:3]
+        used = self.screen.used_rig_name()
+        for n in names:
+            d = self.screen.display.get(n, {})
+            b = QPushButton(n + ("   ·   used for runs" if n == used else "")
+                            + ("   ·   archived" if d.get("archived") else ""))
+            b.setObjectName("RecentRig")
+            b.setToolTip(f"Open “{n}”")
+            b.setStyleSheet("text-align: left;")
+            b.clicked.connect(lambda _=False, n=n: self.screen.open_named(n))
+            self.recent_box.addWidget(b)
+            self.recent_buttons.append(b)
+        self.recent_title.setVisible(bool(names))
+        if not names:
+            q = QLabel("The rigs you open will be listed here.")
+            q.setProperty("muted", True)
+            q.setFont(T.ui_font(8.5))
+            self.recent_box.addWidget(q)
+        self.adjustSize()
+
+
+class Minimap(QWidget):
+    """Relay 018, View > Minimap: a small overview of the whole rig in the grid's bottom-right corner, with the part
+    of it on screen outlined. Click or drag in it to jump there. Off by default; drawn from the scene, cached until
+    the drawing changes."""
+    W, H = 220, 140
+
+    def __init__(self, screen: "ChainScreen", view: QGraphicsView):
+        super().__init__(view)
+        self.screen, self.view = screen, view
+        self.setObjectName("Minimap")
+        self.setFixedSize(self.W, self.H)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("The whole rig: click or drag to jump there (View > Minimap turns it off)")
+        self._pm = None
+        self._src = QRectF()
+        self._stale = True
+        self.hide()
+
+    def invalidate(self):
+        self._stale = True
+        if self.isVisible():
+            self.update()
+
+    def place(self):
+        vp = self.view.viewport().geometry()
+        self.move(vp.right() - self.W - 10, vp.bottom() - self.H - 10)
+        self.raise_()
+
+    def _render(self):
+        src = QRectF()
+        for it in self.screen.all_box_items() + self.screen.wire_items:
+            src = src.united(it.sceneBoundingRect())
+        if src.isNull():
+            src = QRectF(0, 0, 600, 300)
+        src = src.adjusted(-60, -60, 60, 60)
+        dpr = self.devicePixelRatioF()
+        pm = QPixmap(int(self.W * dpr), int(self.H * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        k = min((self.W - 12) / src.width(), (self.H - 12) / src.height())
+        w, h = src.width() * k, src.height() * k
+        target = QRectF((self.W - w) / 2, (self.H - h) / 2, w, h)
+        self.screen.scene.render(p, target, src)
+        p.end()
+        self._pm, self._src, self._target, self._stale = pm, src, target, False
+
+    def _to_scene(self, pt: QPointF) -> QPointF:
+        t, s = self._target, self._src
+        return QPointF(s.left() + (pt.x() - t.left()) / max(t.width(), 1) * s.width(),
+                       s.top() + (pt.y() - t.top()) / max(t.height(), 1) * s.height())
+
+    def paintEvent(self, ev):
+        if self._stale or self._pm is None:
+            self._render()
+        qp = QPainter(self)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        qp.setPen(QPen(T.color("line_strong"), 1))
+        qp.setBrush(T.color("elev_overlay", 0.94))
+        qp.drawRoundedRect(body, 8, 8)
+        qp.drawPixmap(0, 0, self._pm)
+        vis = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+        t, s = self._target, self._src
+        k = t.width() / max(s.width(), 1)
+        r = QRectF(t.left() + (vis.left() - s.left()) * k, t.top() + (vis.top() - s.top()) * k,
+                   vis.width() * k, vis.height() * k).intersected(body.adjusted(2, 2, -2, -2))
+        qp.setPen(QPen(T.color("survey"), 1.5))
+        qp.setBrush(T.color("survey", 0.10))
+        qp.drawRect(r)
+        qp.end()
+
+    def mousePressEvent(self, ev):
+        self.view.centerOn(self._to_scene(ev.position()))
+        self.update()
+
+    def mouseMoveEvent(self, ev):
+        if ev.buttons() & Qt.MouseButton.LeftButton:
+            self.view.centerOn(self._to_scene(ev.position()))
+            self.update()
+
+
+class ChecksFooter(QFrame):
+    """Relay 018: the Checks, as a footer along the bottom of the Chain screen. A count of each kind in its colour
+    (problem: alert; warning: anomaly; note: muted), the first message beside them, and the whole list on a click,
+    where a click on a message selects the parts it is about. "No problems found" is quiet, in the muted colour."""
+    COLOURS = {"problem": "alert", "warning": "anomaly", "note": "muted"}
+    WORDS = {"problem": ("problem", "problems"), "warning": ("warning", "warnings"), "note": ("note", "notes")}
+
+    def __init__(self, screen: "ChainScreen"):
+        super().__init__()
+        self.screen = screen
+        self.setObjectName("Footer")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(T.SPACE * 2, 4, T.SPACE * 2, 4)
+        h.setSpacing(T.SPACE)
+        self.title = QLabel("Checks")
+        self.title.setFont(T.ui_font(8.5, QFont.Weight.DemiBold))
+        h.addWidget(self.title)
+        self.counts = {}
+        for lv in R.CHECK_LEVELS:
+            c = QToolButton()
+            c.setObjectName("CheckCount")
+            c.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            c.setIcon(dot_icon(T.color(self.COLOURS[lv])))
+            c.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            c.clicked.connect(lambda _=False, lv=lv: self.show_all(lv))
+            self.counts[lv] = c
+            h.addWidget(c)
+        self.first = ElidedLabel("", "")
+        self.first.setObjectName("FirstCheck")
+        self.first.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.first.mousePressEvent = lambda ev: self._first_clicked()
+        h.addWidget(self.first, 1)
+        self.all_btn = QToolButton()
+        self.all_btn.setObjectName("Tool")
+        self.all_btn.setText("All checks ▴")
+        self.all_btn.setToolTip("Every check; click one to select what it is about")
+        self.all_btn.clicked.connect(lambda *_: self.show_all(None))
+        h.addWidget(self.all_btn)
+        self.items: list = []
+        self.setFixedHeight(32)
+
+    def show_checks(self, items: list, empty_text: str):
+        self.items = items
+        counts = R.check_counts(items)
+        for lv, btn in self.counts.items():
+            n = counts[lv]
+            btn.setVisible(n > 0)
+            btn.setText(f"{n} {self.WORDS[lv][0 if n == 1 else 1]}")
+            btn.setStyleSheet(f"QToolButton#CheckCount {{ background: transparent; border: none; padding: 2px 4px;"
+                              f" color: {T.C['alert_text'] if lv == 'problem' else T.C[self.COLOURS[lv]]};"
+                              f" font-weight: 600; }} QToolButton#CheckCount:hover {{ color: {T.C['text']}; }}")
+            btn.setToolTip(f"Show the {self.WORDS[lv][1]}")
+        self.all_btn.setVisible(bool(items))
+        if not items:
+            self.first.setText(empty_text)
+            self.first.setStyleSheet(f"color: {T.C['muted']};")
+            self.first.setToolTip("")
+            self.title.setStyleSheet(f"color: {T.C['muted']};")
+            return
+        c = items[0]
+        self.first.setText(c["text"])
+        self.first.setStyleSheet(f"color: {T.C['text'] if c['level'] != 'note' else T.C['muted']};")
+        self.first.setToolTip(c["text"] + "\n\nClick to select it. A check warns; it never stops a save.")
+        self.title.setStyleSheet(f"color: {T.C['text']};")
+
+    def _first_clicked(self):
+        if self.items:
+            self.screen.select_ids(self.items[0]["ids"])
+
+    def show_all(self, level: str | None):
+        if not self.items:
+            return
+        m = Menu(self)
+        for lv in R.CHECK_LEVELS:
+            these = [c for c in self.items if c["level"] == lv and (level is None or level == lv)]
+            if not these:
+                continue
+            m.add_heading(self.WORDS[lv][1])
+            for c in these:
+                a = m.addAction(dot_icon(T.color(self.COLOURS[lv])), c["text"])
+                a.triggered.connect(lambda _=False, ids=c["ids"]: self.screen.select_ids(ids))
+        size = m.sizeHint()
+        at = self.mapToGlobal(QPoint(self.all_btn.x() + self.all_btn.width() - size.width(), -size.height() - 4))
+        self.screen._footer_menu = m
+        m.exec(at)
+
+
 class ChainScreen(QWidget):
     status = Signal(str)
 
@@ -4247,57 +4756,54 @@ class ChainScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # The toolbar (relay 007, spread out in relay 011): the rig section and its actions with Save and
-        # Use for runs on the first row; edit, arrange, picture and help, then the run switches and the
-        # set-apart Clear grid on the second. The view menus (Grid, Parts, Wires, Zoom) sit on a small bar
-        # at the grid's top edge, with the view they change. One height for every toolbar button.
+        # Relay 018: the header is two calm rows at most. Row 1: the rig picker with its status, the direction
+        # switch, Save and Use for runs. Row 2: the format bar, live when something is selected. Undo, Redo, Tidy
+        # and the view controls sit on the bar at the grid's top edge; everything else is in the menu bar
+        # (File, Edit, View, Arrange, Tools, Help), built by build_menus. The buttons the menus replaced are still
+        # made (hidden): their enabled state and their tips are what the menu entries read.
         bar = QFrame()
         bar.setObjectName("Toolbar")
         rows = QVBoxLayout(bar)
-        rows.setContentsMargins(T.SPACE * 2, T.SPACE + T.SPACE // 2, T.SPACE * 2, T.SPACE + T.SPACE // 2)
-        rows.setSpacing(T.SPACE)
+        rows.setContentsMargins(T.SPACE * 2, T.SPACE, T.SPACE * 2, T.SPACE)
+        rows.setSpacing(T.SPACE - 2)
         b = QHBoxLayout()
-        b.setSpacing(T.SPACE * 2)
+        b.setSpacing(T.SPACE * 1.5)
         rows.addLayout(b)
-        info = QHBoxLayout()
-        info.setSpacing(T.SPACE * 2)
-        rows.addLayout(info)
-        top = Qt.AlignmentFlag.AlignTop
+        top = Qt.AlignmentFlag.AlignVCenter
         lab = QLabel()
         lab.setPixmap(tool_icon("rig", "muted").pixmap(16, 16))
         lab.setToolTip("Rig: the drawing on the grid")
         self.pick = QComboBox()
         self.pick.setObjectName("RigPick")
-        self.pick.setMinimumWidth(220)
-        self.pick.setFixedHeight(T.TOOL_H - 6)
+        self.pick.setMinimumWidth(240)
+        self.pick.setFixedHeight(T.TOOL_H - 4)
+        self.pick.setPlaceholderText("No rig open")
         self.pick.setToolTip("The rig shown on the grid. Each saved rig, and each chain the web page made, is "
-                             "listed; archived rigs are listed apart, under Archived.")
+                             "listed; archived rigs are listed apart, under Archived. File > Open rig… shows the "
+                             "same list with the rig used for runs marked.")
         self.pick.activated.connect(self._picked)
-        # The rig's state has a line of its own under the picker (relay 011): it wraps, never clips.
         self.state = QLabel()
         self.state.setObjectName("RigState")
         self.state.setProperty("muted", True)
         self.state.setFont(T.ui_font(8.5))
-        self.state.setWordWrap(True)
         self.state.setTextFormat(Qt.TextFormat.PlainText)
-        self.state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+        self.state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.state.setToolTip("This rig's state: saved or not, when it last ran, static or not")
         self.pill = QLabel()
         self.pill.setObjectName("Pill")
         rig_seg = QFrame()
         rig_seg.setObjectName("Segment")
         rig_seg.setAccessibleName("rig")
-        rv = QVBoxLayout(rig_seg)
-        rv.setContentsMargins(T.SPACE // 2, T.SPACE // 2, T.SPACE, T.SPACE // 2 + 2)
-        rv.setSpacing(T.SPACE // 2)
-        rh = QHBoxLayout()
-        rh.setSpacing(T.SPACE // 2)
+        rh = QHBoxLayout(rig_seg)
+        rh.setContentsMargins(T.SPACE // 2, T.SPACE // 2, T.SPACE, T.SPACE // 2)
+        rh.setSpacing(T.SPACE)
         rh.addWidget(lab)
-        rh.addWidget(self.pick, 1)
+        rh.addWidget(self.pick)
         rh.addWidget(self.pill)
-        rv.addLayout(rh)
-        rv.addWidget(self.state)
-        rig_seg.setMinimumWidth(T.SPACE * 45)
+        rh.addWidget(self.state, 1)
+        b.addWidget(rig_seg, 1, top)
+        # The menu bar's actions, kept as buttons nobody sees (refresh_side keeps their state; older window checks
+        # press them). None of them is in a layout.
         self.btn_new = self._tool("New rig", "Start a new rig: blank, or from a template", self.new_rig, icon="new")
         self.btn_rename = self._tool("Rename", "Give this rig a new name", self.rename_rig, icon="rename")
         self.btn_rig = self._tool("Rig", "History of this rig's saves; archive or restore it", lambda: None,
@@ -4305,33 +4811,19 @@ class ChainScreen(QWidget):
         self.btn_rig.setText("Rig ▾")
         self.btn_rig.setMenu(self._rig_menu())
         self.btn_rig.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        b.addWidget(rig_seg, 0, top)
-        b.addWidget(self._segment(self.btn_new, self.btn_rename, self.btn_rig, name="rig actions"), 0, top)
-        b.addStretch(1)
         self.chk_static = QCheckBox("Static")
         self.chk_static.setToolTip("A static rig is never questioned before a run: it does not change.")
         self.chk_static.clicked.connect(self._static_clicked)
-        self.btn_text = self._tool("Recorded text", "Show or hide the text each run records for this rig, one line "
-                                   "per radio, with the nominal gain estimate", lambda: None, icon="text")
-        self.btn_text.setCheckable(True)
-        self.btn_text.toggled.connect(self._toggle_text)
-        self.btn_out = self._tool("Output", "Show or hide the Output panel: technical data for what is selected, "
-                                  "or for the whole rig", lambda: None, icon="output")
-        self.btn_out.setCheckable(True)
-        self.btn_save = self._tool("Save", "Write this rig to chain.json through the service", self.save,
-                                   icon="save", kind="Primary")
-        self.btn_use = self._tool("Use for runs", "", self.use_for_runs, icon="use", kind="Primary")
-        b.addWidget(self.btn_save, 0, top)
-        b.addWidget(self.btn_use, 0, top)
-        root.addWidget(bar)
-
-        self.btn_undo = self._tool("Undo", "Undo (Ctrl+Z)", self.undo, icon="undo", label=False)
-        self.btn_redo = self._tool("Redo", "Redo (Ctrl+Y)", self.redo, icon="redo", label=False)
-        info.addWidget(self._segment(self.btn_undo, self.btn_redo, name="edit"))
-        self.btn_tidy = self._tool("Tidy", "Arrange the rig in its direction: left to right, source on the left and "
-                                   "branches one under another; or top to bottom, source at the top and branches side "
-                                   "by side. Locked boxes stay; parts make way for a group. Undo puts it back.",
-                                   self.tidy, icon="tidy")
+        self.btn_picture = self._tool("Picture…", "Save the drawing as a PNG picture, to a place you pick",
+                                      lambda: self.export_picture(), icon="picture")
+        self.btn_help = self._tool("Help", "Keyboard shortcuts (F1)", self.show_help, icon="help", label=False)
+        self.btn_clear = self._tool("Clear grid", "Take every part and wire off the grid. Undo brings them back; "
+                                    "nothing is saved until Save.", self.clear_grid, icon="clear", kind="Danger")
+        self._kept = QWidget(self)               # their parent, never shown
+        self._kept.hide()
+        for w in (self.btn_new, self.btn_rename, self.btn_rig, self.chk_static, self.btn_picture, self.btn_help,
+                  self.btn_clear):
+            w.setParent(self._kept)
         # Relay 016: the rig's layout direction. Changing it moves nothing until Tidy; Undo covers it.
         self.btn_dir = self._tool("Left → right", "The rig's direction: left to right, or top to bottom. New wires "
                                   "leave from the output side and arrive on the input side; Tidy lays the rig out "
@@ -4348,8 +4840,91 @@ class ChainScreen(QWidget):
             self.dir_actions[key] = a
         self.btn_dir.setMenu(dm)
         self.btn_dir.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        b.addWidget(self.btn_dir, 0, top)
+        self.btn_save = self._tool("Save", "Write this rig to chain.json through the service (Ctrl+S)", self.save,
+                                   icon="save", kind="Primary")
+        self.btn_use = self._tool("Use for runs", "", self.use_for_runs, icon="use", kind="Primary")
+        b.addWidget(self.btn_save, 0, top)
+        b.addWidget(self.btn_use, 0, top)
+
+        # Row 2, the format bar: what the selection looks like. Stays in place when nothing is selected (a quiet
+        # line says so), so the grid never jumps up and down as the selection changes.
+        self.format_bar = QFrame()
+        self.format_bar.setObjectName("FormatBar")
+        fb = QHBoxLayout(self.format_bar)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.setSpacing(T.SPACE // 2)
+        self.fmt_title = QLabel("FORMAT")
+        self.fmt_title.setProperty("muted", True)
+        self.fmt_title.setFont(T.ui_font(7.5, QFont.Weight.DemiBold))
+        fb.addWidget(self.fmt_title)
+        fb.addSpacing(T.SPACE // 2)
+        self.fmt_size = QComboBox()
+        self.fmt_size.setObjectName("FontSize")
+        self.fmt_size.addItem("Standard size", None)
+        for fs in R.FONT_SIZES:
+            self.fmt_size.addItem(f"{fs} pt", fs)
+        self.fmt_size.setToolTip("The selected parts' font size (drawing only; kept in My parts). Standard is 10 pt.")
+        self.fmt_size.activated.connect(lambda i: self.set_font(self.selected_boxes(), self.fmt_size.itemData(i)))
+        self.fmt_size.setFixedHeight(T.TOOL_H - 6)
+        fb.addWidget(self.fmt_size)
+        self.fmt_bold = self._tool("B", "Bold: the selected parts' names in a heavier weight (drawing only)",
+                                   lambda: self.set_bold(self.selected_boxes(), self.fmt_bold.isChecked()), label=True)
+        self.fmt_bold.setCheckable(True)
+        f = self.fmt_bold.font()
+        f.setBold(True)
+        self.fmt_bold.setFont(f)
+        self.fmt_bold.setFixedWidth(T.TOOL_H)
+        self.fmt_pos = self._tool("Text ▾", "Where the words sit in the box: 3 × 3", lambda: None, icon="textpos")
+        self.fmt_pos.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.fmt_pos.setMenu(self._pos_menu())
+        self.fmt_colour = self._tool("Colour ▾", "The selection's own colour, or back to its kind's", lambda: None,
+                                     icon="colour")
+        self.fmt_colour.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        cm = Menu(self)
+        cm.setToolTipsVisible(True)
+        cm.aboutToShow.connect(lambda: (cm.clear(), box_colour_menu(cm, self, self.selected_boxes()),
+                                        self._flatten(cm)))
+        self.fmt_colour.setMenu(cm)
+        self.fmt_shape = self._tool("Shape ▾", "The selected parts' outline", lambda: None, icon="shape")
+        self.fmt_shape.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        sm = Menu(self)
+        sm.aboutToShow.connect(lambda: self._fill_shape_menu(sm))
+        self.fmt_shape.setMenu(sm)
+        self.fmt_layer = self._tool("Layer ▾", "Bring to front, forward, backward or to the back", lambda: None,
+                                    icon="arrange")
+        self.fmt_layer.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        lm = Menu(self)
+        for how, text, keys in self.ARRANGE_ITEMS:
+            a = lm.addAction(f"{text}\t{keys}")
+            a.triggered.connect(lambda _=False, h=how: self.arrange(h))
+        self.fmt_layer.setMenu(lm)
+        self.fmt_lock = self._tool("Lock", "Lock or unlock the selection: a locked box is never moved by accident "
+                                   "(Ctrl+Shift+L)", self.toggle_lock, icon="lock")
+        self.fmt_lock.setCheckable(True)
+        self.fmt_widgets = [self.fmt_size, self.fmt_bold, self.fmt_pos, self.fmt_colour, self.fmt_shape,
+                            self.fmt_layer, self.fmt_lock]
+        fb.addWidget(self._segment(self.fmt_bold, self.fmt_pos, self.fmt_colour, self.fmt_shape, self.fmt_layer,
+                                   self.fmt_lock, name="format"))
+        self.fmt_hint = QLabel("Select a part, a power source or an enclosure to format it")
+        self.fmt_hint.setProperty("muted", True)
+        self.fmt_hint.setFont(T.ui_font(8.5))
+        fb.addSpacing(T.SPACE)
+        fb.addWidget(self.fmt_hint)
+        fb.addStretch(1)
+        self.format_bar.setFixedHeight(T.TOOL_H + T.SPACE)
+        rows.addWidget(self.format_bar)
+        root.addWidget(bar)
+
+        # The bar at the grid's top edge: Undo, Redo, Tidy and the view menus, one click away; the panel toggles
+        # (Recorded text, Output) at its right end, and Find when it is open.
+        self.btn_undo = self._tool("Undo", "Undo (Ctrl+Z)", self.undo, icon="undo", label=False)
+        self.btn_redo = self._tool("Redo", "Redo (Ctrl+Y)", self.redo, icon="redo", label=False)
+        self.btn_tidy = self._tool("Tidy", "Arrange the rig in its direction: left to right, source on the left and "
+                                   "branches one under another; or top to bottom, source at the top and branches side "
+                                   "by side. Locked boxes stay; parts make way for a group. Undo puts it back.",
+                                   self.tidy, icon="tidy")
         self.menus = {}
-        arrange = []
         view = []
         for key, text, tip, build, icon in (
                 ("arrange", "Arrange", "Stacking, alignment, lock and groups of the selected boxes",
@@ -4361,38 +4936,43 @@ class ChainScreen(QWidget):
             btn = self._tool(text + " ▾", tip, lambda: None, icon=icon)
             btn.setMenu(build())
             btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-            (arrange if key == "arrange" else view).append(btn)
             self.menus[key] = btn
-        info.addWidget(self._segment(self.btn_tidy, self.btn_dir, *arrange, name="arrange"))
-        self.btn_picture = self._tool("Picture…", "Save the drawing as a PNG picture, to a place you pick",
-                                      lambda: self.export_picture(), icon="picture")
-        self.btn_help = self._tool("Help", "Keyboard shortcuts (F1)", self.show_help, icon="help", label=False)
-        info.addWidget(self._segment(self.btn_picture, self.btn_help, name="picture and help"))
-        info.addStretch(1)
-        info.addWidget(self._segment(self.chk_static, self.btn_text, self.btn_out, name="run"))
-        self.btn_clear = self._tool("Clear grid", "Take every part and wire off the grid. Undo brings them back; "
-                                    "nothing is saved until Save.", self.clear_grid, icon="clear", kind="Danger")
-        info.addWidget(self.btn_clear)
-        # The view bar (relay 011): built here, placed on the grid's top edge below.
-        self.view_bar = self._segment(*view, name="view")
-
-        # The Checks strip: problems as the rig is built. Each one selects what it is about.
-        self.checks_box = QFrame()
-        self.checks_box.setObjectName("Checks")
-        cb = QHBoxLayout(self.checks_box)
-        cb.setContentsMargins(T.SPACE + T.SPACE // 2, T.SPACE // 2, T.SPACE, T.SPACE // 2)
-        cb.setSpacing(T.SPACE // 2)
-        self.checks_title = QLabel("Checks")
-        self.checks_title.setFont(T.ui_font(8.5, QFont.Weight.DemiBold))
-        cb.addWidget(self.checks_title)
-        self.checks_row = QHBoxLayout()
-        self.checks_row.setSpacing(T.SPACE // 2)
-        cb.addLayout(self.checks_row, 1)
-        cwrap = QHBoxLayout()
-        cwrap.setContentsMargins(T.SPACE * 2, T.SPACE, T.SPACE * 2, 0)
-        cwrap.addWidget(self.checks_box)
-        root.addLayout(cwrap)
-        self.check_list: list = []
+            if key != "arrange":
+                view.append(btn)
+            else:
+                btn.setParent(self._kept)        # Arrange lives in the menu bar now
+        self.btn_text = self._tool("Recorded text", "Show or hide the text each run records for this rig, one line "
+                                   "per radio, with the nominal gain estimate", lambda: None, icon="text")
+        self.btn_text.setCheckable(True)
+        self.btn_text.toggled.connect(self._toggle_text)
+        self.btn_out = self._tool("Output", "Show or hide the Output panel: technical data for what is selected, "
+                                  "or for the whole rig", lambda: None, icon="output")
+        self.btn_out.setCheckable(True)
+        self.view_bar = QWidget()
+        vbl = QHBoxLayout(self.view_bar)
+        vbl.setContentsMargins(0, 0, 0, 0)
+        vbl.setSpacing(T.SPACE)
+        vbl.addWidget(self._segment(self.btn_undo, self.btn_redo, name="edit"))
+        vbl.addWidget(self._segment(self.btn_tidy, *view, name="view"))
+        vbl.addStretch(1)
+        self.find_box = QLineEdit()
+        self.find_box.setObjectName("FindBox")
+        self.find_box.setPlaceholderText("Find a part by name or kind  (Enter: next, Esc: close)")
+        self.find_box.setClearButtonEnabled(True)
+        self.find_box.setFixedWidth(300)
+        self.find_box.textChanged.connect(self._find_changed)
+        self.find_box.returnPressed.connect(self.find_next)
+        self.find_box.installEventFilter(self)
+        self.find_count = QLabel()
+        self.find_count.setProperty("muted", True)
+        self.find_count.setFont(T.ui_font(8.5))
+        self.find_box.hide()
+        self.find_count.hide()
+        vbl.addWidget(self.find_box)
+        vbl.addWidget(self.find_count)
+        vbl.addWidget(self._segment(self.btn_text, self.btn_out, name="panels"))
+        self._find_hits: list = []
+        self._find_i = -1
 
         self.notice = QLabel()
         self.notice.setObjectName("Notice")
@@ -4404,16 +4984,28 @@ class ChainScreen(QWidget):
         nwrap.addWidget(self.notice)
         root.addLayout(nwrap)
 
-        # Panels the owner can resize: parts | (grid over recorded text).
+        # Panels the owner can resize: parts | (grid over recorded text) | output.
         self.split_across = QSplitter(Qt.Orientation.Horizontal)
         self.split_across.setHandleWidth(6)
         self.split_across.setChildrenCollapsible(False)
         side = QFrame()
         side.setObjectName("Side")
-        side.setMinimumWidth(170)
+        side.setMinimumWidth(190)
         s = QVBoxLayout(side)
         s.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 1 + 4, T.SPACE * 2)
         s.setSpacing(T.SPACE)
+        # relay 018: the Parts panel's title area, with the search box
+        title = QLabel("Parts and cables")
+        title.setObjectName("SideTitle")
+        title.setFont(T.ui_font(10, QFont.Weight.DemiBold))
+        sub = QLabel("drag onto the grid")
+        sub.setProperty("muted", True)
+        sub.setFont(T.ui_font(8.5))
+        th = QVBoxLayout()
+        th.setSpacing(0)
+        th.addWidget(title)
+        th.addWidget(sub)
+        s.addLayout(th)
         self.search = QLineEdit()
         self.search.setObjectName("PartSearch")
         self.search.setPlaceholderText("Search parts, cables and My parts")
@@ -4421,35 +5013,24 @@ class ChainScreen(QWidget):
         self.search.setToolTip("Type to show only the parts, cables and My parts whose names contain it")
         self.search.textChanged.connect(self._filter_parts)
         s.addWidget(self.search)
-        hint = QLabel("Drag onto the grid")
-        hint.setProperty("muted", True)
-        hint.setFont(T.ui_font(8.5))
-        s.addWidget(hint)
         self.parts = PartsList(self.labels)
         self.parts.colour_on = self.colour_on
         self.parts.on_library_menu = self.library_menu
         self.parts.set_labels(self.labels)
-        self.parts.setMinimumHeight(110)            # never squeezed away by the cables and the key
+        self.parts.setMinimumHeight(110)
         s.addWidget(self.parts, 1)
-        hint2 = QLabel("CABLES · drop onto a wire")
-        hint2.setProperty("muted", True)
-        hint2.setFont(T.ui_font(7.5, QFont.Weight.DemiBold))
-        s.addWidget(hint2)
-        self.cables = PartsList(self.labels, cables=True)
-        self.cables.colour_on = self.colour_on
-        self.cables.set_labels(self.labels)
-        s.addWidget(self.cables)
+        self.cables = self.parts                       # relay 018: one list; cables have their own sections in it
         self.legend = QWidget()
         lg = QGridLayout(self.legend)
         lg.setContentsMargins(2, 8, 0, 0)
         lg.setHorizontalSpacing(6)
         lg.setVerticalSpacing(2)
-        rows = ([(category_colour(cat), name) for cat, name in CATEGORY_NAMES]
-                + [(cable_colour("coax"), "Coax (on wires)"),
-                   (T.color("power"), "Power (drawing only)"),
-                   ("dash", "USB side of a radio"),
-                   ("M", "SMA male port (a pin)"), ("F", "SMA female port (a socket)")])
-        for i, (c, name) in enumerate(rows):
+        rows_ = ([(category_colour(cat), name) for cat, name in CATEGORY_NAMES]
+                 + [(cable_colour("coax"), "Coax (on wires)"),
+                    (T.color("power"), "Power (drawing only)"),
+                    ("dash", "USB side of a radio"),
+                    ("M", "SMA male port (a pin)"), ("F", "SMA female port (a socket)")])
+        for i, (c, name) in enumerate(rows_):
             mark = QLabel()
             if c == "dash":
                 mark.setPixmap(self._dash_pixmap())
@@ -4476,7 +5057,6 @@ class ChainScreen(QWidget):
                                    f"QPushButton#KeyToggle:hover {{ color: {T.C['text']}; }}")
         self.btn_key.toggled.connect(self._show_key)
         s.addWidget(self.btn_key)
-        # The key scrolls on a short screen rather than push the Parts list away (150 % scaling).
         self.legend_box = QScrollArea()
         self.legend_box.setWidgetResizable(True)
         self.legend_box.setFrameShape(QFrame.Shape.NoFrame)
@@ -4493,20 +5073,18 @@ class ChainScreen(QWidget):
         self.split_down.setChildrenCollapsible(False)
         holder = QWidget()
         hv = QVBoxLayout(holder)
-        hv.setContentsMargins(12, T.SPACE * 2, 16, 6)
-        hv.setSpacing(T.SPACE // 2)
-        vb = QHBoxLayout()
-        vb.setContentsMargins(0, 0, 0, 0)
-        vb.addWidget(self.view_bar)
-        vb.addStretch(1)
-        hv.addLayout(vb)
+        hv.setContentsMargins(12, T.SPACE * 1.5, 16, 6)
+        hv.setSpacing(T.SPACE // 2 + 2)
+        hv.addWidget(self.view_bar)
         self.scene = ChainScene(self)
         self.scene.setSceneRect(-200, -400, 2600, 1100)
         self.view = ChainView(self, self.scene)
         self.view.setStyleSheet(f"border: 1px solid {T.C['lines']}; border-radius: {T.RADIUS}px;")
         hv.addWidget(self.view)
         self.split_down.addWidget(holder)
-        self.card = EditCard(self, self.view)
+        # relay 018: the card floats over the whole area below the header (not boxed in the grid), so a long card
+        # has the screen's height and never needs a scroll bar
+        self.card = EditCard(self, self)
         self.view.horizontalScrollBar().valueChanged.connect(self._place_card)
         self.view.verticalScrollBar().valueChanged.connect(self._place_card)
         # What to do next on an empty grid (relay 006: empty states say what to do).
@@ -4520,6 +5098,13 @@ class ChainScreen(QWidget):
                                       f" padding: {T.SPACE * 2}px {T.SPACE * 3}px; }}")
         self.empty_hint.setFixedWidth(420)
         self.empty_hint.hide()
+        # relay 018: no rig is open at start; this panel says what can be done
+        self.start_panel = StartPanel(self, self.view)
+        self.start_panel.hide()
+        self.minimap = Minimap(self, self.view)
+        self.minimap.setVisible(prefs().value("view/minimap", False, type=bool))
+        for sb in (self.view.horizontalScrollBar(), self.view.verticalScrollBar()):
+            sb.valueChanged.connect(lambda *_: self.minimap.update() if self.minimap.isVisible() else None)
 
         self.text_panel = QFrame()
         self.text_panel.setObjectName("TextPanel")
@@ -4546,7 +5131,7 @@ class ChainScreen(QWidget):
         self.output = OutputPanel(self)
         self.split_across.addWidget(self.output)
         self.split_across.setStretchFactor(1, 1)
-        self.split_across.setSizes([220, 1000, 300])
+        self.split_across.setSizes([230, 1000, 300])
         self.grid_status = GridStatus(self, self.view)
         q = prefs()
         for key, sp in (("panels/across", self.split_across), ("panels/down", self.split_down)):
@@ -4560,6 +5145,13 @@ class ChainScreen(QWidget):
         self.output.setVisible(out_on)
         self.btn_out.toggled.connect(self._toggle_output)
         root.addWidget(self.split_across, 1)
+
+        # relay 018: the Checks footer along the bottom: a count of each kind in its colour, the first message,
+        # and the whole list on a click (a click on a message selects what it is about)
+        self.footer = ChecksFooter(self)
+        self.footer.setVisible(q.value("view/checks", True, type=bool))
+        root.addWidget(self.footer)
+        self.check_list: list = []
         self.scene.selectionChanged.connect(self.selection_changed)
 
         for keys, slot in ((QKeySequence.StandardKey.Undo, self.undo), (QKeySequence.StandardKey.Redo, self.redo),
@@ -4574,13 +5166,19 @@ class ChainScreen(QWidget):
                            (QKeySequence("Ctrl+G"), self.group_selected),
                            (QKeySequence("Ctrl+Shift+G"), self.ungroup_selected),
                            (QKeySequence("Ctrl+Shift+L"), self.toggle_lock),
-                           (QKeySequence("F1"), self.show_help)):
+                           (QKeySequence("F1"), self.show_help),
+                           # relay 018: the menu bar's own keys
+                           (QKeySequence("Ctrl+F"), self.open_find),
+                           (QKeySequence("Ctrl+S"), self.save),
+                           (QKeySequence("Ctrl+N"), self.new_rig),
+                           (QKeySequence("Ctrl+O"), self.open_rig_dialog)):
             sc = QShortcut(QKeySequence(keys), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(slot)
         self.key_on = prefs().value("parts/key", False, type=bool)   # folded at first: the Parts list keeps its room
         self.btn_key.setChecked(self.key_on)
         self._show_key(self.key_on)
+        self.refresh_format()
 
     def _check(self, m: QMenu, text: str, on: bool, slot) -> QAction:
         act = QAction(text, m, checkable=True)
@@ -4588,6 +5186,791 @@ class ChainScreen(QWidget):
         act.toggled.connect(slot)
         m.addAction(act)
         return act
+
+    # ---------------------------------------------------------------- relay 018: starting clean, recent rigs
+    @staticmethod
+    def reopen_last() -> bool:
+        """Settings: reopen the last rig on start. Off by default (the screen opens blank); MARSAD_REOPEN_RIG=1 turns
+        it on for one run of the window (the older window checks use it)."""
+        import os
+        return os.environ.get("MARSAD_REOPEN_RIG") == "1" or prefs().value("start/chain_reopen", False, type=bool)
+
+    def recent_rigs(self) -> list[str]:
+        """The rigs worked on, newest first, that still exist (kept in the window's own preferences)."""
+        try:
+            names = json.loads(prefs().value("chain/recent", "[]") or "[]")
+        except (TypeError, ValueError):
+            names = []
+        return [n for n in names if isinstance(n, str) and n in self.display]
+
+    def _remember_recent(self, name: str | None):
+        if not name or self.version_view:
+            return
+        try:
+            names = json.loads(prefs().value("chain/recent", "[]") or "[]")
+        except (TypeError, ValueError):
+            names = []
+        names = [name] + [n for n in names if n != name and isinstance(n, str)]
+        prefs().setValue("chain/recent", json.dumps(names[:8]))
+
+    def used_rig_name(self) -> str | None:
+        return next((n for n, d in self.display.items() if d.get("chains") and self.rig_is_used(d)), None)
+
+    def open_named(self, name: str):
+        """Open a rig from the start panel, Open rig… or a recent entry; unsaved changes are asked about first."""
+        if name not in self.display or not self._ask_unsaved():
+            return
+        self.open_rig(name)
+
+    def open_rig_dialog(self):
+        """File > Open rig… (Ctrl+O): every rig in a list, the one used for runs marked, the archived ones apart.
+        Double-click or Open."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Open rig")
+        dlg.setObjectName("OpenRigDialog")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
+        lay.setSpacing(T.SPACE)
+        lst = QListWidget()
+        lst.setObjectName("RigList")
+        used = self.used_rig_name()
+        live = sorted((n for n in self.display if not self.display[n].get("archived")), key=str.lower)
+        gone = sorted((n for n in self.display if self.display[n].get("archived")), key=str.lower)
+        for n in live + gone:
+            d = self.display[n]
+            st = R.rig_state(d["chains"])
+            bits = []
+            if n == used:
+                bits.append("used for runs")
+            if d.get("archived"):
+                bits.append("archived")
+            if d.get("draft"):
+                bits.append("not saved yet")
+            elif st["last_used"]:
+                bits.append(f"last ran {_when(st['last_used'])}")
+            it = QListWidgetItem(n + ("   ·   " + " · ".join(bits) if bits else ""))
+            it.setData(Qt.ItemDataRole.UserRole, n)
+            if n == used:
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
+                it.setForeground(T.color("survey_light"))
+            if d.get("archived"):
+                it.setForeground(T.color("muted"))
+            lst.addItem(it)
+            if n == self.rig_name:
+                lst.setCurrentItem(it)
+        lay.addWidget(lst, 1)
+        row = QHBoxLayout()
+        cancel, ok = QPushButton("Cancel"), QPushButton("Open")
+        ok.setObjectName("Primary")
+        ok.setDefault(True)
+        cancel.clicked.connect(dlg.reject)
+        ok.clicked.connect(dlg.accept)
+        lst.itemDoubleClicked.connect(lambda *_: dlg.accept())
+        row.addStretch(1)
+        row.addWidget(cancel)
+        row.addWidget(ok)
+        lay.addLayout(row)
+        dlg.resize(520, min(560, 140 + 30 * max(3, lst.count())))
+        self._open_dlg = dlg
+        if dlg.exec() != QDialog.DialogCode.Accepted or lst.currentItem() is None:
+            return
+        self.open_named(lst.currentItem().data(Qt.ItemDataRole.UserRole))
+
+    # ---------------------------------------------------------------- relay 018: the format bar
+    def _pos_menu(self) -> QMenu:
+        m = Menu(self)
+
+        def fill():
+            m.clear()
+            ids = self.selected_boxes()
+            boxes = [b for b in (R.box(self.rig, i) for i in ids) if b is not None]
+            pick = PosPicker(R.text_pos(boxes[0]) if len(boxes) == 1 else "", m)
+            wa = QWidgetAction(m)
+            holder = QWidget()
+            holder.setObjectName("MenuRow")
+            holder.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            holder.setStyleSheet("QWidget#MenuRow, QWidget#MenuRow QLabel { background: transparent; border: none; }")
+            hl = QHBoxLayout(holder)
+            hl.setContentsMargins(T.SPACE * 2, T.SPACE, T.SPACE * 2, T.SPACE)
+            lab = QLabel("Text position")
+            lab.setFont(T.ui_font(9))
+            hl.addWidget(lab)
+            hl.addSpacing(T.SPACE * 2)
+            hl.addWidget(pick)
+            wa.setDefaultWidget(holder)
+            pick.chosen.connect(lambda code: (m.close(), self.set_text_pos(self.selected_boxes(), code)))
+            m.addAction(wa)
+        m.aboutToShow.connect(fill)
+        return m
+
+    def _flatten(self, m: QMenu):
+        """box_colour_menu adds its swatches as a Colour submenu; on the format bar's own Colour button they sit in
+        the menu itself."""
+        subs = [a for a in m.actions() if a.menu() is not None]
+        for a in subs:
+            sub = a.menu()
+            m.removeAction(a)
+            for x in list(sub.actions()):
+                if x.isSeparator():
+                    m.addSeparator()
+                else:
+                    sub.removeAction(x)
+                    x.setParent(m)
+                    m.addAction(x)
+            sub.deleteLater()
+
+    def _fill_shape_menu(self, m: QMenu):
+        m.clear()
+        ids = [i for i in self.selected_boxes() if R.kind_of(self.rig, i) in ("part", "power")]
+        boxes = [R.box(self.rig, i) for i in ids]
+        cur = boxes[0].get("shape", "") if len(boxes) == 1 else None
+        adapters = bool(ids) and all(R.kind_of(self.rig, i) == "part" and R.box(self.rig, i)["part"]["type"] == "adapter"
+                                     for i in ids)
+        for key, label in [("", "Default (rectangle)")] + list(R.SHAPES.items()):
+            if key == "pipe" and not adapters:
+                continue
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(cur == key)
+            a.setEnabled(bool(ids))
+            a.triggered.connect(lambda _=False, k=key: self.set_shape(ids, k or None))
+
+    def set_font(self, ids, size):
+        """The format bar's font size, per part (drawing only; kept in My parts). None: the standard size."""
+        if self.read_only:
+            return
+        changed = False
+        for i in ids:
+            b = R.box(self.rig, i)
+            if b is None or R.kind_of(self.rig, i) != "part":
+                continue
+            if size is None:
+                changed |= b.pop("font_size", None) is not None
+            elif b.get("font_size") != size:
+                b["font_size"] = size
+                changed = True
+        if changed:
+            self.changed()
+            self.select_ids(ids)
+
+    def set_bold(self, ids, on: bool):
+        if self.read_only:
+            return
+        changed = False
+        for i in ids:
+            b = R.box(self.rig, i)
+            if b is None or R.kind_of(self.rig, i) != "part":
+                continue
+            if on and not b.get("bold"):
+                b["bold"] = True
+                changed = True
+            elif not on and b.pop("bold", None) is not None:
+                changed = True
+        if changed:
+            self.changed()
+            self.select_ids(ids)
+
+    def refresh_format(self):
+        """The format bar follows the selection: live with something selected (each control saying what it does,
+        or why not), quiet otherwise."""
+        if not hasattr(self, "format_bar"):
+            return
+        ids = self.selected_boxes() if self.rig_name is not None else []
+        boxes = [b for b in (R.box(self.rig, i) for i in ids) if b is not None]
+        parts = [b for i, b in zip(ids, boxes) if R.kind_of(self.rig, i) == "part"]
+        on = bool(boxes) and not self.read_only
+        for w in self.fmt_widgets:
+            w.setEnabled(on)
+        self.fmt_hint.setVisible(not boxes)
+        self.fmt_title.setEnabled(on)
+        if self.read_only and boxes:
+            self.fmt_hint.setText("Read-only: nothing here can be formatted")
+            self.fmt_hint.show()
+        else:
+            self.fmt_hint.setText("Select a part, a power source or an enclosure to format it")
+        self.fmt_size.setEnabled(on and bool(parts))
+        self.fmt_bold.setEnabled(on and bool(parts))
+        if not parts and on:
+            self.fmt_size.setToolTip("Font size is for parts: select a part")
+        sizes = {R.font_size(b) for b in parts}
+        self.fmt_size.blockSignals(True)
+        self.fmt_size.setCurrentIndex(self.fmt_size.findData(sizes.pop()) if len(sizes) == 1 else 0)
+        self.fmt_size.blockSignals(False)
+        self.fmt_bold.setChecked(bool(parts) and all(b.get("bold") for b in parts))
+        locked = bool(boxes) and all(R.is_locked(b) for b in boxes)
+        self.fmt_lock.setChecked(locked)
+        self.fmt_lock.setText("Locked" if locked else "Lock")
+        self.fmt_shape.setEnabled(on and any(R.kind_of(self.rig, i) in ("part", "power") for i in ids))
+
+    # ---------------------------------------------------------------- relay 018: Find (Ctrl+F)
+    def open_find(self):
+        if self.rig_name is None:
+            self.status.emit("open a rig first: Find looks in the rig on the grid")
+            return
+        self.find_box.show()
+        self.find_count.show()
+        self.find_box.setFocus()
+        self.find_box.selectAll()
+        self._find_changed(self.find_box.text())
+
+    def close_find(self):
+        self.find_box.hide()
+        self.find_count.hide()
+        self.view.setFocus()
+
+    def _find_changed(self, text: str):
+        self._find_hits = R.find_boxes(self.rig, text, self.labels)
+        self._find_i = -1
+        if not text.strip():
+            self.find_count.setText("")
+            return
+        self.find_count.setText(f"{len(self._find_hits)} found" if self._find_hits else "nothing found")
+        if self._find_hits:
+            self.find_next()
+
+    def find_next(self):
+        if not self._find_hits:
+            return
+        self._find_i = (self._find_i + 1) % len(self._find_hits)
+        bid = self._find_hits[self._find_i]
+        self.select_ids([bid])
+        it = self.box_item(bid)
+        if it is not None:
+            self.view.centerOn(it)
+        self.find_count.setText(f"{self._find_i + 1} of {len(self._find_hits)}")
+
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, "find_box", None) and ev.type() == ev.Type.KeyPress \
+                and ev.key() == Qt.Key.Key_Escape:
+            self.close_find()
+            return True
+        return super().eventFilter(obj, ev)
+
+    # ---------------------------------------------------------------- relay 018: the Tools
+    def _last_runs(self) -> dict | None:
+        try:
+            return (self.svc.last_runs() or {}).get("radios") or {}
+        except ServiceError as exc:
+            self.show_notice(f"Could not read the last runs: {exc}")
+            return None
+
+    def check_against_last_run(self):
+        """Tools > Check rig against the last run: for each radio in this rig, the text its path records now against
+        the chain text that radio's most recent run recorded, part by part. Read-only."""
+        if self.rig_name is None:
+            self.show_notice("Open a rig first: the check compares the rig on the grid with each radio's last run.")
+            return
+        runs = self._last_runs()
+        if runs is None:
+            return
+        got = R.check_against_runs(self.rig_name, self.rig, runs, self.labels)
+        sections = []
+        for g in got:
+            word = g["radio"] + (f" ({g['rx']})" if g["rx"] != g["radio"] else "")
+            if g["run"] is None:
+                sections.append((word, ["No run on this radio yet: nothing to check against."], "muted"))
+                continue
+            head = f"last run {g['run']}, started {_when(g['started'])}"
+            if g["same"]:
+                lines, tone = [f"The same, word for word ({head})."], "open"
+            else:
+                lines = [head + ("" if not g["wording_only"] else ": differences in wording only")]
+                lines += R.compare_words(g["diff"])
+                tone = "muted" if g["wording_only"] else "anomaly"
+            sections.append((word, lines, tone))
+        if not got:
+            sections.append(("This rig", ["No radio in this rig has a receiver chosen, so there is nothing to match."],
+                             "muted"))
+        self._report_dialog("Check rig against the last run",
+                            f"“{self.rig_name}”, each radio's path as drawn now, against what that radio's most recent "
+                            "run recorded. Wording only: the same part said differently (jumper and coax, 6\" and 6 in, "
+                            "capitals, punctuation). Nothing here changes the rig or any run.", sections)
+
+    def compare_versions(self):
+        """Tools > Compare rig versions: two saved versions of this rig (the current drawing and every version a Save
+        kept), and what changed between them in words."""
+        d = self.display.get(self.rig_name or "", {})
+        versions = [("the current drawing", d.get("rig") or self.rig)] + [
+            (f"saved {_when(v.get('saved'))} (replaced)", v["rig"]) for v in reversed(d.get("history") or [])]
+        if self.dirty:
+            versions.insert(0, ("as on the grid now (not saved)", self.rig))
+        if len(versions) < 2:
+            self.show_notice("This rig has only one version: each Save keeps the one before it, so there is nothing "
+                             "to compare yet.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Compare versions of “{self.rig_name}”")
+        dlg.setObjectName("CompareDialog")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
+        lay.setSpacing(T.SPACE)
+        row = QHBoxLayout()
+        a, b = QComboBox(), QComboBox()
+        for c in (a, b):
+            for label, _r in versions:
+                c.addItem(label)
+        a.setCurrentIndex(1)
+        b.setCurrentIndex(0)
+        row.addWidget(QLabel("From"))
+        row.addWidget(a, 1)
+        row.addWidget(QLabel("to"))
+        row.addWidget(b, 1)
+        lay.addLayout(row)
+        out = QLabel()
+        out.setObjectName("CompareText")
+        out.setWordWrap(True)
+        out.setTextFormat(Qt.TextFormat.RichText)
+        out.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        out.setAlignment(Qt.AlignmentFlag.AlignTop)
+        lay.addWidget(out, 1)
+
+        def show(*_):
+            d_ = R.rig_diff(versions[a.currentIndex()][1], versions[b.currentIndex()][1], self.labels, self.rig_name)
+            html = []
+            for key, title in (("added", "Parts added"), ("removed", "Parts removed"), ("renamed", "Renamed"),
+                               ("moved", "Moved between paths"), ("cables", "Cables"), ("texts", "Recorded text")):
+                if d_[key]:
+                    html.append(f"<p style='margin:8px 0 2px 0; color:{T.C['muted']}'><b>{title.upper()}</b></p>")
+                    html += [f"<div style='margin-left:6px'>{_esc(x)}</div>" for x in d_[key]]
+            out.setText("".join(html) or f"<span style='color:{T.C['muted']}'>No difference: the two versions are the "
+                                         "same drawing.</span>")
+            self._compare_text = out.text()
+        a.currentIndexChanged.connect(show)
+        b.currentIndexChanged.connect(show)
+        show()
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.accept)
+        r = QHBoxLayout()
+        r.addStretch(1)
+        r.addWidget(close)
+        lay.addLayout(r)
+        dlg.resize(680, 480)
+        self._compare_dlg = dlg
+        dlg.exec()
+
+    def _report_dialog(self, title: str, intro: str, sections: list):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setObjectName("ReportDialog")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
+        lay.setSpacing(T.SPACE)
+        lab = QLabel(intro)
+        lab.setWordWrap(True)
+        lab.setProperty("muted", True)
+        lay.addWidget(lab)
+        body = QLabel()
+        body.setObjectName("ReportText")
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.TextFormat.RichText)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        html = []
+        for head, lines, tone in sections:
+            html.append(f"<p style='margin:10px 0 2px 0'><b>{_esc(head)}</b></p>")
+            for k, line in enumerate(lines):
+                colour = T.C[tone] if k == 0 else T.C["text"]
+                html.append(f"<div style='margin-left:6px; color:{colour}'>{_esc(line)}</div>")
+        body.setText("".join(html))
+        lay.addWidget(body, 1)
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.accept)
+        r = QHBoxLayout()
+        r.addStretch(1)
+        r.addWidget(close)
+        lay.addLayout(r)
+        dlg.resize(720, max(260, min(620, dlg.sizeHint().height())))
+        self._report_dlg = dlg
+        self._report_text = body.text()
+        dlg.exec()
+
+    # ---------------------------------------------------------------- relay 018: files
+    def export_rig_file(self, path: str | None = None) -> str | None:
+        """File > Export rig file: this drawing as a file of its own (JSON), to keep or to bring into another
+        station's window. Drawing only: it changes nothing here."""
+        if self.rig_name is None:
+            return None
+        if path is None:
+            start = str(Path.home() / f"{self.rig_name.replace('/', '-')}.marsad-rig.json")
+            path, _ = QFileDialog.getSaveFileName(self, "Export rig file", start, "Marsad rig (*.marsad-rig.json *.json)")
+            if not path:
+                return None
+        doc = {"marsad_rig": 1, "name": self.rig_name, "exported": _now_iso(), "rig": copy.deepcopy(self.rig),
+               "note": "A Chain drawing exported from the Marsad window. File > Import rig file brings it in as a new "
+                       "rig; nothing reaches chain.json until that rig is saved."}
+        try:
+            Path(path).write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self.show_notice(f"The rig file could not be written: {exc}")
+            return None
+        self.status.emit(f"rig file written: {path}")
+        return path
+
+    def import_rig_file(self, path: str | None = None, name: str | None = None) -> bool:
+        """File > Import rig file: a drawing from a rig file, as a NEW rig under a name not already taken. Kept as a
+        drawing at once (like New rig); its chains reach chain.json only when it is saved. No rig is replaced."""
+        if not self._ask_unsaved():
+            return False
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, "Import rig file", str(Path.home()),
+                                                  "Marsad rig (*.marsad-rig.json *.json)")
+            if not path:
+                return False
+        try:
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+            rig = doc.get("rig") if isinstance(doc, dict) else None
+            if not isinstance(rig, dict):
+                raise ValueError("this is not a Marsad rig file (no drawing in it)")
+            R.check_layout({"schema": 1, "rigs": {"imported": {**rig, "chains": {}}}})
+        except (OSError, ValueError) as exc:
+            self.show_notice(f"Not imported: {exc}")
+            return False
+        base = str(doc.get("name") or Path(path).stem.replace(".marsad-rig", "")).strip() or "Imported rig"
+        if name is None:
+            suggest, k = base, 2
+            while self._taken(suggest):
+                suggest, k = f"{base} ({k})", k + 1
+            name, ok = QInputDialog.getText(self, "Import rig file", "Name for the imported rig:", text=suggest)
+            if not ok:
+                return False
+        name = (name or "").strip()
+        if not name or self._taken(name):
+            self.show_notice(f"Not imported: {'type a name' if not name else f'there is already a rig called “{name}”'}.")
+            return False
+        rig = {k: v for k, v in copy.deepcopy(rig).items() if k not in ("chains", "history", "archived")}
+        try:
+            lay = R.add_draft(self.layout_doc, name, rig, self.chain_doc())
+            self.svc.save(self.chain_doc(), lay)
+        except (ValueError, ServiceError) as exc:
+            self.show_notice(f"Not imported: {exc}")
+            return False
+        if not self.reload(keep=name):
+            return False
+        self.show_notice(f"Imported as “{name}”: a drawing only so far. Save it to make its chains; runs can use it "
+                         "once it has a path to a radio.", soft=True)
+        return True
+
+    def save_as_copy(self, name: str | None = None) -> bool:
+        """File > Save as copy: this drawing (as on the grid) kept as a new rig under a new name; this rig is left as
+        it was, unsaved changes and all. The copy is a drawing until it is saved."""
+        if self.rig_name is None:
+            return False
+        if name is None:
+            suggest, k = f"{self.rig_name} copy", 2
+            while self._taken(suggest):
+                suggest, k = f"{self.rig_name} copy {k}", k + 1
+            name, ok = QInputDialog.getText(self, "Save as copy", "Name for the copy:", text=suggest)
+            if not ok:
+                return False
+        name = (name or "").strip()
+        if not name or self._taken(name):
+            self.show_notice(f"Not copied: {'type a name' if not name else f'there is already a rig called “{name}”'}.")
+            return False
+        try:
+            lay = R.add_draft(copy.deepcopy(self.layout_doc), name, copy.deepcopy(self.rig), self.chain_doc())
+            self.svc.save(self.chain_doc(), lay)
+        except (ValueError, ServiceError) as exc:
+            self.show_notice(f"Not copied: {exc}")
+            return False
+        keep_rig, keep_dirty, keep_name = copy.deepcopy(self.rig), self.dirty, self.rig_name
+        self.reload(keep=keep_name)
+        if keep_dirty:                       # this rig's unsaved changes stay on the grid
+            self.rig = keep_rig
+            self.changed()
+        self.status.emit(f"copy kept as “{name}”: open it from the rig list")
+        return True
+
+    def export_station_json(self, path: str | None = None) -> str | None:
+        """File > Export a copy of station.json: the station's settings file exactly as it is on disk, for the
+        owner's records, read through the service. station.local.json (the location) is never read or included
+        (rule 10). Read-only: nothing in the station changes, and there is no import."""
+        try:
+            got = self.svc.station_json()
+        except ServiceError as exc:
+            self.show_notice(f"station.json could not be read: {exc}")
+            return None
+        if path is None:
+            start = str(Path.home() / f"station-{_now_iso()[:10]}.json")
+            path, _ = QFileDialog.getSaveFileName(self, "Export a copy of station.json", start, "JSON (*.json)")
+            if not path:
+                return None
+        try:
+            Path(path).write_text(got.get("text") or "", encoding="utf-8")
+        except OSError as exc:
+            self.show_notice(f"The copy could not be written: {exc}")
+            return None
+        self.status.emit(f"copy of station.json written: {path} (station.local.json is never included)")
+        return path
+
+    # ---------------------------------------------------------------- relay 018: the PC's USB inputs
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if not hasattr(self, "_usb_timer"):
+            self._usb_timer = QTimer(self)
+            self._usb_timer.timeout.connect(self.refresh_radios)
+            self._usb_before = self._usb_memory()          # what the window remembered from before it opened
+        self._usb_timer.start(15000)
+        self.refresh_radios()
+
+    def _usb_memory(self) -> dict:
+        try:
+            d = json.loads(prefs().value("usb/places", "{}") or "{}")
+            return d if isinstance(d, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
+    def refresh_radios(self):
+        """Where each radio is plugged, from the service's radio list (Windows' device list, nothing opened), and each
+        radio's last run (its device index). Asked off the window's thread; the window remembers each radio's USB
+        place, so Output can say when one has moved."""
+        if not self.isVisible():
+            if hasattr(self, "_usb_timer"):
+                self._usb_timer.stop()
+            return
+        from .scan_start import call
+
+        def got(d, err):
+            if err or not isinstance(d, dict):
+                return
+            self.radios_info = {r["name"]: r for r in d.get("radios") or []}
+            mem = self._usb_memory()
+            for r in self.radios_info.values():
+                u, sn = r.get("usb"), r.get("serial")
+                if not sn or not u or not u.get("location"):
+                    continue
+                rec = mem.get(sn) or {}
+                rec["seen"] = {k: u.get(k) for k in ("location", "port", "hub")}
+                rec["seen_at"] = _now_iso()
+                if (r.get("doing") or {}).get("state") in ("surveying", "recording"):
+                    rec["run"] = dict(rec["seen"], what=(r.get("doing") or {}).get("text") or "a run")
+                mem[sn] = rec
+            prefs().setValue("usb/places", json.dumps(mem))
+            self.fill_output()
+
+        def got_runs(d, err):
+            if not err and isinstance(d, dict):
+                self.last_runs_info = d.get("radios") or {}
+                self.fill_output()
+        call(self.svc.radios, got)
+        call(self.svc.last_runs, got_runs)
+
+    def usb_lines(self, radio_node: dict | None) -> list[str]:
+        """Relay 018: a radio's USB facts for its PC input's tooltip and Output: serial, which port and hub, speed,
+        how Marsad picks its device index, and whether it has moved since its last run."""
+        if not radio_node:
+            return []
+        rx = radio_node["part"].get("rx")
+        info = (getattr(self, "radios_info", {}) or {}).get(rx or "")
+        sn = self.serial_of(radio_node["part"])
+        out = []
+        if not rx:
+            return ["no receiver chosen on this radio, so its USB place cannot be looked up"]
+        if sn:
+            out.append(f"SN {sn}")
+        if info is None:
+            out.append("USB place: not read yet (the service's radio list)")
+            return out
+        u = info.get("usb")
+        if info.get("present") is False:
+            out.append("not plugged in now (Windows' device list)")
+        elif u and u.get("location"):
+            where = (f"port {u['port']} on hub {u['hub']}" if u.get("port") and u.get("hub") is not None
+                     else str(u["location"]))
+            out.append(f"USB place: {where}" + (f" ({u['location']})" if u.get("port") else ""))
+            out.append(f"speed: {u['speed']}" if u.get("speed") else "speed: not reported")
+        else:
+            out.append("USB place: Windows would not say")
+        last = (getattr(self, "last_runs_info", {}) or {}).get(rx)
+        dev = (last or {}).get("device")
+        out.append("device index: found by serial at each start (USB numbering moves)"
+                   + (f"; its last run used index {dev}" if dev is not None else ""))
+        mem = (self._usb_memory() if hasattr(self, "_usb_before") else {}).get(sn or "") or {}
+        before = (getattr(self, "_usb_before", {}) or {}).get(sn or "") or {}
+        moved = None
+        if u and u.get("location"):
+            if mem.get("run"):
+                moved = R.usb_moved_text(rx, mem["run"], u, f"since {mem['run'].get('what') or 'its last run'}")
+            if moved is None and before.get("seen"):
+                moved = R.usb_moved_text(rx, before["seen"], u, f"since {_when(before.get('seen_at'))}")
+        if moved:
+            out.append(moved)
+        return out
+
+    # ---------------------------------------------------------------- relay 018: the menu bar
+    def set_checks_shown(self, on: bool):
+        self.footer.setVisible(on)
+        prefs().setValue("view/checks", on)
+
+    def set_minimap_shown(self, on: bool):
+        self.minimap.setVisible(on)
+        prefs().setValue("view/minimap", on)
+        if on:
+            self.minimap.place()
+            self.minimap.invalidate()
+
+    def build_menus(self, settings, about) -> list:
+        """The menu bar's menus for this screen (relay 018): File, Edit, View, Arrange, Tools and Help. settings and
+        about are the window's own dialogs. Keys are shown beside each entry; the keys themselves stay with the grid
+        and the screen's shortcuts, so no key is claimed twice."""
+        mb = []
+
+        def act(m, text, slot, enabled=None, tip=""):
+            a = m.addAction(text)
+            a.triggered.connect(lambda *_: slot())
+            if tip:
+                a.setToolTip(tip)
+            if enabled is not None:
+                a.setData(("when", enabled))
+            return a
+
+        def refresh(m):                      # each entry's enabled state, asked when the menu opens
+            for a in m.actions():
+                d = a.data()
+                if isinstance(d, tuple) and d and d[0] == "when":
+                    ok, why = d[1]()
+                    a.setEnabled(ok)
+                    if why:
+                        a.setToolTip(why)
+
+        def menu(title):
+            m = Menu(self)
+            m.setTitle(title)
+            m.aboutToShow.connect(lambda m=m: refresh(m))
+            mb.append(m)
+            return m
+
+        has = lambda: (self.rig_name is not None, "" if self.rig_name else "Open a rig first")  # noqa: E731
+        editable = lambda: (self.rig_name is not None and not self.read_only,                  # noqa: E731
+                            "" if self.rig_name is None or not self.read_only else
+                            "Read-only: restore it first (File > Restore rig)")
+        del editable
+        f = menu("&File")
+        act(f, "New rig…\tCtrl+N", self.new_rig)
+        act(f, "Open rig…\tCtrl+O", self.open_rig_dialog)
+        recent = Menu(f)
+        recent.setTitle("Open recent")
+        recent.aboutToShow.connect(lambda: self._fill_recent(recent))
+        f.addMenu(recent)
+        f.addSeparator()
+        act(f, "Save\tCtrl+S", self.save, lambda: (self.btn_save.isEnabled(), self.btn_save.toolTip()))
+        act(f, "Save as copy…", self.save_as_copy, has)
+        act(f, "Rename…", self.rename_rig, lambda: (self.btn_rename.isEnabled(), self.btn_rename.toolTip()))
+        act(f, "Use for runs", self.use_for_runs, lambda: (self.btn_use.isEnabled(), self.btn_use.toolTip()))
+        st = f.addAction("Static rig (never asked before a run)")
+        st.setCheckable(True)
+        f.aboutToShow.connect(lambda: (st.setChecked(self.static_), st.setEnabled(self.rig_name is not None)))
+        st.triggered.connect(lambda on: (self.chk_static.setChecked(on), self._static_clicked(on)))
+        act(f, "History…", self.history_dialog,
+            lambda: (bool(self.display.get(self.rig_name or "", {}).get("history")),
+                     "No earlier versions yet: each Save keeps the one before it"))
+        act(f, "Archive rig…", self.archive_rig,
+            lambda: (not self.read_only and self._why_not_archive(asks_first=True) is None,
+                     self._why_not_archive(asks_first=True) or ""))
+        act(f, "Restore rig", self.restore_rig, lambda: (self.read_only and not self.version_view,
+                                                          "Only an archived rig can be restored"))
+        f.addSeparator()
+        act(f, "Export picture…", lambda: self.export_picture(),
+            lambda: (self.btn_picture.isEnabled(), self.btn_picture.toolTip()))
+        act(f, "Export rig file…", self.export_rig_file, has)
+        act(f, "Import rig file…", self.import_rig_file)
+        f.addSeparator()
+        act(f, "Export a copy of station.json…", self.export_station_json,
+            tip="The settings file as it is on disk, for your records. Your location (station.local.json) is never "
+                "included. There is no import: changing presets, bands or caps needs your word, one item at a time.")
+        f.addSeparator()
+        act(f, "Exit", lambda: self.window().close())
+
+        e = menu("&Edit")
+        act(e, "Undo\tCtrl+Z", self.undo, lambda: (bool(self.undo_stack), "Nothing to undo yet"))
+        act(e, "Redo\tCtrl+Y", self.redo, lambda: (bool(self.redo_stack), "Nothing to redo: undo something first"))
+        e.addSeparator()
+        sel = lambda: (bool(self.selected_boxes() or self.scene.selectedItems()), "Select something first")  # noqa
+        act(e, "Cut\tCtrl+X", self.cut, sel)
+        act(e, "Copy\tCtrl+C", self.copy, sel)
+        act(e, "Paste\tCtrl+V", lambda: self.paste(), lambda: (self._clip_fragment() is not None, "Nothing copied yet"))
+        act(e, "Duplicate\tCtrl+D", self.duplicate, sel)
+        act(e, "Select all\tCtrl+A", self.select_all, has)
+        act(e, "Take out of rig\tDelete", self.take_out_selected, sel)
+        e.addSeparator()
+        act(e, "Find…\tCtrl+F", self.open_find, has)
+        e.addSeparator()
+        act(e, "Clear grid…", self.clear_grid, lambda: (self.btn_clear.isEnabled(), self.btn_clear.toolTip()))
+
+        v = menu("&View")
+        for title, build in (("Grid", self._grid_menu), ("Parts", self._parts_menu), ("Wires", self._wires_menu),
+                             ("Zoom", self._zoom_menu)):
+            sub = self.menus[title.lower()].menu()
+            v.addAction(sub.menuAction())
+            sub.setTitle(title)
+        v.addSeparator()
+        for text, btn in (("Output", self.btn_out), ("Recorded text", self.btn_text)):
+            a = v.addAction(text)
+            a.setCheckable(True)
+            v.aboutToShow.connect(lambda a=a, btn=btn: a.setChecked(btn.isChecked()))
+            a.triggered.connect(lambda on, btn=btn: btn.setChecked(on))
+        a = v.addAction("Checks (footer)")
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(self.footer.isVisible()))
+        a.triggered.connect(self.set_checks_shown)
+        from . import explain as X
+        a = v.addAction("Explanations (the ⓘ marks)")
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(X.shown()))
+        a.triggered.connect(X.set_shown)
+        a = v.addAction("Minimap")
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(self.minimap.isVisible()))
+        a.triggered.connect(self.set_minimap_shown)
+        a = v.addAction("Key to colours and marks")
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(self.btn_key.isChecked()))
+        a.triggered.connect(self.btn_key.setChecked)
+
+        ar = menu("&Arrange")
+        ar.aboutToShow.connect(lambda m=ar: self._fill_arrange_bar(m))
+
+        tl = menu("&Tools")
+        act(tl, "Check rig against the last run…", self.check_against_last_run, has,
+            tip="Each radio's path as drawn, against the chain its most recent run recorded, part by part")
+        act(tl, "Compare rig versions…", self.compare_versions,
+            lambda: (bool(self.display.get(self.rig_name or "", {}).get("history")) or self.dirty,
+                     "Only one version so far: each Save keeps the one before it"))
+        tl.addSeparator()
+        act(tl, "Settings…", settings)
+
+        hp = menu("&Help")
+        act(hp, "Keyboard shortcuts\tF1", self.show_help)
+        act(hp, "About Marsad", about)
+        return mb
+
+    def _fill_recent(self, m: QMenu):
+        m.clear()
+        names = self.recent_rigs()
+        used = self.used_rig_name()
+        for n in names:
+            a = m.addAction(n + ("   ·   used for runs" if n == used else ""))
+            a.triggered.connect(lambda _=False, n=n: self.open_named(n))
+        if not names:
+            a = m.addAction("No rigs opened yet")
+            a.setEnabled(False)
+
+    def _fill_arrange_bar(self, m: QMenu):
+        """Arrange in the menu bar: stacking, align and distribute, lock and groups (as before), then the rig's
+        direction and Tidy."""
+        m.clear()
+        self._add_arrange(m)
+        m.add_heading("Direction")
+        for key, text in R.DIRECTIONS.items():
+            a = m.addAction(tool_icon("dir_" + key), text)
+            a.setCheckable(True)
+            a.setChecked(G.direction(self.rig) == key)
+            a.setEnabled(not self.read_only and self.rig_name is not None)
+            a.triggered.connect(lambda _=False, k=key: self.set_direction(k))
+        m.addSeparator()
+        a = m.addAction("Tidy")
+        a.setEnabled(bool(self.rig["nodes"]) and not self.read_only)
+        a.triggered.connect(self.tidy)
 
     def _rig_menu(self) -> QMenu:
         m = Menu(self)
@@ -5238,7 +6621,9 @@ class ChainScreen(QWidget):
         super().hideEvent(ev)
 
     # -- data from the service
-    def reload(self, keep: str | None = None):
+    def reload(self, keep: str | None = None, first: bool = False):
+        """Read the rigs from the service and show one. first (relay 018): the window's own start, when no rig is
+        opened unless Settings say "reopen the last rig" (then the last one worked on, else the one runs use)."""
         try:
             got = self.svc.chains()
         except ServiceError as exc:
@@ -5265,10 +6650,22 @@ class ChainScreen(QWidget):
         want = keep if keep in self.display else self.rig_of_chain(summ.get("current"))
         if want is None and names:
             want = names[0]
+        if first and keep is None:
+            if self.reopen_last():
+                recent = self.recent_rigs()
+                want = recent[0] if recent else want
+            else:
+                want = None
         if want is not None:
             self.open_rig(want)
         else:
+            self.version_view = None
+            self.read_only = False
+            self.dirty = False
             self.rig_name, self.rig = None, R.new_rig()
+            self._reset_history(saved=True)
+            self._show_in_pick(None)
+            self.show_notice(None)
             self.redraw()
         self.status.emit(f"service {self.svc.base}: {len(summ.get('chains') or {})} chains read")
         return True
@@ -5304,6 +6701,9 @@ class ChainScreen(QWidget):
         self.pick.blockSignals(False)
 
     def _show_in_pick(self, name: str | None):
+        if name is None:                     # relay 018: no rig open; the picker says so
+            self.pick.setCurrentIndex(-1)
+            return
         i = self.pick.findData(name) if name is not None else -1
         if i < 0 and name is not None:
             self.pick.addItem(name, name)
@@ -5321,6 +6721,7 @@ class ChainScreen(QWidget):
         self.dirty = False
         self._reset_history(saved=True)
         self._show_in_pick(name)
+        self._remember_recent(name)          # relay 018: the start panel's recent rigs
         self.scene.clearSelection()          # part ids repeat between rigs
         self.redraw()
         if d["stale_drawing"]:
@@ -5481,9 +6882,9 @@ class ChainScreen(QWidget):
         self.group_marks, self.guide_items = [], []
         self._drag, self._group_click = None, None
         self._show_direction()
+        self.items_by_id, self.wire_items = {}, []      # relay 018: emptied before the scene, which signals as it clears
         self.scene.clear()
         self.temp_wire = None
-        self.items_by_id, self.wire_items = {}, []
         self.power_items, self.power_wire_items = {}, []
         self.drop_target = None
         self.anchor_map = G.anchors(self.rig)
@@ -5653,6 +7054,7 @@ class ChainScreen(QWidget):
         self._place_card()
         self._mark_groups()
         self.fill_output()
+        self.refresh_format()
         if hasattr(self, "grid_status"):
             self.grid_status.refresh()
 
@@ -5675,42 +7077,64 @@ class ChainScreen(QWidget):
         self.selection_changed()
 
     def _place_empty_hint(self):
-        h = self.empty_hint
-        if not h.isVisible():
-            return
-        h.adjustSize()
         vp = self.view.viewport().geometry()
-        h.move(int(vp.x() + (vp.width() - h.width()) / 2), int(vp.y() + (vp.height() - h.height()) / 2))
+        for h in (self.empty_hint, getattr(self, "start_panel", None)):
+            if h is None or not h.isVisible():
+                continue
+            h.adjustSize()
+            h.move(int(vp.x() + (vp.width() - h.width()) / 2), int(vp.y() + max(16, (vp.height() - h.height()) / 2)))
+            h.raise_()
+        if getattr(self, "minimap", None) is not None and self.minimap.isVisible():
+            self.minimap.place()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._place_empty_hint()
+        if hasattr(self, "card") and self.card.isVisible():
+            self.card._fit()
+            self._place_card()
+
+    def card_room(self) -> int:
+        """Relay 018: how tall the card may be: the area below the header (the panels and the grid), less a margin."""
+        return max(200, self.split_across.height() - 16) if hasattr(self, "split_across") else 2000
+
+    def _to_screen(self, scene_pt: QPointF) -> QPoint:
+        """A scene point in this screen's own coordinates (where the card lives)."""
+        return self.view.viewport().mapTo(self, self.view.mapFromScene(scene_pt))
 
     def _place_card(self):
+        """The card beside what it edits, never over it: right of it if there is room, else left, below or above,
+        inside the area below the header. Relay 018: that area is the whole screen's, not the grid's."""
         if not self.card.isVisible():
             return
+        area = self.split_across.geometry()
+        ox, oy = area.x(), area.y()
         if self.card.wire is not None:
             wi = self.wire_item(self.card.wire["from"], self.card.wire["port"])
             if wi is None:
                 return
-            p = self.view.mapFromScene(wi.label_point() + QPointF(-60, 26))
-            vp = self.view.viewport().rect()
-            x = min(max(8, p.x()), vp.width() - self.card.width() - 8)
+            try:                       # relay 018: a card kept on screen through a redraw may ask mid-redraw
+                lp = wi.label_point()
+            except RuntimeError:
+                return
+            p = self._to_screen(lp + QPointF(-60, 26)) - QPoint(ox, oy)
+            x = min(max(8, p.x()), area.width() - self.card.width() - 8)
             y = p.y()
-            if y + self.card.height() > vp.height() - 8:
-                y = self.view.mapFromScene(wi.label_point()).y() - 26 - self.card.height()
-            self.card.move(int(x), int(max(8, y)))
+            if y + self.card.height() > area.height() - 8:
+                y = (self._to_screen(lp) - QPoint(ox, oy)).y() - 26 - self.card.height()
+            y = min(max(8, y), max(8, area.height() - self.card.height() - 8))
+            self.card.move(int(x + ox), int(y + oy))
             return
         bid = (self.card.node or self.card.enc or self.card.power or {}).get("id")
         it = self.box_item(bid) if bid else None
         if it is None:
             return
         w, h = it.wh()
-        tl = self.view.mapFromScene(it.mapToScene(QPointF(0, 0)))
-        br = self.view.mapFromScene(it.mapToScene(QPointF(w, h)))
+        tl = self._to_screen(it.mapToScene(QPointF(0, 0))) - QPoint(ox, oy)
+        br = self._to_screen(it.mapToScene(QPointF(w, h))) - QPoint(ox, oy)
         x, y = card_place((tl.x(), tl.y(), br.x() - tl.x(), br.y() - tl.y()),
-                          (self.card.width(), self.card.height()), self.view.viewport().rect().getRect()[2:])
-        self.card.move(int(x), int(y))
+                          (self.card.width(), self.card.height()), (area.width(), area.height()))
+        self.card.move(int(x + ox), int(y + oy))
 
     # -- editing
     def add_part(self, type_: str, x: float, y: float):
@@ -7099,62 +8523,38 @@ class ChainScreen(QWidget):
             no_use = "An archived rig cannot be used for runs: restore it first (Rig menu)"
         able(self.btn_use, bool(d["chains"]) and not self.dirty and not self.read_only,
              "Make this rig's chain the one every run records", no_use)
-        if not has_rig:
-            self.empty_hint.setText("No rig is open.\nClick New rig to start one, or pick a rig from the list above.")
-        elif not anything:
+        if not anything:
             self.empty_hint.setText("This rig is empty.\nDrag a part from the list on the left onto the grid. "
                                     "To wire two parts, drag from a part's dot to the other part.")
-        self.empty_hint.setVisible(not has_rig or not anything)
+        # relay 018: no rig open is the start panel (New rig, Open rig…, the recent ones); an open empty rig is the hint
+        self.empty_hint.setVisible(has_rig and not anything)
+        if not has_rig:
+            self.start_panel.refresh()
+        self.start_panel.setVisible(not has_rig)
+        self.btn_dir.setEnabled(has_rig and not self.read_only)
+        if not has_rig:
+            self.state.setText("Start a new rig, or open one: File > Open rig… (Ctrl+O)")
         self._place_empty_hint()
         if getattr(self, "_soft", False) and "power source's dot" not in self.notice.text():
             self.show_notice(None)
         self._fill_checks()
         self._fill_text()
         self.fill_output()
+        self.refresh_format()
+        if self.minimap.isVisible():
+            self.minimap.invalidate()
         if hasattr(self, "grid_status"):
             self.grid_status.refresh()
 
     CHECK_COLOUR = {"wiring": "anomaly", "radio": "survey", "power": "power", "loose": "muted"}
 
     def _fill_checks(self):
-        """The Checks strip: every problem as a chip; a click selects what it is about."""
-        while self.checks_row.count():
-            w = self.checks_row.takeAt(0).widget()
-            if w:
-                w.hide()
-                w.deleteLater()
-        order = {"power": 0, "radio": 1, "wiring": 2, "loose": 3}
-        self.check_list = sorted(R.checks(self.rig) if self.rig_name is not None else [],
-                                 key=lambda c: order.get(c["kind"], 9))
-        if not self.check_list:
-            ok = QLabel("No problems found" if self.rig["nodes"] else "Nothing on the grid yet")
-            ok.setProperty("muted", True)
-            ok.setFont(T.ui_font(8.5))
-            self.checks_row.addWidget(ok)
-            self.checks_row.addStretch(1)
-            self.checks_title.setText("Checks")
-            return
-        self.checks_title.setText(f"Checks · {len(self.check_list)}")
-        shown = self.check_list[:4]
-        for c in shown:
-            b = WrapChip(c["text"], dot_icon(T.color(self.CHECK_COLOUR.get(c["kind"], "anomaly"))))
-            b.setObjectName("CheckChip")
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            b.setToolTip("Click to select " + ("it" if len(c["ids"]) == 1 else "them")
-                         + ". A check warns; it never stops a save.")
-            b.clicked.connect(lambda _=False, ids=c["ids"]: self.select_ids(ids))
-            self.checks_row.addWidget(b)
-        if len(self.check_list) > len(shown):
-            more = QPushButton(f"+{len(self.check_list) - len(shown)} more")
-            more.setObjectName("CheckChip")
-            more.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            m = Menu(more)
-            for c in self.check_list[len(shown):]:
-                a = m.addAction(c["text"])
-                a.triggered.connect(lambda _=False, ids=c["ids"]: self.select_ids(ids))
-            more.setMenu(m)
-            self.checks_row.addWidget(more)
-        self.checks_row.addStretch(1)
+        """Relay 018: the Checks footer. Problems first, then warnings, then notes, each counted in its colour; the
+        first message beside the counts; a click on it, or on any in the full list, selects what it is about."""
+        self.check_list = R.checks_by_level(self.rig) if self.rig_name is not None else []
+        empty = ("No problems found" if self.rig["nodes"] else
+                 "Nothing on the grid yet" if self.rig_name is not None else "No rig open")
+        self.footer.show_checks(self.check_list, empty)
 
     def select_ids(self, ids):
         self.scene.clearSelection()
@@ -7315,6 +8715,15 @@ class ChainScreen(QWidget):
         rows.append(("Nominal dB", "not given" if g is None else f"{g:+g} dB (estimate only)"))
         label = {"pipe": "Pipe"}.get(R.shape_of(node), R.SHAPES.get(R.shape_of(node), R.shape_of(node)))
         rows.append(("Shape", label + ("" if node.get("shape") else ", its kind's")))
+        if p["type"] == "pc":                         # relay 018: each USB input, read-only from Windows' list
+            n_in = max([0] + [int(w.get("in", 0)) + 1 for w in self.rig["wires"] if w["to"] == node["id"]])
+            for k in range(max(1, n_in)):
+                radio = R.upstream_radio(self.rig, node["id"], k)
+                text = (R._pname(radio) + "\n" + "\n".join(self.usb_lines(radio))) if radio else "no radio wired here"
+                rows.append((f"USB input {k + 1}", text))
+        if p["type"] == "sdr":
+            for line in self.usb_lines(node):
+                rows.append(("USB", line))
         return rows
 
     def _path_rows(self, path) -> list:
