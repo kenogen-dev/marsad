@@ -68,6 +68,29 @@ COLOUR_MAPS = {
 }
 
 
+# ---------------------------------------------------------------- relay 020: when the owner last used the window
+_INPUT = [0.0]                     # monotonic time of the last click, key or wheel anywhere in the window
+_INPUT_FILTER: list = []
+
+
+def _watch_input():
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+    if _INPUT_FILTER or QApplication.instance() is None:
+        return
+    kinds = {QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress, QEvent.Type.Wheel}
+
+    class _F(QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() in kinds:
+                _INPUT[0] = time.monotonic()
+            return False
+    f = _F()
+    QApplication.instance().installEventFilter(f)
+    _INPUT_FILTER.append(f)
+    _INPUT[0] = time.monotonic()
+
+
 # ---------------------------------------------------------------- the poller
 class _Blank(Exception):
     """The poller's way out of a cycle while Live Scan is blank (relay 018)."""
@@ -442,7 +465,7 @@ class RecorderList(QFrame):
     BADGE_WORD = {"open": "OPEN", "private": "PRIVATE", "anomaly": "ANOMALY", "new": "NEW"}
 
     def __init__(self, screen):
-        super().__init__()
+        super().__init__(screen)     # relay 020: parented from the start (shown unparented, it flashed as a window)
         self.screen = screen
         self.setObjectName("RecList")
         v = QVBoxLayout(self)
@@ -858,9 +881,13 @@ class LiveScreen(QWidget):
     status = Signal(str)
     open_rig_version = Signal(dict)        # relay 012: {"ref": the run's rig_reference, "run": its tag}
 
-    def __init__(self, svc: Service):
+    def __init__(self, svc: Service, radio_state=None):
         super().__init__()
         self.svc = svc
+        from .radios import RadioState
+        # relay 020: the radios, held once for the whole window; every view listens to it
+        self.radio_state = radio_state or RadioState(svc, self)
+        self.launches: list = []                   # relay 020: starts from this window, watched until they end visibly
         self.cfg: dict = {}
         self.prog: dict = {}
         self.prog_at = time.monotonic()
@@ -969,6 +996,7 @@ class LiveScreen(QWidget):
         self.radios.enable.connect(self.enable_radio)
         self.radios.set_setup.connect(self.set_setup)
         top.addWidget(self.radios)
+        self.radio_state.changed.connect(self.radios.show_status)
         top.addSpacing(T.SPACE)
         self.btn_start = QToolButton()
         self.btn_start.setObjectName("Primary")
@@ -1039,6 +1067,35 @@ class LiveScreen(QWidget):
         bl.addWidget(self.banner_show)
         self.banner.hide()
         root.addWidget(self.banner)
+        # relay 020: how a start from this window went (starting, started, refused, failed). It stays until the owner
+        # closes it or the next start replaces it: a start never ends in silence.
+        self.start_bar = QFrame()
+        self.start_bar.setObjectName("StartBar")
+        sl = QHBoxLayout(self.start_bar)
+        sl.setContentsMargins(T.SPACE * 2, 5, T.SPACE * 2, 5)
+        sl.setSpacing(T.SPACE)
+        self.start_dot = QLabel("●")
+        self.start_text = QLabel()
+        self.start_text.setObjectName("StartText")
+        self.start_text.setWordWrap(True)
+        self.start_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.start_log = QToolButton()
+        self.start_log.setObjectName("Tool")
+        self.start_log.setText("Open its log")
+        self.start_log.setToolTip("What the run printed, in the station's logs folder")
+        self.start_log.clicked.connect(self._open_start_log)
+        self.start_close = QToolButton()
+        self.start_close.setObjectName("Tool")
+        self.start_close.setText("×")
+        self.start_close.setToolTip("Close this line")
+        self.start_close.clicked.connect(lambda *_: self.start_bar.hide())
+        sl.addWidget(self.start_dot)
+        sl.addWidget(self.start_text, 1)
+        sl.addWidget(self.start_log)
+        sl.addWidget(self.start_close)
+        self.start_bar.hide()
+        self._start_log_path = None
+        root.addWidget(self.start_bar)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setHandleWidth(6)
@@ -1286,16 +1343,17 @@ class LiveScreen(QWidget):
     def showEvent(self, ev):
         super().showEvent(ev)
         self.poller.start()
-        if not hasattr(self, "radio_timer"):
-            self.radio_timer = QTimer(self)
-            self.radio_timer.timeout.connect(self._ask_radios)
-        self.radio_timer.start(5000)
         self._ask_radios()
+        if not getattr(self, "_prebuilt", False):     # relay 020: the Start panels, built while idle, one at a time
+            self._prebuilt = True
+            _watch_input()
+            QTimer.singleShot(1500, lambda: self._prebuild("scan"))
+            QTimer.singleShot(2500, lambda: self._prebuild("watch"))
 
     def _ask_radios(self):
-        """The radio strip: presence by serial from Windows' device list, nothing opened (cheap)."""
-        from .scan_start import call
-        call(self.svc.radios, lambda d, err: self.radios.show_status(d) if not err and self.isVisible() else None)
+        """The radio strip: presence by serial from Windows' device list, nothing opened (cheap). Relay 020: asked
+        through the window's one radio state, which every view listens to."""
+        self.radio_state.refresh()
 
     def swap_radios(self):
         """Swap on the strip: asks first, naming both radios' new jobs."""
@@ -1313,19 +1371,20 @@ class LiveScreen(QWidget):
                 "running changes, and a plain scan still uses the radio you pick for it.") \
                 != QMessageBox.StandardButton.Yes:
             return
-        call(lambda: self.svc.set_roles({"swap": True}),
-             lambda d, err: self.radios.show_status(d) if not err else QMessageBox.warning(self, "Swap refused", str(err)))
+        # relay 020: shown at once everywhere; the service confirms (or the change is rolled back and said)
+        self.radio_state.set_roles({"swap": True}, on_error=lambda err: self._refused("Swap refused", err))
 
     def enable_radio(self, name: str, on: bool):
-        from .scan_start import call
-        call(lambda: self.svc.set_enabled(name, on),
-             lambda d, err: self.radios.show_status(d) if not err else self._ask_radios())
+        self.radio_state.set_enabled(name, on, on_error=lambda err: self._refused("Not changed", err))
 
     def set_setup(self, setup: str):
         """Relay 019: a setup chosen on the strip; remembered with the roles. It starts nothing."""
-        from .scan_start import call
-        call(lambda: self.svc.set_roles({"setup": setup}),
-             lambda d, err: self.radios.show_status(d) if not err else self.status.emit(f"Setup not changed: {err}"))
+        self.radio_state.set_roles({"setup": setup}, on_error=lambda err: self._refused("Setup not changed", err))
+
+    def _refused(self, title: str, err: str):
+        """A change the service refused: said in the status line and the start banner, never silently undone."""
+        self.status.emit(f"{title}: {err}")
+        self._start_banner("refused", f"{title}: {err}")
 
     def open_radios(self):
         from .radios import RadiosDialog
@@ -1339,15 +1398,12 @@ class LiveScreen(QWidget):
 
     def _open_radios(self):
         from .radios import RadiosDialog
-        d = RadiosDialog(self.svc, self, initial=self.radios.data or None)
+        d = RadiosDialog(self.svc, self, state=self.radio_state)
         self._radios_dlg = d
-        d.changed.connect(self.radios.show_status)
         d.exec()
 
     def hideEvent(self, ev):
         super().hideEvent(ev)
-        if hasattr(self, "radio_timer"):
-            self.radio_timer.stop()
 
     def shutdown(self):
         self.poller.stop()
@@ -1477,6 +1533,14 @@ class LiveScreen(QWidget):
             return          # an answer from before the survey was opened, arriving after it: keep what is shown
         self.prog, self.prog_at = p or {}, time.monotonic()
         f = self.prog.get("file")
+        exp = getattr(self, "_expect_file", None)
+        if exp and self.view_file is None and f:
+            if f != exp[0] and time.monotonic() - exp[1] > 3:
+                self._expect_file = None
+                self.open_survey(exp[0])            # relay 020: the run just started, by name
+                return
+            if f == exp[0]:
+                self._expect_file = None
         if f != self.file:
             self._clear(f)
         self._show_mode()
@@ -2120,15 +2184,39 @@ class LiveScreen(QWidget):
             return
 
     # -- actions
-    def _fill_list(self):
+    # relay 020: the survey list is asked off the window's thread. Both menus fill at once from the last answer and
+    # are filled again when a fresh one arrives (asking on the window's thread froze it for as long as the service
+    # took, which is many seconds while it reads a big recording for the first time).
+    def _ask_surveys(self, then=None):
+        from .scan_start import call
+        if getattr(self, "_surveys_busy", False):
+            return
+        self._surveys_busy = True
+
+        def got(d, err):
+            self._surveys_busy = False
+            self._surveys = (None, err) if err else (d, None)
+            if self.list_menu.isVisible():
+                self._fill_list(ask=False)
+            sm = getattr(self, "survey_menu", None)
+            if sm is not None and sm.isVisible():
+                self._fill_survey_menu(sm, ask=False)
+        call(self.svc.surveys, got)
+
+    def _surveys_now(self):
+        """The last answer: (doc, None), (None, error) or (None, None) before any."""
+        return getattr(self, "_surveys", (None, None))
+
+    def _fill_list(self, ask: bool = True):
         m = self.list_menu
         m.clear()
-        try:
-            got = self.svc.surveys()
-        except ServiceError as exc:
-            a = m.addAction(f"Cannot read the list: {exc}")
+        if ask:
+            self._ask_surveys()
+        got, err = self._surveys_now()
+        if got is None:
+            a = m.addAction(f"Cannot read the list: {err}" if err else "Reading the list…")
             a.setEnabled(False)
-            return
+            got = {}
         a = m.addAction("● Follow live (the newest recording)")
         a.triggered.connect(lambda: self.open_survey(None))
         m.add_heading("Surveys, newest first")
@@ -2231,12 +2319,14 @@ class LiveScreen(QWidget):
         a.triggered.connect(lambda *_: about())
         return out
 
-    def _fill_survey_menu(self, m):
+    def _fill_survey_menu(self, m, ask: bool = True):
+        self.survey_menu = m
         m.clear()
-        try:
-            got = self.svc.surveys()
-        except ServiceError as exc:
-            a = m.addAction(f"Cannot read the list: {exc}")
+        if ask:
+            self._ask_surveys()
+        got, err = self._surveys_now()
+        if got is None:
+            a = m.addAction(f"Cannot read the list: {err}" if err else "Reading the list…")
             a.setEnabled(False)
             return
         for s in (got.get("surveys") or [])[:60]:
@@ -2248,25 +2338,187 @@ class LiveScreen(QWidget):
             a.setEnabled(False)
 
     # -- starting scans and recorder sessions (relay 010)
-    def open_start(self):
-        from .scan_start import StartScanDialog
-        d = StartScanDialog(self.svc, self)
+    # relay 020: the Start panels are built once (each took 90-160 ms to build, every time it opened) and opened again,
+    # refreshed. They are built while the window is idle shortly after it opens, so the first opening is quick too.
+    def _start_dialog(self, kind: str):
+        attr = "_dlg_" + kind
+        d = getattr(self, attr, None)
+        if d is not None:
+            return d, False
+        from .scan_start import StartScanDialog, StartWatchDialog
+        d = (StartScanDialog if kind == "scan" else StartWatchDialog)(self.svc, self)
         d.started.connect(self._launched)
+        self._feed_dialog(d)
+        setattr(self, attr, d)
+        return d, True
+
+    def _prebuild(self, kind: str):
+        """Build a Start panel while the owner is not using the window: no click, key or wheel for 2 s (the build
+        holds the window ~100-150 ms, which must not land in the middle of a gesture). Tried again until then."""
+        from PySide6.QtWidgets import QApplication
+        if getattr(self, "_dlg_" + kind, None) is not None:
+            return
+        idle = time.monotonic() - _INPUT[0] >= 2.0
+        if not (self.isVisible() and idle and QApplication.activeModalWidget() is None):
+            QTimer.singleShot(700, lambda: self._prebuild(kind))
+            return
+        self._start_dialog(kind)
+
+    def open_start(self):
+        d, new = self._start_dialog("scan")
+        if not new:
+            d.reopen()
+        if self.radio_state.data:
+            d._got_radios(self.radio_state.data)
         d.exec()
 
     def open_watch(self):
-        from .scan_start import StartWatchDialog
-        d = StartWatchDialog(self.svc, self)
-        d.started.connect(self._launched)
+        d, new = self._start_dialog("watch")
+        if not new:
+            d.reopen()
+        if self.radio_state.data:
+            d._got_radios(self.radio_state.data)
         d.exec()
 
+    def _feed_dialog(self, d):
+        """Relay 020: an open Start panel follows the window's radio state (a radio switched off, a Swap, a setup
+        changed elsewhere), but only when something it shows changed, so its plan is not re-asked every poll."""
+        st = self.radio_state
+
+        def key(x):
+            return repr([(r.get("name"), r.get("enabled"), r.get("present"), (r.get("doing") or {}).get("state"),
+                          r.get("role")) for r in (x or {}).get("radios") or []] + [(x or {}).get("roles"),
+                                                                                      (x or {}).get("mode")])
+        last = [key(st.data) if st.data else None]
+
+        def fwd(x):
+            k = key(x)
+            if k != last[0] and d.isVisible():          # a closed panel is fed again when it opens
+                last[0] = k
+                d._got_radios(x)
+        st.changed.connect(fwd)
+
     def _launched(self, out: dict):
-        """A run was launched outside the window: follow the newest recording, so the view picks it
-        up as soon as it writes its first sweep."""
-        self.status.emit(f"Started outside the window (pid {out.get('pid')}); what it prints goes to "
-                         f"{out.get('log')}")
-        if self.view_file is not None or self.blank:
+        """A run was launched outside the window. Relay 020: it is watched until it ends visibly, never in silence.
+
+        What went wrong before: the window said "Started" in the status line and at once followed the newest
+        recording. A run the engine refused in its first second (a gain the radio's tuner has no step for) never
+        wrote a recording, so "the newest" stayed the earlier scan, and Live Scan went on showing it with no word
+        about the start. Now the start shows a line at once, the service reads the run's own log, and the line
+        becomes one of: started (and Live Scan follows that recording as soon as it exists), not started (the
+        engine's own words, its exit code and its log), or still starting."""
+        from . import trace
+        argv = [str(a) for a in (out.get("argv") or [])]
+        watch = argv[:1] == ["watch"]
+        fixed = watch and argv[1:2] == ["fixed"]
+        rx = next((argv[i + 1] for i, a in enumerate(argv[:-1]) if a in ("--receiver", "--surveyor")), None)
+        what = ("the fixed recording" if fixed else "the recorder session (survey + record)" if watch else "the scan") \
+            + (f" on the {rx.upper() if rx.isalpha() else rx}" if rx else "")
+        rec = {"log": out.get("log"), "pid": out.get("pid"), "t0": time.monotonic(), "wall": time.time(),
+               "what": what, "fixed": fixed, "busy": False, "done": False, "said_slow": False}
+        self.launches = [r for r in self.launches if not r["done"]] + [rec]
+        trace.log("note", f"start launched: {what} (pid {out.get('pid')})")
+        self.status.emit(f"Started outside the window (pid {out.get('pid')}); what it prints goes to {out.get('log')}")
+        if not rec["log"]:
+            rec["done"] = True
+            self._start_banner("started", f"Started {what} (pid {out.get('pid')}).", None)
             self.open_survey(None)
+            return
+        self._start_banner("starting", f"Starting {what}: checking the radio, then the first sweep…", rec["log"])
+        if not hasattr(self, "launch_timer"):
+            self.launch_timer = QTimer(self)
+            self.launch_timer.setInterval(700)
+            self.launch_timer.timeout.connect(self._watch_launches)
+        self.launch_timer.start()
+        self._watch_launches()
+
+    def _watch_launches(self):
+        from .scan_start import call
+        live = [r for r in self.launches if not r["done"]]
+        if not live:
+            self.launch_timer.stop()
+            return
+        for r in live:
+            if r["busy"]:
+                continue
+            r["busy"] = True
+            call(lambda log=r["log"]: self.svc.launch_status(log), lambda d, err, r=r: self._launch_answer(r, d, err))
+
+    def _launch_answer(self, r: dict, d, err):
+        from . import trace
+        r["busy"] = False
+        if r["done"]:
+            return
+        age = time.monotonic() - r["t0"]
+        newest = r is self.launches[-1]
+        if err:
+            if "404" in err:                                # a service from before relay 020
+                r["done"] = True
+                if newest:
+                    self._start_banner("started", f"Started {r['what']} (pid {r['pid']}). This service cannot say how "
+                                       "the start went: run “marsad web restart” to get that.", r["log"])
+                    self.open_survey(None)
+            elif age > 60 and newest:
+                self._start_banner("starting", f"Started {r['what']}, but the service is not answering about it "
+                                   f"({err}). Its log says how it went.", r["log"])
+            return
+        if r["fixed"]:
+            mine = [v for v in self.rec_views if float(v.get("started") or 0) >= r["wall"] - 5
+                    and v.get("view") in ("running", "starting")]
+            if mine:
+                r["done"] = True
+                trace.log("note", f"start confirmed: {r['what']}", age * 1000)
+                if newest:
+                    self._start_banner("started", f"Started {r['what']}: the recorder is running. Its state shows on "
+                                       "its radio card and in the recorder list.", r["log"])
+                return
+        elif d.get("recording") and d.get("recording_exists"):
+            r["done"] = True
+            trace.log("note", f"start confirmed and followed: {d['recording']}", age * 1000)
+            if newest:
+                self._start_banner("started", f"Started {r['what']}: {d['recording']}. Live Scan follows it.", r["log"])
+                self._follow_started(d["recording"])
+            return
+        if d.get("exit_code") is not None:
+            r["done"] = True
+            words = d.get("reason") or "it printed nothing"
+            trace.log("note", f"start ended without a recording: exit {d['exit_code']}", age * 1000)
+            if newest:
+                self._start_banner("refused" if d["exit_code"] in (1, 2) else "failed",
+                                   f"Not started: {r['what']} ended after {age:.0f} s without recording "
+                                   f"(exit {d['exit_code']}). The engine said: {words}", r["log"])
+                self.status.emit(f"Not started: {words}")
+            return
+        if age > 45 and not r["said_slow"] and newest:
+            r["said_slow"] = True
+            last = (d.get("lines") or [""])[-1]
+            self._start_banner("starting", f"Still starting {r['what']} after {age:.0f} s: no recording yet. It last "
+                               f"said: {last}", r["log"])
+        if age > 600:
+            r["done"] = True
+
+    def _follow_started(self, recording: str):
+        """Follow the run just started: the newest recording is now its own, so Follow live shows it; if the service
+        still names another newest (a race with a second start), open this one by name."""
+        self._expect_file = (recording, time.monotonic())
+        self.open_survey(None)
+
+    def _start_banner(self, kind: str, text: str, log: str | None = None):
+        colour = {"starting": "survey_light", "started": "open", "refused": "anomaly", "failed": "alert"}[kind]
+        self.start_dot.setStyleSheet(f"color: {T.C[colour]};")
+        self.start_text.setText(text)
+        self._start_log_path = log
+        self.start_log.setVisible(bool(log))
+        self.start_bar.setProperty("kind", kind)
+        self.start_bar.setStyleSheet(f"QFrame#StartBar {{ background: {T.rgba(colour, 0.12)};"
+                                     f" border-bottom: 1px solid {T.rgba(colour, 0.45)}; }}")
+        self.start_bar.show()
+
+    def _open_start_log(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        if self._start_log_path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._start_log_path))
 
     def mark_seen(self, serial):
         self.recwatch.mark_seen(serial)
@@ -2283,8 +2535,17 @@ class LiveScreen(QWidget):
                                  "the pass in progress), keeps what it has recorded, then analyses and archives it.")
         if b != QMessageBox.StandardButton.Yes:
             return
-        try:
-            out = self.svc.stop_scan(f)
-            self.status.emit(out.get("note") or "asked the run to stop")
-        except ServiceError as exc:
-            QMessageBox.information(self, "Not stopped", str(exc))
+        # relay 020: asked off the window's thread; the answer is shown when it comes
+        from .scan_start import call
+        self.btn_stop.setEnabled(False)
+        self.status.emit("Asking the run to stop…")
+
+        def got(out, err):
+            self.btn_stop.setEnabled(True)
+            if err:
+                QMessageBox.information(self, "Not stopped", str(err))
+                return
+            self.status.emit((out or {}).get("note") or "asked the run to stop")
+            self._start_banner("starting", "Asked the run to stop: it finishes the pass in progress, keeps what it "
+                               "recorded, then analyses and archives it.", None)
+        call(lambda: self.svc.stop_scan(f), got)

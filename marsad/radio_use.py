@@ -20,6 +20,7 @@ from . import host
 from .config import Station
 
 STILL_WRITING_S = 300.0      # a recording untouched this long is not being written any more
+STARTING_S = 45.0            # relay 020: a sidecar this young with no recording yet is a run still starting
 FFTW = "rtl_power_fftw"      # not in rtlpower.SDR_PROGRAMS; counted here so its runs are placed too
 RTL_POWER_NAMES = ("rtl_power", "rtl_power_gainfix")
 
@@ -80,6 +81,26 @@ def users(station: Station, programs: dict | None | bool = False, now: float | N
             fftw = (d.get("engine") == FFTW) or f.suffix.lower() == ".dat"
             known.append({"radio": rx, "serial": cap.serial_of(cfg, rx) if rx else None, "doing": "surveying",
                           "program": FFTW if fftw else "rtl_power", "what": f"marsad run, {f.name}"})
+        # Relay 020: a run in its first seconds has written its sidecar (it names its radio) but not yet its
+        # recording, while its program may already be running. Without this it counted as a program no record
+        # explains, which refused a start on EITHER radio ("cannot tell which radio it holds"). Now it holds its own.
+        have = {f.stem for f in files}
+        for j in station.surveys.glob("survey_*.json"):
+            if j.stem in have:
+                continue
+            try:
+                if now - j.stat().st_mtime > STARTING_S:
+                    continue
+                d = json.loads(j.read_text())
+            except (OSError, ValueError):
+                continue
+            if not isinstance(d, dict) or d.get("finished_local") or not d.get("csv"):
+                continue
+            rx = d.get("receiver")
+            fftw = d.get("engine") == FFTW
+            known.append({"radio": rx, "serial": cap.serial_of(cfg, rx) if rx else None, "doing": "starting",
+                          "program": FFTW if fftw else "rtl_power",
+                          "what": f"marsad run, {d['csv']}, still starting: its first file is not written yet"})
     try:
         from . import catalogue
         recs = catalogue.live_recorders(station, cfg, now=now)

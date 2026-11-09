@@ -25,6 +25,17 @@ class Service:
         self.timeout = timeout
 
     def _call(self, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
+        from marsad_desktop import trace
+        if not trace.on():
+            return self._call_once(path, body, timeout)
+        import time as _t
+        t0 = _t.perf_counter()
+        try:
+            return self._call_once(path, body, timeout)
+        finally:
+            trace.log("call", path.split("?")[0], (_t.perf_counter() - t0) * 1000)
+
+    def _call_once(self, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.base + path, data=data,
                                      headers={"Content-Type": "application/json"} if data else {})
@@ -136,6 +147,11 @@ class Service:
     def station_json(self) -> dict:
         """station.json exactly as it is on disk ({"text"}); station.local.json is never read."""
         return self._call("/station/json", timeout=30)
+
+    def launch_status(self, log: str) -> dict:
+        """Relay 020: how a run launched from the window is doing: the recording it names, or how it ended and the
+        engine's own words."""
+        return self._call(f"/launch/status?log={quote(str(log))}", timeout=15)
 
     def recorder_session(self, serial: str, since: float, limit: int = 400) -> dict:
         """Relay 019: one recorder's events since its session began, newest first, with tiny fingerprints."""

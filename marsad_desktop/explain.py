@@ -36,8 +36,13 @@ CURRENT = {"rx": None}
 
 
 def prefs() -> QSettings:
-    from pathlib import Path as _P
-    return QSettings(str(_P.home() / ".marsad_desktop.ini"), QSettings.Format.IniFormat)
+    """The window's preferences file (relay 020: the same one as everywhere else, so MARSAD_DESKTOP_INI is honoured;
+    this read the home folder's file directly, so a check run could change the owner's own setting)."""
+    from marsad_desktop.chain_screen import prefs as _prefs
+    return _prefs()
+
+
+_SHOWN: list = []                # relay 020: the switch, read once; a QSettings per ⓘ mark cost ~20 ms per panel
 
 
 def texts() -> dict:
@@ -82,13 +87,22 @@ def parse(md: str) -> dict:
 
 
 def shown() -> bool:
-    return prefs().value("explain/show", True, type=bool)
+    if not _SHOWN:
+        _SHOWN.append(prefs().value("explain/show", True, type=bool))
+    return _SHOWN[0]
 
 
 def set_shown(on: bool) -> None:
     prefs().setValue("explain/show", bool(on))
+    _SHOWN[:] = [bool(on)]
     for b in list(_BUTTONS):
-        b.setVisible(on)
+        try:                         # relay 020: a mark not yet placed in a window is only ever hidden here, never
+            if not on:               # shown: shown with no parent it would appear as a window of its own for a moment
+                b.hide()
+            elif b.parentWidget() is not None:
+                b.show()
+        except RuntimeError:         # its window has closed
+            _BUTTONS.discard(b)
     for w, key in list(_TIPPED.items()):
         w.setToolTip(_tooltip(key))
 
@@ -130,7 +144,8 @@ def info(key: str, rx: str | None = None) -> QToolButton:
                     f"QToolButton#Info:hover {{ color: {T.C['text']}; }}")
     b.setToolTip(f"What this is: {tip(key) or key}")
     b.clicked.connect(lambda: Popup.open_for(key, b, rx))
-    b.setVisible(shown())
+    if not shown():                  # relay 020: hide only. setVisible(True) on a button with no parent yet showed it
+        b.hide()                     # as a window of its own for a moment (a "glitch window" at start-up)
     _BUTTONS.add(b)
     return b
 

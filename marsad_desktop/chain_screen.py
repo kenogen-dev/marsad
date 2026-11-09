@@ -4547,7 +4547,7 @@ class ChecksFooter(QFrame):
     WORDS = {"problem": ("problem", "problems"), "warning": ("warning", "warnings"), "note": ("note", "notes")}
 
     def __init__(self, screen: "ChainScreen"):
-        super().__init__()
+        super().__init__(screen)     # relay 020: parented from the start (shown unparented, it flashed as a window)
         self.screen = screen
         self.setObjectName("Footer")
         h = QHBoxLayout(self)
@@ -4628,6 +4628,7 @@ class ChecksFooter(QFrame):
 
 class ChainScreen(QWidget):
     status = Signal(str)
+    used = Signal()               # relay 020: the rig runs record changed; the header and the radios refresh at once
 
     def __init__(self, service: Service):
         super().__init__()
@@ -9033,6 +9034,7 @@ class ChainScreen(QWidget):
             self.show_notice(f"Not set for runs: {exc}")
             return
         self.reload(keep=self.rig_name)
+        self.used.emit()
         self.status.emit(f"runs now record “{self.rig_name}”"
                          + (", each radio its own path" if len(names) > 1 else ""))
 

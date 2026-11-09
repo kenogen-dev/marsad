@@ -1557,6 +1557,17 @@ class StartScanDialog(QDialog):
         self._check(detect=False)
         self._schedule()
 
+    def reopen(self):
+        """Relay 020: the panel is built once and opened again; each opening starts as a fresh one did (the list read
+        again, the scan picked again with its free settings, its checks and plan asked again)."""
+        self.why.setText("")
+        self.b_dry.setEnabled(True)
+        self.b_start.setEnabled(False)
+        self.plan, self.checks = {}, {}            # nothing from the last opening is shown as if it were current
+        self.checks_panel.show_checks({}, None, [], [], pending="reading the saved scans…")
+        self.show_page(0)
+        self.reload()
+
     def _toggle_archived(self, on):
         self.show_archived = on
         self._fill_list()
@@ -2201,10 +2212,23 @@ class StartWatchDialog(QDialog):
         call(self.svc.saved, got)
         call(lambda: self.svc.chains(), lambda d, err: setattr(self, "rig_checks", rig_checks_for_runs(d) if not err else []))
         self._ask_radios()
-        if not hasattr(self, "radio_timer"):
-            self.radio_timer = QTimer(self)
+        if not hasattr(self, "radio_timer") and getattr(self.parent(), "radio_state", None) is None:
+            self.radio_timer = QTimer(self)          # relay 020: only without the window's radio state, which feeds it
             self.radio_timer.timeout.connect(self._ask_radios)
             self.radio_timer.start(4000)
+
+    def reopen(self):
+        """Relay 020: built once, opened again as a fresh panel: the roles and the setup applied again, the sessions
+        and scans read again."""
+        self._roles_applied = self._setup_applied = False
+        self.setup_note = ""
+        self.plan = {}
+        self.checks_panel.show_checks({}, None, [], [], pending="reading the saved sessions…")
+        self.why.setText("")
+        self.b_dry.setEnabled(True)
+        it = self.list.currentItem()
+        e = it.data(Qt.ItemDataRole.UserRole) if it else None
+        self.reload((e or {}).get("name"))
 
     # -- the radios: who surveys, who records, and whether survey + record is possible now
     def _ask_radios(self):
@@ -2257,7 +2281,11 @@ class StartWatchDialog(QDialog):
         self.w_recorder.setCurrentIndex(a)
         sur, rec = self.w_surveyor.currentData(), self.w_recorder.currentData()
         if sur and rec and sur != rec:              # remembered for next time, as the Radios panel's Swap is
-            call(lambda: self.svc.set_roles({"surveyor": sur, "recorder": rec}), lambda d, err: None)
+            st = getattr(self.parent(), "radio_state", None)
+            if st is not None:                      # relay 020: through the window's one radio state, shown everywhere
+                st.set_roles({"surveyor": sur, "recorder": rec})
+            else:
+                call(lambda: self.svc.set_roles({"surveyor": sur, "recorder": rec}), lambda d, err: None)
 
     def _coverage_warning(self, w: dict, plan: dict):
         """Survey + record can only record what the recording radio can tune."""

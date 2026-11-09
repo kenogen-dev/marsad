@@ -147,6 +147,16 @@ class SettingsDialog(QDialog):
         self.chain_reopen = box("Chain: reopen the last rig",
                                 "Off (the default), Chain opens with no rig loaded: New rig, Open rig… and your last "
                                 "three rigs. On, it opens the rig you worked on last.", "start/chain_reopen", False)
+        # relay 020: Diagnostics, off by default
+        from marsad_desktop import trace
+        dh = QLabel("Diagnostics")
+        dh.setFont(T.ui_font(10, QFont.Weight.DemiBold))
+        dh.setContentsMargins(0, T.SPACE, 0, 0)
+        lay.addWidget(dh)
+        self.trace = box("Timing trace",
+                         "Writes how long each click takes to show its result, each call to the service and any frame "
+                         f"the window could not draw on time, to {trace.path()}. Off by default; it changes nothing "
+                         "else.", "diag/trace", False, trace.set_on)
         note = QLabel("These are the window's own choices, kept in .marsad_desktop.ini in your home folder. Nothing "
                       "here changes station.json, a run or a saved rig.")
         note.setProperty("muted", True)
@@ -191,6 +201,9 @@ class Window(QMainWindow):
         self.group.setExclusive(True)
         self.chain = ChainScreen(service)
         self.live = LiveScreen(service)            # the home screen (relay 009)
+        # relay 020: one radio state for the whole window (it lives with Live Scan, which shows it most)
+        self.radio_state = self.live.radio_state
+        self.radio_state.changed.connect(lambda d: self._radios_changed(d))
         built = {"Chain": self.chain, "Live Scan": self.live}
         self.screens = []
         for i, s in enumerate(SCREENS):
@@ -267,6 +280,9 @@ class Window(QMainWindow):
         self._show_screen(i)
 
         self.chain.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
+        # relay 020: "Use for runs" shows at once in the header and on every radio's chain (Radios panel, Start panels)
+        self.chain.used.connect(self._summary)
+        self.chain.used.connect(self.radio_state.refresh)
         self.live.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
         self.live.open_rig_version.connect(self.open_rig_version)
         self.statusBar().setStyleSheet(f"color: {T.C['muted']}; border-top: 1px solid {T.C['lines']};")
@@ -275,9 +291,6 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._ping)
         self.timer.start(30000)
-        self.radio_timer = QTimer(self)
-        self.radio_timer.timeout.connect(self._radios)
-        self.radio_timer.start(10000)
         self._radio_data = None
         self._ok = None
         QTimer.singleShot(0, self._first_load)
@@ -308,13 +321,14 @@ class Window(QMainWindow):
             from marsad import __version__ as ver
         except ImportError:
             ver = "?"
-        ok = self.svc.ping()
+        ok = self._ok                      # relay 020: the last check, not a new call on the window's thread
         box = QMessageBox(self)
         box.setWindowTitle("About Marsad")
         box.setText(f"<b>Marsad</b> {ver}<br>al-marsad, the observatory")
         box.setInformativeText(
             f"The window reads and saves through the service at {self.svc.base}"
-            f" ({'answering' if ok else 'not answering'}). Closing the window never stops a scan.\n\n"
+            f" ({'answering' if ok else 'not checked yet' if ok is None else 'not answering'}). Closing the window "
+            "never stops a scan.\n\n"
             "Levels are relative dB, never calibrated dBm.")
         self._about_box = box
         box.exec()
@@ -325,20 +339,28 @@ class Window(QMainWindow):
         self.chain.reload(first=True)
 
     def _ping(self):
-        ok = self.svc.ping()
-        self._ok = ok
-        dot = T.C["open"] if ok else T.C["alert"]
-        self.conn.setText(f"<span style='color:{dot}'>●</span> service {self.svc.base.replace('http://', '')}"
-                          + ("" if ok else " not answering"))
-        self._summary()
+        """Relay 020: asked off the window's thread. It ran on it every 30 s, and while the service was busy (reading a
+        big recording) each check could hold the window for up to its 5 s timeout."""
+        from marsad_desktop.scan_start import call
+        if getattr(self, "_pinging", False):
+            return
+        self._pinging = True
+
+        def got(ok, _err):
+            self._pinging = False
+            self._ok = bool(ok)
+            dot = T.C["open"] if ok else T.C["alert"]
+            self.conn.setText(f"<span style='color:{dot}'>●</span> service {self.svc.base.replace('http://', '')}"
+                              + ("" if ok else " not answering"))
+            self._summary()
+        call(self.svc.ping, got)
 
     def _radios(self):
-        from marsad_desktop.scan_start import call
+        self.radio_state.refresh()
 
-        def got(d, err):
-            self._radio_data = None if err else d
-            self._summary()
-        call(self.svc.radios, got)
+    def _radios_changed(self, d: dict):
+        self._radio_data = d
+        self._summary()
 
     def _summary(self):
         """The header's middle: each radio in a word (plugged in, busy, not plugged in) and the rig runs record."""
@@ -374,6 +396,8 @@ def main(argv=None) -> int:
     app.setApplicationName("Marsad")
     app.setFont(T.ui_font())
     app.setStyleSheet(T.stylesheet())
+    from marsad_desktop import trace
+    trace.start_from_prefs()                       # relay 020: Settings > Diagnostics (off by default)
     w = Window(Service(), start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"))
     w.show()
     return app.exec()

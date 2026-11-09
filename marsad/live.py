@@ -1525,6 +1525,27 @@ def _station_notes(station: Station, s: dict, g: dict, chain_text: str, out: lis
         out.append([n.get("level") or "warn", n.get("title") or "Note", n.get("text") or ""])
 
 
+def gain_problem(station: Station, rx: str | None, gain) -> str | None:
+    """Relay 020: a gain the radio's tuner has no step for. The engine refuses such a run in its first second, so
+    the window says so before it launches anything. (A recorder session whose surveying radio had been swapped to one
+    with another tuner kept the saved scan's gain, a step only the other tuner has, and ended at once while the
+    window showed nothing.)"""
+    if gain is None or not rx:
+        return None
+    tuner = station.tuner_of(rx)
+    valid = TUNER_GAINS.get(tuner or "")
+    try:
+        g = float(gain)
+    except (TypeError, ValueError):
+        return None
+    if not valid or g in valid:
+        return None
+    nearest = min(valid, key=lambda v: abs(v - g))
+    from .rtlpower import TUNER_LABEL
+    return (f"{jsnum(g)} dB is not a gain step on the {radio_word(rx)}'s tuner ({TUNER_LABEL.get(tuner, tuner)}), so "
+            f"the engine would refuse to start. Nearest is {jsnum(nearest)} dB.")
+
+
 def scan_warnings(station: Station, g: dict, s: dict, chain_text: str) -> list:
     """builder.html flags(): [level, title, text], level bad / warn / ok, on the engine's
     own geometry. Same cases, same words."""
@@ -1555,6 +1576,9 @@ def scan_warnings(station: Station, g: dict, s: dict, chain_text: str) -> list:
         out.append(["warn", "Dwell", f"Only {_num(g['listening'] * 100, 0)}% of the time is spent listening: "
                                      f"{_num(g['overhead'] * 1000, 0)} ms of overhead per hop against "
                                      f"{_num(g['listen'], 2)} s of listening. More seconds per hop fixes it."])
+    gp = gain_problem(station, s["rx"], s.get("gain"))
+    if gp:
+        out.append(["bad", "Gain", gp])
     for a, b in rcv.get("gaps_mhz", []):
         if s["lo"] < b and s["hiReq"] > a:
             out.append(["warn", "PLL gap", f"{jsnum(a)}–{jsnum(b)} MHz is this receiver's lock gap (rtl_test -t "
@@ -1895,10 +1919,65 @@ def marsad_argv(station: Station, args: list) -> list:
     return host.self_command("--station", str(station.root), *args, prefer_venv=station.venv_python)
 
 
-_LAUNCHER = ("import json,os,subprocess,sys;a=json.load(open(sys.argv[1],encoding='utf-8'));"
+# Relay 020: when the run ends, the wrapper writes <log>.exit with its exit code, so the window can tell a
+# start that ended at once (an engine refusal) from one still running, and say which in words.
+_LAUNCHER = ("import json,os,subprocess,sys,time;a=json.load(open(sys.argv[1],encoding='utf-8'));"
              "e=dict(os.environ,PYTHONUNBUFFERED='1');f=open(a['log'],'ab');"
-             "sys.exit(subprocess.call(a['argv'],cwd=a['cwd'],env=e,stdin=subprocess.DEVNULL,stdout=f,"
-             "stderr=subprocess.STDOUT))")
+             "r=subprocess.call(a['argv'],cwd=a['cwd'],env=e,stdin=subprocess.DEVNULL,stdout=f,"
+             "stderr=subprocess.STDOUT);f.close();"
+             "open(a['log']+'.exit','w').write(json.dumps({'exit_code':r,'ended':time.time()}));sys.exit(r)")
+
+# What a launched run prints that says which recording it writes (marsad run, either engine; a watch's survey child
+# prints the same line into the same log).
+_SIDECAR_LINE = re.compile(r"Sidecar written:\s*(\S+?\.json)\s*$", re.M)
+_PROGRESS_LINE = re.compile(r"^\s*\d+:\d\d elapsed,|^\s*$")
+
+
+def launch_status(station: Station, log: str) -> dict:
+    """GET /launch/status?log=...: how a run launched from the window is doing, from its own log.
+
+    `recording`: the recording it writes (the sidecar it named), once named. `exit_code`: set once the run has ended
+    (the launcher's <log>.exit). `lines`: the last lines it printed. `reason`: the last few lines that are not
+    progress, which for a run that ended at once are the engine's own words (a refusal or an error).
+    Reads only files in the station's launch-log folder."""
+    logs = (station.root / LAUNCH_LOG_DIR).resolve()
+    try:
+        p = Path(str(log)).resolve()
+    except (OSError, ValueError):
+        raise ValueError("not a launch log of this station")
+    if p.parent != logs or p.suffix.lower() != ".log":
+        raise ValueError("not a launch log of this station")
+    text = ""
+    if p.exists():
+        with open(p, "rb") as fh:
+            fh.seek(max(0, p.stat().st_size - 65536))
+            text = fh.read().decode("utf-8", errors="replace")
+    ended = p.with_name(p.name + ".exit")
+    exit_code = ended_at = None
+    if ended.exists():
+        try:
+            e = json.loads(ended.read_text(encoding="utf-8"))
+            exit_code, ended_at = int(e.get("exit_code")), e.get("ended")
+        except (OSError, ValueError, TypeError):
+            exit_code = -1
+    recording = None
+    m = list(_SIDECAR_LINE.finditer(text))
+    if m:
+        side = Path(m[-1].group(1))
+        if not side.is_absolute():
+            side = station.root / side
+        try:
+            d = json.loads(side.read_text(encoding="utf-8"))
+            recording = str(d.get("csv") or "") or None
+        except (OSError, ValueError):
+            recording = None
+        recording = recording or side.with_suffix(".csv").name
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()][-14:]
+    said = [ln.strip() for ln in lines if not _PROGRESS_LINE.match(ln)]
+    return {"log": str(p), "exists": p.exists(), "running": exit_code is None, "exit_code": exit_code,
+            "ended": ended_at, "recording": recording,
+            "recording_exists": bool(recording and (station.surveys / recording).exists()),
+            "lines": lines, "reason": " ".join(said[-3:])}
 
 
 def launch_outside(station: Station, argv: list, label: str) -> dict:
@@ -1997,6 +2076,9 @@ def scan_start(station: Station, form: dict) -> dict:
         raise ValueError((chk["chain"].get("problem") or "No chain to record.") + " Nothing was started.")
     if chk["chain"]["due"] and form.get("chain") in (None, "") and not form.get("chain_confirmed"):
         raise ValueError("Is the rig still built as drawn? Confirm the chain first. Nothing was started.")
+    gp = gain_problem(station, s["rx"], s.get("gain"))
+    if gp:                                          # the engine would refuse it anyway: no "confirm" gets past it
+        raise ValueError(gp + " Nothing was started.")
     bad = [w for w in warnings if w[0] == "bad"]
     if bad and not form.get("problems_confirmed"):
         raise ValueError("Problems to confirm first: " + "; ".join(w[1] for w in bad) + ". Nothing was started.")
@@ -2276,6 +2358,10 @@ def watch_start(station: Station, form: dict) -> dict:
         if c["chain"]["due"] and not (form.get("chains") or {}).get(r) and not form.get("chain_confirmed"):
             raise ValueError(f"Is the rig still built as drawn ({r.upper()})? Confirm the chains first. Nothing was started.")
     w = plan["settings"]
+    gp = gain_problem(station, w["scan"]["rx"], w["scan"].get("gain")) if w["mode"] == "survey" else \
+        gain_problem(station, w["receiver"], w.get("gain"))
+    if gp:
+        raise ValueError(("The survey: " if w["mode"] == "survey" else "") + gp + " Nothing was started.")
     if w["mode"] == "survey":
         _remember_conditions(station, w["scan"])
         if any(x[0] == "bad" for x in plan["survey"]["warnings"]) and not form.get("problems_confirmed"):
@@ -3122,6 +3208,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 try:
                     body = json.dumps(radios_status(station)).encode()
                 except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
+            elif u.path == "/launch/status":
+                try:                     # relay 020: how a run launched from the window is doing, from its log
+                    body = json.dumps(launch_status(station, (q.get("log") or [""])[0])).encode()
+                except (OSError, ValueError) as exc:
                     body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/recorder/session":
                 import sqlite3

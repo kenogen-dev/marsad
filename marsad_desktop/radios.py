@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
@@ -46,6 +46,107 @@ def jsnum(v) -> str:
 def call(fn, then):
     from marsad_desktop.scan_start import call as _call      # the shared pool helper
     _call(fn, then)
+
+
+# ---------------------------------------------------------------- one source of truth (relay 020)
+
+class RadioState(QObject):
+    """The radios, held once for the whole window. Every view (the strip, the header's summary, the Radios panel,
+    the Start panels) listens to `changed` instead of asking /radios on its own timer.
+
+    Why (relay 020): each view polled /radios separately, every 3, 5 and 10 s. A poll asked just before a Swap or a
+    setup change could answer just after it, with the old roles, so a setting flipped back for a moment and then
+    forward again (the "lag" and flicker), and the header could stay stale for 10 s. Now:
+      - a change shows at once (optimistically), and the service's answer confirms or rolls it back;
+      - any poll answer asked before the latest change is dropped, so an old answer can never undo a new setting;
+      - one timer asks: every 3 s while someone wants it fast (the Radios panel is open), else every 5 s."""
+    changed = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, svc: Service, parent=None):
+        super().__init__(parent)
+        self.svc = svc
+        self.data: dict = {}
+        self._gen = 0                  # bumped by every local change; a poll answer from an older generation is dropped
+        self._pending = 0
+        self._fast = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(5000)
+
+    def want_fast(self, on: bool):
+        self._fast = max(0, self._fast + (1 if on else -1))
+        self.timer.setInterval(3000 if self._fast else 5000)
+
+    def refresh(self):
+        gen = self._gen
+        call(self.svc.radios, lambda d, err: self._polled(d, err, gen))
+
+    def _polled(self, d, err, gen):
+        if err:
+            self.failed.emit(err)
+            return
+        if gen != self._gen or self._pending:        # asked before a change, or while one is in flight: stale
+            return
+        self._set(d)
+
+    def _set(self, d: dict):
+        if not isinstance(d, dict) or "radios" not in d:
+            return
+        self.data = d
+        self.changed.emit(d)
+
+    def change(self, fn, optimistic=None, on_error=None):
+        """Run `fn` (a service call that answers with the new /radios) off the window's thread. `optimistic(copy)`
+        returns what the views should show meanwhile. An error rolls back by asking again, then `on_error(text)`."""
+        import copy
+        self._gen += 1
+        self._pending += 1
+        before = self.data
+        if optimistic and self.data:
+            try:
+                self._set(optimistic(copy.deepcopy(self.data)))
+            except Exception:  # noqa: BLE001 - a guess that fails just waits for the service
+                pass
+
+        def got(d, err):
+            self._pending -= 1
+            self._gen += 1
+            if err:
+                if before:
+                    self._set(before)
+                self.refresh()
+                if on_error:
+                    on_error(err)
+                return
+            from marsad_desktop import trace
+            trace.log("note", "radios: change confirmed by the service")
+            self._set(d)
+        call(fn, got)
+
+    # the changes the window makes, each with what it shows at once
+    def set_enabled(self, name: str, on: bool, on_error=None):
+        def guess(d):
+            for r in d.get("radios") or []:
+                if r.get("name") == name:
+                    r["enabled"] = bool(on)
+            return d
+        self.change(lambda: self.svc.set_enabled(name, on), guess, on_error)
+
+    def set_roles(self, body: dict, on_error=None):
+        def guess(d):
+            roles = dict(d.get("roles") or {})
+            if body.get("swap"):
+                roles["surveyor"], roles["recorder"] = roles.get("recorder"), roles.get("surveyor")
+            for k in ("surveyor", "recorder", "setup", "one"):
+                if body.get(k) is not None:
+                    roles[k] = body[k]
+            d["roles"] = roles
+            for r in d.get("radios") or []:
+                r["role"] = "survey" if r.get("name") == roles.get("surveyor") else \
+                    "record" if r.get("name") == roles.get("recorder") else r.get("role")
+            return d
+        self.change(lambda: self.svc.set_roles(body), guess, on_error)
 
 
 # ---------------------------------------------------------------- the strip on Live Scan
@@ -383,13 +484,30 @@ class RadioCard(QFrame):
         if key == self._key:
             return
         self._key = key
-        while self.v.count():
-            it = self.v.takeAt(0)
+        # relay 020: rebuilt with painting held off, so the card never shows half-built (empty, then filling in)
+        self.setUpdatesEnabled(False)
+        try:
+            self._build(r)
+        finally:
+            self.setUpdatesEnabled(True)
+
+    @staticmethod
+    def _empty(lay):
+        """Relay 020: empty a layout and every layout inside it. Only the top level was emptied before, so the
+        widgets of the grid and the chain row stayed on the card, still painted where they were, under the new ones
+        (overlapping text after each refresh)."""
+        while lay.count():
+            it = lay.takeAt(0)
             w = it.widget()
             if w is not None:
                 w.hide()
-                w.setParent(None)
                 w.deleteLater()
+            elif it.layout() is not None:
+                RadioCard._empty(it.layout())
+                it.layout().deleteLater()
+
+    def _build(self, r: dict):
+        self._empty(self.v)
         role = r.get("role")
         st = r["doing"]["state"]
         head = _label(f"{word(r['name'])} <span style='color:{T.C[ROLE_COLOUR.get(role, 'muted')]}; font-size:10pt'>"
@@ -468,9 +586,12 @@ class RadiosDialog(QDialog):
     panel that then fills itself in)."""
     changed = Signal(dict)
 
-    def __init__(self, svc: Service, parent=None, initial: dict | None = None):
+    def __init__(self, svc: Service, parent=None, initial: dict | None = None, state: "RadioState | None" = None):
         super().__init__(parent)
         self.svc = svc
+        self.state = state                        # relay 020: the window's one radio state, when it has one
+        if state is not None and state.data:
+            initial = state.data
         self.setWindowTitle("Radios")
         self.resize(1180, 860)
         self.d: dict = {}
@@ -586,11 +707,24 @@ class RadiosDialog(QDialog):
         outer.addWidget(self.foot)
         if initial:                          # the strip's last answer: the panel shows complete at once
             self.show_status(initial)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(3000)
-        QTimer.singleShot(0, self.refresh)
+        if state is not None:                # relay 020: one source of truth; the state asks, every view listens
+            state.changed.connect(self.show_status)
+            state.want_fast(True)
+            self.finished.connect(lambda *_: state.want_fast(False))
+            self.finished.connect(lambda *_: self._disconnect())
+            QTimer.singleShot(0, state.refresh)
+        else:
+            self.timer = QTimer(self)
+            self.timer.timeout.connect(self.refresh)
+            self.timer.start(3000)
+            QTimer.singleShot(0, self.refresh)
         call(lambda: svc.chains(), self._got_rig)
+
+    def _disconnect(self):
+        try:
+            self.state.changed.disconnect(self.show_status)
+        except (RuntimeError, TypeError):
+            pass
 
     def _got_rig(self, d, err):
         if err:
@@ -601,8 +735,29 @@ class RadiosDialog(QDialog):
             self._show_setup(self.d)
 
     def refresh(self):
+        if self.state is not None:
+            self.state.refresh()
+            return
         call(self.svc.radios, lambda d, err: self.show_status(d) if not err else self.mode.setText(
             f"The service could not say: {err}"))
+
+    @staticmethod
+    def _fill_combo(cb, items: list, current):
+        """Relay 020: refill a radio picker only when its items changed, and never while its list is open. It was
+        cleared and refilled on every 3 s refresh, which shut an open list under the pointer: the flickering
+        "glitch window" when picking a radio."""
+        have = [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())]
+        if cb.view().isVisible():
+            return
+        cb.blockSignals(True)
+        if have != items:
+            cb.clear()
+            for text, data in items:
+                cb.addItem(text, data)
+        i = max(0, cb.findData(current))
+        if cb.currentIndex() != i:
+            cb.setCurrentIndex(i)
+        cb.blockSignals(False)
 
     def show_status(self, d: dict):
         from marsad_desktop import setups as SU
@@ -614,19 +769,10 @@ class RadiosDialog(QDialog):
         rs = d.get("radios") or []
         roles = d.get("roles") or {}
         for cb, key in ((self.sur, "surveyor"), (self.rec, "recorder")):
-            cb.blockSignals(True)
-            cb.clear()
-            for r in rs:
-                cb.addItem(word(r["name"]), r["name"])
-            cb.setCurrentIndex(max(0, cb.findData(roles.get(key))))
-            cb.blockSignals(False)
-        self.one.blockSignals(True)
-        self.one.clear()
-        for r in rs:
-            self.one.addItem(word(r["name"]) + ("" if r.get("enabled", True) else "  (disabled)"), r["name"])
+            self._fill_combo(cb, [(word(r["name"]), r["name"]) for r in rs], roles.get(key))
         one = roles.get("one") or (SU.usable(d)[0]["name"] if SU.usable(d) else (rs[0]["name"] if rs else None))
-        self.one.setCurrentIndex(max(0, self.one.findData(one)))
-        self.one.blockSignals(False)
+        self._fill_combo(self.one, [(word(r["name"]) + ("" if r.get("enabled", True) else "  (disabled)"), r["name"])
+                                    for r in rs], one)
         self._show_setup(d)
         self.map.show_status(d)
         for r in rs:
@@ -648,7 +794,8 @@ class RadiosDialog(QDialog):
         prog = ", ".join(d.get("programs") or []) or "none"
         self.foot.setText(f"Plugged in or not: {d.get('presence_source') or 'unknown'}. Radio programs running: {prog}. "
                           "The USB index is still found by serial when a run starts.")
-        self.changed.emit(d)
+        if self.state is None:
+            self.changed.emit(d)
 
     def _show_setup(self, d: dict):
         """The setup buttons (one checked; one not possible now greyed, saying why), the roles or the one radio it
@@ -715,4 +862,7 @@ class RadiosDialog(QDialog):
         self._set({"surveyor": sur, "recorder": rec})
 
     def _set(self, body):
+        if self.state is not None:            # relay 020: shown at once everywhere, confirmed by the service
+            self.state.set_roles(body, on_error=lambda err: self.mode.setText(err))
+            return
         call(lambda: self.svc.set_roles(body), lambda d, err: self.show_status(d) if not err else self.mode.setText(err))
