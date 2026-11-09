@@ -2229,6 +2229,23 @@ class StartWatchDialog(QDialog):
         ok = bool((d.get("mode") or {}).get("survey_record"))
         self.m_survey.setEnabled(ok)
         self.m_survey.setToolTip("" if ok else d["mode"]["text"])
+        if not getattr(self, "_setup_applied", False) and self.f_rx.count():
+            # relay 019: the panel follows the setup chosen for the radios, once, as it opens
+            self._setup_applied = True
+            from marsad_desktop import setups as SU
+            setup = SU.chosen(d)
+            roles = d.get("roles") or {}
+            if setup in ("both_record", "one_record"):
+                self.m_fixed.setChecked(True)
+                busy = {r["name"] for r in d.get("radios") or [] if (r.get("doing") or {}).get("state")
+                        in ("recording", "surveying")}
+                free = [r["name"] for r in SU.usable(d) if r["name"] not in busy]
+                want = roles.get("one") if setup == "one_record" else (free[0] if free else None)
+                if want is not None and self.f_rx.findData(want) >= 0:
+                    self.f_rx.setCurrentIndex(self.f_rx.findData(want))
+            elif setup == "survey_record" and ok:
+                self.m_survey.setChecked(True)
+            self.setup_note = f"Setup: {SU.TITLES[setup]}."
         if not ok and self.m_survey.isChecked():
             self.m_fixed.setChecked(True)
         self._mode(self.m_survey.isChecked())
@@ -2314,6 +2331,7 @@ class StartWatchDialog(QDialog):
             self.o[k].setEnabled(survey)
         both = bool(((getattr(self, "radios_d", None) or {}).get("mode") or {}).get("survey_record"))
         self.mode_note.setText(
+            (getattr(self, "setup_note", "") + "  " if getattr(self, "setup_note", "") else "") +
             ("One radio surveys and the other records what the first one finds. Each radio's chain is its own path "
              "in the rig used for runs." if survey else
              "One radio parked on one frequency, recording every event over the trigger level. Works with one radio.")

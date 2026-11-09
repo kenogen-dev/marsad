@@ -1866,6 +1866,34 @@ def checks_for_runs(summary: dict) -> list:
     return []
 
 
+def used_rig(summary: dict | None) -> tuple:
+    """Relay 019: (name, drawing) of the rig used for runs, from the service's /chain/layout answer, or
+    (None, None)."""
+    if not summary:
+        return None, None
+    chain_sum = summary.get("chain") or {}
+    labels = labels_from(chain_sum.get("parts"))
+    derived = ("text", "tail", "receiver", "source", "needs_confirm")
+    chains = {n: {k: v for k, v in c.items() if k not in derived} for n, c in (chain_sum.get("chains") or {}).items()}
+    doc = {"schema": 1, "current": chain_sum.get("current"), "chains": chains}
+    try:
+        display = rigs_for_display(doc, check_layout(summary.get("layout") or {}), labels)
+    except (ValueError, KeyError, TypeError):
+        return None, None
+    by = chain_sum.get("runs_record")
+    for name, d in display.items():
+        if d.get("archived") or not d.get("chains"):
+            continue
+        if by:
+            texts = {engine_chain.chain_text(c["parts"]) for c in d["chains"].values()}
+            used = len(d["chains"]) > 1 and texts == set(by.values())
+        else:
+            used = chain_sum.get("current") in d["chains"]
+        if used:
+            return name, d["rig"]
+    return None, None
+
+
 # ---------------------------------------------------------------- relay 018: checks by level
 CHECK_LEVELS = ("problem", "warning", "note")
 

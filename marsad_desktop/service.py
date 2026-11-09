@@ -137,6 +137,11 @@ class Service:
         """station.json exactly as it is on disk ({"text"}); station.local.json is never read."""
         return self._call("/station/json", timeout=30)
 
+    def recorder_session(self, serial: str, since: float, limit: int = 400) -> dict:
+        """Relay 019: one recorder's events since its session began, newest first, with tiny fingerprints."""
+        return self._call(f"/recorder/session?serial={quote(str(serial))}&since={float(since)}&limit={int(limit)}",
+                          timeout=30)
+
     # -- The radios (owner, 2026-11-07): presence by serial from Windows' device list, nothing opened
     def radios(self) -> dict:
         return self._call("/radios", timeout=30)

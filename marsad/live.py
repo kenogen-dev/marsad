@@ -2519,6 +2519,55 @@ def radio_last_runs(station: Station) -> dict:
     return {"radios": out}
 
 
+_THUMBS: dict = {}
+THUMB_ROWS, THUMB_COLS = 14, 44
+
+
+def recorder_session(station: Station, serial: str, since: float, limit: int = 400) -> dict:
+    """Relay 019, the recorder list on Live Scan: one recorder's events since its session began (the status file's
+    `started`), newest first, each with time, frequency, level over the floor (dB, relative), its tier, band and
+    badges, whether it is NEW (no event in the catalogue from before this session within half its width, at least
+    25 kHz), and a tiny fingerprint picture (power over the floor, 20 ms x ~1 kHz, max-pooled: the one thing a
+    private event keeps). Read-only; nothing here plays or exports anything."""
+    import numpy as np
+    from . import capture as cap, catalogue
+    cfg = cap.settings(station)
+    con = catalogue.open_ro(station)
+    out = {"serial": serial, "since": since, "events": [], "total": 0}
+    if con is None:
+        return out
+    try:
+        f = catalogue._f(con)
+        rows_ = con.execute(f"SELECT *, {f} AS filed_hz FROM captures WHERE serial = ? AND started_epoch >= ? "
+                            "ORDER BY started_epoch DESC", (str(serial), float(since))).fetchall()
+        out["total"] = len(rows_)
+        for r in rows_[:max(1, int(limit))]:
+            d = dict(r)
+            fh = float(d.get("filed_hz") or d.get("freq_hz") or 0)
+            tol = max(25e3, float(d.get("bandwidth_hz") or 0) / 2)
+            earlier = con.execute(f"SELECT 1 FROM captures WHERE started_epoch < ? AND ABS({f} - ?) <= ? LIMIT 1",
+                                  (float(since), fh, tol)).fetchone()
+            private = catalogue.is_private(d, cfg)
+            ev = {"id": d["id"], "at": d.get("started_epoch"), "mhz": fh / 1e6,
+                  "snr_db": d.get("snr_peak_db"), "private": private, "tier": "private" if private else "open",
+                  "band": d.get("band") or None, "anomaly": cap.ANOMALY in (d.get("flags") or ""),
+                  "new": earlier is None, "iq": d.get("iq_status"), "thumb": None}
+            key = (d["id"], d.get("fingerprint"))
+            if key not in _THUMBS:
+                try:
+                    z = np.load(catalogue._inside(d.get("fingerprint"), station, cfg))
+                    over = z["spec_db"].astype(np.float32) - z["floor_db"].astype(np.float32)[None, :]
+                    img = catalogue._maxpool(over, THUMB_ROWS, THUMB_COLS)
+                    _THUMBS[key] = {"rows": int(img.shape[0]), "cols": int(img.shape[1]), "img": catalogue._u8(img)}
+                except Exception:  # noqa: BLE001 - a missing or archived fingerprint: the row shows without one
+                    _THUMBS[key] = None
+            ev["thumb"] = _THUMBS[key]
+            out["events"].append(ev)
+    finally:
+        con.close()
+    return out
+
+
 def station_json_copy(station: Station) -> dict:
     """Relay 018, File > Export a copy of station.json: the file exactly as it is on disk, read fresh. Never the
     loaded settings, which carry station.local.json's overlay (the location, rule 10); that file is not read."""
@@ -2540,7 +2589,13 @@ def radio_roles(station: Station) -> dict:
             sur, rec = watch.survey_roles(station, cap.settings(station), None, None)
         except SystemExit:
             sur, rec = (names + [None, None])[:2]
-    return {"surveyor": sur, "recorder": rec, "chosen_here": bool(saved)}
+    # relay 019: a setup for the two radios, kept with the roles; it starts nothing, the Start panels follow it
+    setup = saved.get("setup") if saved.get("setup") in SETUPS else None
+    one = saved.get("one") if saved.get("one") in names else None
+    return {"surveyor": sur, "recorder": rec, "chosen_here": bool(saved), "setup": setup, "one": one}
+
+
+SETUPS = ("survey_record", "both_survey", "both_record", "one_survey", "one_record")
 
 
 def set_radio_roles(station: Station, form: dict) -> dict:
@@ -2550,12 +2605,35 @@ def set_radio_roles(station: Station, form: dict) -> dict:
     if form.get("swap"):
         sur, rec = now["recorder"], now["surveyor"]
     else:
-        sur, rec = form.get("surveyor"), form.get("recorder")
+        sur, rec = form.get("surveyor", now["surveyor"]), form.get("recorder", now["recorder"])
+    if len(station.receivers) < 2 and not form.get("swap"):      # one radio: only the setup can be chosen
+        sur, rec = now["surveyor"], now["recorder"]
+        roles = {k: v for k, v in (doc.get("roles") or {}).items() if k in ("surveyor", "recorder")}
+        setup = form.get("setup", now.get("setup"))
+        if setup is not None and setup not in SETUPS:
+            raise ValueError(f"no setup {setup!r}: one of {', '.join(SETUPS)}")
+        if setup is not None:
+            roles["setup"] = setup
+        doc["roles"] = roles
+        _saved_write(station, doc)
+        return radios_status(station)
     if sur not in station.receivers or rec not in station.receivers:
         raise ValueError("both roles need a receiver from station.json")
     if sur == rec:
         raise ValueError("one radio cannot survey and record at once; pick two different radios")
-    doc["roles"] = {"surveyor": sur, "recorder": rec}
+    roles = {"surveyor": sur, "recorder": rec}
+    # relay 019: the setup (and, for one radio alone, which radio) travels with the roles
+    setup = form.get("setup", now.get("setup"))
+    if setup is not None:
+        if setup not in SETUPS:
+            raise ValueError(f"no setup {setup!r}: one of {', '.join(SETUPS)}")
+        roles["setup"] = setup
+    one = form.get("one", now.get("one"))
+    if one is not None:
+        if one not in station.receivers:
+            raise ValueError(f"no receiver {one!r} in station.json")
+        roles["one"] = one
+    doc["roles"] = roles
     _saved_write(station, doc)
     return radios_status(station)
 
@@ -3044,6 +3122,14 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 try:
                     body = json.dumps(radios_status(station)).encode()
                 except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
+            elif u.path == "/recorder/session":
+                import sqlite3
+                try:                     # relay 019: the recorder list's events, one session, read-only
+                    body = json.dumps(recorder_session(station, (q.get("serial") or [""])[0],
+                                                       float((q.get("since") or ["0"])[0] or 0),
+                                                       int((q.get("limit") or ["400"])[0] or 400))).encode()
+                except (OSError, ValueError, sqlite3.Error) as exc:
                     body = json.dumps({"error": str(exc)}).encode()
             elif u.path in ("/chain/last_runs", "/station/json"):
                 try:                     # relay 018: read-only, for the window's Tools and File menus

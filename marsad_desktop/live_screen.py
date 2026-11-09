@@ -24,8 +24,9 @@ import numpy as np
 import pyqtgraph as pg
 import json
 
-from PySide6.QtCore import QObject, QPointF, QRectF, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtCore import QObject, QPointF, QRectF, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QFont, QFontMetrics, QIcon, QImage, QPainter,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSplitter, QToolButton,
                                QVBoxLayout, QWidget)
@@ -414,11 +415,8 @@ class RecorderCard(QFrame):
             if sp.get("floor_db") is not None:
                 self.floor.setPos(sp["floor_db"])
                 self.trig.setPos(sp["trigger_db"])
-        evs = st.get("recent_events") or []
-        if evs != getattr(self, "_evs", None):             # rebuild the feed only when it changed
-            self._evs = list(evs)
-            self._feed(evs)
-        self.events.setVisible(view in ("running", "starting", "silent") or bool(evs))
+        # relay 019: the card carries the recorder's state; its events are the list under the cards (this session only)
+        self.events.setVisible(False)
         self.seen_btn.setVisible(view == "silent")
 
     def _feed(self, evs):
@@ -431,6 +429,287 @@ class RecorderCard(QFrame):
                 it.setForeground(QBrush(T.color("private")))
                 it.setToolTip("PRIVATE band: only its fingerprint was kept. Nothing plays or exports it (rule 2).")
             self.events.addItem(it)
+
+
+class RecorderList(QFrame):
+    """Relay 019: the recorder's events as a concise quick reference that leads into Captures. Only the session
+    running now (or, with nothing running, the most recent one, folded under its one-line summary). Each row: time,
+    frequency, level over the floor, a small fingerprint and one badge. Filters: badge, band, level above; private
+    events fold into one count row per band (on by default). Minimise leaves a slim strip with the session summary
+    and the recorder's state; close hides it (View > Recorder list brings it back); the choice is remembered. The
+    recorder's state is never hidden: the cards above and the radio strip carry it whatever this list shows."""
+    BADGE_COLOUR = {"open": "open", "private": "private", "anomaly": "anomaly", "new": "survey_light"}
+    BADGE_WORD = {"open": "OPEN", "private": "PRIVATE", "anomaly": "ANOMALY", "new": "NEW"}
+
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+        self.setObjectName("RecList")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, T.SPACE, 0, 0)
+        v.setSpacing(4)
+        head = QHBoxLayout()
+        head.setSpacing(4)
+        from . import explain as X
+        self.title = X.titled("Events", "reclist", muted=False)
+        self.title.setToolTip("This recorder session's events")
+        head.addWidget(self.title)
+        head.addStretch(1)
+        self.btn_filter = QToolButton()
+        self.btn_filter.setObjectName("Tool")
+        self.btn_filter.setText("Filter ▾")
+        self.btn_filter.setToolTip("Badge, band, level above; private events folded into one count per band")
+        self.btn_filter.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        from .chain_screen import Menu
+        self.fmenu = Menu(self)
+        self.fmenu.aboutToShow.connect(self._fill_filter)
+        self.btn_filter.setMenu(self.fmenu)
+        self.btn_min = QToolButton()
+        self.btn_min.setObjectName("Tool")
+        self.btn_min.setText("–")
+        self.btn_min.setToolTip("Minimise to a slim strip (the session and the recorder's state stay shown)")
+        self.btn_min.clicked.connect(lambda *_: self.set_state("min" if self.state != "min" else "open"))
+        self.btn_close = QToolButton()
+        self.btn_close.setObjectName("Tool")
+        self.btn_close.setText("×")
+        self.btn_close.setToolTip("Close the list (View > Recorder list brings it back). The recorder's state stays "
+                                  "on its card and on the radio strip.")
+        self.btn_close.clicked.connect(lambda *_: self.set_state("closed"))
+        for b in (self.btn_filter, self.btn_min, self.btn_close):
+            head.addWidget(b)
+        v.addLayout(head)
+        self.summary = QLabel()
+        self.summary.setObjectName("RecSummary")
+        self.summary.setWordWrap(True)
+        self.summary.setFont(T.ui_font(8.5))
+        self.summary.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.summary.mousePressEvent = lambda ev: self._toggle_last()
+        v.addWidget(self.summary)
+        self.hidden_lbl = QLabel()
+        self.hidden_lbl.setProperty("muted", True)
+        self.hidden_lbl.setFont(T.ui_font(8))
+        v.addWidget(self.hidden_lbl)
+        self.list = QListWidget()
+        self.list.setObjectName("RecEvents")
+        self.list.setFont(T.mono_font(8.5))
+        self.list.setIconSize(QSize(44, 14))
+        self.list.setUniformItemSizes(True)
+        self.list.setMinimumHeight(120)
+        self.list.itemClicked.connect(self._clicked)
+        v.addWidget(self.list, 1)
+        from .chain_screen import prefs
+        self.prefs = prefs
+        st = prefs().value("live/reclist", "open")
+        self.state = st if st in ("open", "min", "closed") else "open"
+        try:
+            f = json.loads(prefs().value("live/reclist_filter", "{}") or "{}")
+        except (TypeError, ValueError):
+            f = {}
+        self.flt = {"badges": [b for b in f.get("badges", L.BADGES) if b in L.BADGES] or list(L.BADGES),
+                    "band": f.get("band"), "min_db": f.get("min_db"),
+                    "collapse_private": bool(f.get("collapse_private", True))}
+        self.views: list = []
+        self.events: list = []
+        self.sel = {"current": [], "last": None}
+        self.show_last = False
+        self._asking = False
+        self._asked_key = None
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.ask)
+        self.timer.start(3000)
+        self._apply_state()
+
+    # -- state: open, minimised (a slim strip), closed
+    def set_state(self, state: str):
+        self.state = state
+        self.prefs().setValue("live/reclist", state)
+        self._apply_state()
+        if state == "open":
+            self.ask()
+
+    def _apply_state(self):
+        self.setVisible(self.state != "closed")
+        body = self.state == "open"
+        for w in (self.list, self.hidden_lbl, self.btn_filter):
+            w.setVisible(body)
+        self.btn_min.setText("–" if body else "▢")
+        self.btn_min.setToolTip("Minimise to a slim strip (the session and the recorder's state stay shown)" if body
+                                else "Open the list again")
+        self._show()
+
+    # -- data
+    def update_views(self, views: list):
+        self.views = list(views or [])
+        sel = L.pick_session(self.views)
+        key = [(v.get("serial"), v.get("started")) for v in sel["current"]] or \
+              ([(sel["last"].get("serial"), sel["last"].get("started"))] if sel["last"] else [])
+        if key != [(v.get("serial"), v.get("started")) for v in self.sel["current"]] + \
+                ([(self.sel["last"].get("serial"), self.sel["last"].get("started"))] if self.sel["last"] else []):
+            self.events = []
+            self.show_last = False
+        self.sel = sel
+        self._show()
+
+    def _sessions(self) -> list:
+        if self.sel["current"]:
+            return self.sel["current"]
+        return [self.sel["last"]] if self.sel["last"] and self.show_last else []
+
+    def ask(self):
+        """The events of the session(s) shown, from the catalogue through the service. Only while the list is open,
+        and never twice at once."""
+        if self.state != "open" or self._asking or not self.isVisible():
+            return
+        sess = [s for s in self._sessions() if s.get("serial") and s.get("started")]
+        if not sess:
+            return
+        self._asking = True
+        from .scan_start import call
+
+        def fetch():
+            out = []
+            for s in sess:
+                out += (self.screen.svc.recorder_session(s["serial"], float(s["started"])) or {}).get("events") or []
+            return sorted(out, key=lambda e: -float(e.get("at") or 0))
+
+        def got(evs, err):
+            self._asking = False
+            if err:
+                self.hidden_lbl.setText(f"Could not read the events: {err}")
+                return
+            self.events = evs or []
+            self._show()
+        call(fetch, got)
+
+    # -- drawing
+    def _toggle_last(self):
+        if self.sel["current"] or not self.sel["last"]:
+            return
+        self.show_last = not self.show_last
+        self._show()
+        if self.show_last:
+            self.ask()
+
+    def _state_html(self) -> str:
+        """The recorder's state, for the slim strip (rule 9: minimising never hides it)."""
+        bits = []
+        for v in self.sel["current"] or ([self.sel["last"]] if self.sel["last"] else []):
+            view = v.get("view")
+            colour = {"running": "open", "starting": "survey", "silent": "alert"}.get(view, "muted")
+            word = {"running": "running", "starting": "starting", "silent": L.silent_text(v.get("silent_s") or 0),
+                    "stopped": "stopped", "seen": "stopped (silent, seen)"}.get(view, view or "?")
+            bits.append(f"<span style='color:{T.C[colour]}'>●</span> {v.get('receiver') or v.get('serial')} {word}")
+        return " &nbsp; ".join(bits)
+
+    def _show(self):
+        cur, last = self.sel["current"], self.sel["last"]
+        if cur:
+            line = " · ".join(L.session_summary(v) for v in cur)
+        elif last:
+            line = L.session_summary(last) + ("   ▾" if self.show_last else "   ▸ show its events")
+        else:
+            line = "No recorder session yet"
+        if self.state == "min":
+            st = self._state_html()
+            self.summary.setText((st + "<br>" if st else "") + f"<span style='color:{T.C['text2']}'>{line}</span>")
+            self.summary.setTextFormat(Qt.TextFormat.RichText)
+            return
+        self.summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.summary.setText(line)
+        self.summary.setStyleSheet(f"color: {T.C['text2'] if (cur or last) else T.C['muted']};")
+        showing = bool(cur) or (bool(last) and self.show_last)
+        self.list.setVisible(self.state == "open" and showing)
+        self.hidden_lbl.setVisible(self.state == "open" and showing)
+        if not showing:
+            self.list.clear()
+            return
+        rows, hidden = L.filter_events(self.events, self.flt["badges"], self.flt["band"], self.flt["min_db"],
+                                       self.flt["collapse_private"])
+        self.hidden_lbl.setText(f"{hidden} hidden by the filters" if hidden else
+                                (f"{len(self.events)} events" if self.events else "No events yet in this session"))
+        key = repr([(r.get("id"), r.get("n"), r.get("band")) for r in rows])
+        if key == getattr(self, "_rows_key", None):
+            return
+        self._rows_key = key
+        self.list.clear()
+        for r in rows:
+            t = dt.datetime.fromtimestamp(float(r.get("at") or 0)).strftime("%H:%M:%S")
+            if r["kind"] == "private_group":
+                it = QListWidgetItem(f"{t}  PRIVATE · {r['band']} · {r['n']} event{'s' if r['n'] != 1 else ''}")
+                it.setForeground(QBrush(T.color("private")))
+                it.setToolTip("Private band: only fingerprints were kept, nothing to play or export (rule 2). Untick "
+                              "'Fold private events' in Filter to list them one by one.")
+                it.setData(Qt.ItemDataRole.UserRole, None)
+                self.list.addItem(it)
+                continue
+            b = r["badge"]
+            it = QListWidgetItem(f"{t}  {float(r.get('mhz') or 0):9.4f} MHz  {float(r.get('snr_db') or 0):+5.1f} dB  "
+                                 f"{self.BADGE_WORD[b]}")
+            it.setForeground(QBrush(T.color(self.BADGE_COLOUR[b]) if b != "open" else T.color("text")))
+            if r.get("thumb"):
+                try:
+                    it.setIcon(QIcon(self._thumb(r["thumb"])))
+                except (ValueError, KeyError, TypeError):
+                    pass                      # a picture that cannot be read: the row shows without it
+            it.setToolTip(("PRIVATE band: a fingerprint only. Nothing plays or exports it (rule 2)." if b == "private"
+                           else "Level: dB over the recorder's floor, relative, not calibrated."
+                           + (" NEW: no earlier event near this frequency in the catalogue." if r.get("new") else ""))
+                          + "\nClick to open it in Captures.")
+            it.setData(Qt.ItemDataRole.UserRole, r.get("id"))
+            self.list.addItem(it)
+
+    @staticmethod
+    def _thumb(t: dict) -> QPixmap:
+        """The fingerprint as a tiny picture: power over the floor, the waterfall's colour map."""
+        import base64
+        raw = np.frombuffer(base64.b64decode(t["img"]), dtype=np.uint8).reshape(t["rows"], t["cols"])
+        lut = COLOUR_MAPS["Classic"]
+        rgb = np.ascontiguousarray(lut[raw][:, :, :3].astype(np.uint8))
+        img = QImage(rgb.data, t["cols"], t["rows"], 3 * t["cols"], QImage.Format.Format_RGB888).copy()
+        return QPixmap.fromImage(img).scaled(44, 14, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                             Qt.TransformationMode.SmoothTransformation)
+
+    def _clicked(self, it):
+        eid = it.data(Qt.ItemDataRole.UserRole)
+        if eid is None:
+            return
+        self.screen.status.emit(f"Captures isn't built yet: event #{eid} opens on the web page's Captures tab "
+                                "until it is.")
+
+    # -- filters
+    def _save_filter(self):
+        self.prefs().setValue("live/reclist_filter", json.dumps(self.flt))
+        self._rows_key = None
+        self._show()
+
+    def _fill_filter(self):
+        m = self.fmenu
+        m.clear()
+        m.add_heading("Badge")
+        for b in L.BADGES:
+            a = m.addAction(self.BADGE_WORD[b])
+            a.setCheckable(True)
+            a.setChecked(b in self.flt["badges"])
+            a.triggered.connect(lambda on, b=b: (self.flt.__setitem__(
+                "badges", [x for x in L.BADGES if (x in self.flt["badges"] and x != b) or (x == b and on)]),
+                self._save_filter()))
+        m.add_heading("Band")
+        for band in [None] + L.bands_of(self.events):
+            a = m.addAction("All bands" if band is None else band)
+            a.setCheckable(True)
+            a.setChecked(self.flt["band"] == band)
+            a.triggered.connect(lambda _=False, band=band: (self.flt.__setitem__("band", band), self._save_filter()))
+        m.add_heading("Level above")
+        for lv in (None, 6, 12, 20, 30):
+            a = m.addAction("Any level" if lv is None else f"{lv} dB over the floor")
+            a.setCheckable(True)
+            a.setChecked(self.flt["min_db"] == lv)
+            a.triggered.connect(lambda _=False, lv=lv: (self.flt.__setitem__("min_db", lv), self._save_filter()))
+        m.addSeparator()
+        a = m.addAction("Fold private events into one row per band")
+        a.setCheckable(True)
+        a.setChecked(self.flt["collapse_private"])
+        a.triggered.connect(lambda on: (self.flt.__setitem__("collapse_private", bool(on)), self._save_filter()))
 
 
 class RecorderPanel(QFrame):
@@ -466,6 +745,8 @@ class RecorderPanel(QFrame):
         self.box.setSpacing(T.SPACE)
         outer.addLayout(self.box)
         self.cards: list = []
+        self.rec_list = RecorderList(screen)              # relay 019: this session's events, concise
+        outer.addWidget(self.rec_list, 1)
         self.other_title = QLabel()
         self.other_title.setWordWrap(True)
         self.other_title.setFont(T.ui_font(8.5))
@@ -503,6 +784,11 @@ class RecorderPanel(QFrame):
             w.hide()
 
     def show_recorders(self, views: list):
+        self.rec_list.update_views(views)
+        # relay 019: a card per recorder of the session shown (running now, else the most recent): its state never
+        # hides; older stopped recorders belong in Captures
+        sel = L.pick_session(views)
+        views = sel["current"] or ([sel["last"]] if sel["last"] else [])
         while len(self.cards) < len(views):
             c = RecorderCard(self.screen)
             self.box.addWidget(c)
@@ -681,6 +967,7 @@ class LiveScreen(QWidget):
         self.radios.open_panel.connect(self.open_radios)
         self.radios.swap.connect(self.swap_radios)
         self.radios.enable.connect(self.enable_radio)
+        self.radios.set_setup.connect(self.set_setup)
         top.addWidget(self.radios)
         top.addSpacing(T.SPACE)
         self.btn_start = QToolButton()
@@ -1034,9 +1321,26 @@ class LiveScreen(QWidget):
         call(lambda: self.svc.set_enabled(name, on),
              lambda d, err: self.radios.show_status(d) if not err else self._ask_radios())
 
+    def set_setup(self, setup: str):
+        """Relay 019: a setup chosen on the strip; remembered with the roles. It starts nothing."""
+        from .scan_start import call
+        call(lambda: self.svc.set_roles({"setup": setup}),
+             lambda d, err: self.radios.show_status(d) if not err else self.status.emit(f"Setup not changed: {err}"))
+
     def open_radios(self):
         from .radios import RadiosDialog
-        d = RadiosDialog(self.svc, self)
+        if getattr(self, "_radios_open", False):            # one panel at a time, however fast the clicks
+            return
+        self._radios_open = True
+        try:
+            self._open_radios()
+        finally:
+            self._radios_open = False
+
+    def _open_radios(self):
+        from .radios import RadiosDialog
+        d = RadiosDialog(self.svc, self, initial=self.radios.data or None)
+        self._radios_dlg = d
         d.changed.connect(self.radios.show_status)
         d.exec()
 
@@ -1437,6 +1741,7 @@ class LiveScreen(QWidget):
 
     def _show_recorders(self):
         self.rec_panel.show_recorders(self.rec_views)
+        self.radios.set_recorders(self.rec_views)          # relay 019: the recorder's state on its radio card
         self._recorder_lines()
 
     def _hold(self, item: tuple):
@@ -1740,6 +2045,9 @@ class LiveScreen(QWidget):
             if any(v.get("view") in ("silent", "running", "starting") for v in self.rec_views):
                 self.rec_views = self.recwatch.update([{k: v for k, v in r.items() if k not in ("view", "silent_s")}
                                                        for r in self.rec_views])
+                if any(v["view"] == "silent" for v in self.rec_views):
+                    self.rec_panel.show_recorders(self.rec_views)
+                    self.radios.set_recorders(self.rec_views)
             return
         if self.opening:
             self.bar.set({"kind": "busy", "fraction": None,
@@ -1763,6 +2071,7 @@ class LiveScreen(QWidget):
                                                    for r in self.rec_views])
             if any(v["view"] == "silent" for v in self.rec_views) and not self._is_moving():
                 self.rec_panel.show_recorders(self.rec_views)
+                self.radios.set_recorders(self.rec_views)
 
     def _hover(self, pos):
         """The page's readout: frequency, latest, max-hold, over the floor and the nearest family;
@@ -1895,6 +2204,10 @@ class LiveScreen(QWidget):
                                                                   (not self.fit and ry == self.ry)))
             a.triggered.connect(lambda _=False, ry=ry: self.set_height(ry))
         v.addSeparator()
+        a = v.addAction("Recorder list (this session's events)")      # relay 019: shown or hidden, remembered
+        a.setCheckable(True)
+        v.aboutToShow.connect(lambda a=a: a.setChecked(self.rec_panel.rec_list.state != "closed"))
+        a.triggered.connect(lambda on: self.rec_panel.rec_list.set_state("open" if on else "closed"))
         from . import explain as X
         a = v.addAction("Explanations (the ⓘ marks)")
         a.setCheckable(True)

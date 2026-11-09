@@ -846,3 +846,112 @@ text. A "Pigtail" after an antenna can be merged into that antenna as its built-
 Each conversion changes that rig's recorded text, so the next run records it as changed. Nothing is
 converted until you choose to, and Undo puts it back. Past runs' records are never changed: in records
 made before November 2026, "jumper" means a short cable.
+
+# Relay 019: setups for the two radios, and the recorder list
+
+## setup
+tip: Which jobs the radios do together: a choice of roles, remembered with them. It starts nothing.
+locks: n/a
+
+A setup says what the two radios are for: one surveys and the other records, both survey, both record,
+or one radio alone. It is kept with the roles (saved_scans.json) and starts nothing by itself; the Start
+panels follow it. A setup that needs a radio that is disabled or not plugged in is shown greyed, with why.
+
+## setup_survey_record
+tip: One radio surveys a band; the other records what the survey finds.
+locks: n/a
+
+**Good for:** finding and keeping in one go: the survey spots a signal and the other radio records it,
+so a burst seen once is not lost.
+
+**Costs and limits:** both radios are taken for the whole session. The recorder only hears what it can
+tune: a signal the survey finds outside the band both cover cannot be recorded. Through one antenna and
+a resistive 2-way splitter each radio gets about 6 dB less (theory). USB and CPU carry two streams.
+
+**Comparability:** the survey's runs join the comparison set of the surveying radio, preset and
+settings. Captures are kept per event, not as survey runs; runs from the other radio have their own
+fingerprints and are never compared with these (rule 5).
+
+**Common mistakes:** a trigger level set for a quiet band; surveying a band the recorder cannot tune;
+swapping the roles and expecting old runs to compare with new ones.
+
+## setup_both_survey
+tip: Two independent scans at once, one per radio.
+locks: n/a
+
+**Good for:** two bands at once; or the same band on both radios as a cross-check: a line on one
+receiver only is likely that receiver's own (a spur, a hop-centre bump), a line on both is likely real.
+
+**Costs and limits:** no triggered capture: nothing is recorded as IQ. Two dongles side by side can raise
+each other's noise floor, and a shared antenna through a splitter costs each about 6 dB (theory). Two
+streams over USB and two analyses on the PC.
+
+**Comparability:** each radio's runs have their own fingerprints and join their own comparison sets.
+The two runs are never compared with each other, even on the same band (rule 5): compare each with
+earlier runs of the same radio.
+
+**Common mistakes:** reading the two runs' levels against each other as if they were one instrument;
+starting the second scan with settings that differ by accident, which starts a new comparison set.
+
+## setup_both_record
+tip: Two fixed recordings, one per radio, on different frequencies.
+locks: n/a
+
+**Good for:** watching two known signals at once, each with its own radio parked on it and recording
+every event over its trigger.
+
+**Costs and limits:** no survey: only those two frequencies are heard. Two IQ streams count against
+the same storage caps, which fill twice as fast. Two dongles side by side can raise each other's floor;
+a shared antenna through a splitter costs each about 6 dB (theory).
+
+**Comparability:** captures are kept per event with each radio's serial and gain; they are not survey
+runs and join no comparison set.
+
+**Common mistakes:** both radios on the same frequency (one recording is enough); a trigger level set
+as if the other radio were surveying for it; forgetting that private bands keep a fingerprint only.
+
+## setup_one_survey
+tip: One radio surveys; the other is idle or disabled.
+locks: n/a
+
+**Good for:** an ordinary survey, with the second radio left free or out of the way.
+
+**Costs and limits:** no triggered capture: a signal seen in the survey is not recorded as IQ. The
+other radio, if plugged in, can still start its own work unless it is disabled.
+
+**Comparability:** the runs join the comparison set of this radio, preset and settings, exactly as a
+plain scan does.
+
+**Common mistakes:** a disabled radio still drawn in the rig used for runs (its path has nothing to
+record); a run on the other radio by mistake, which starts a different comparison set.
+
+## setup_one_record
+tip: One radio parked on one frequency; the other is idle or disabled.
+locks: n/a
+
+**Good for:** watching one known signal closely: every event over the trigger is fingerprinted, and
+open-band events are recorded as IQ.
+
+**Costs and limits:** only one frequency is heard; nothing finds new signals. Storage caps apply.
+
+**Comparability:** captures are kept per event with the radio's serial and gain; they join no
+comparison set.
+
+**Common mistakes:** parking on a frequency the radio cannot tune (a blind spot); a trigger level too
+low, which records noise until the cap stops it.
+
+## reclist
+tip: The recorder's events in this session, concise. Older sessions belong in Captures.
+locks: n/a
+
+Only events from the recorder session running now, or else the most recent session, folded under one
+line. Each row: time, frequency, level over the floor (dB, relative), a small fingerprint and one badge.
+Private events are a fingerprint only: nothing to play or export. Closing or minimising this list never
+hides a recorder's state: the radio's card on the strip and the minimised strip still show it.
+
+## reclist_new
+tip: NEW: no earlier event in the catalogue within the signal's width (at least 25 kHz).
+locks: n/a
+
+A frequency counts as new when the captures catalogue holds no event from before this session within
+half the signal's width (at least 25 kHz) of it.

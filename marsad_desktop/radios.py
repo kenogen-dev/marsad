@@ -113,13 +113,29 @@ class RadioChip(QFrame):
         h.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignVCenter)
         self.name = ""
         self._key = None
+        self.r: dict | None = None
+        self.rec: dict | None = None               # relay 019: this radio's recorder session, its view (rule 9)
+        self._pressed = False
+
+    def set_recorder(self, view: dict | None):
+        """The recorder state shown on the card: running, starting, silent N min (the alert colour) or stopped,
+        for the session shown in the recorder list. Never hidden by closing or minimising that list."""
+        if view == self.rec:
+            return
+        self.rec = view
+        if self.r is not None:
+            self._key = None
+            self.show_radio(self.r)
 
     def show_radio(self, r: dict):
         st = r["doing"]["state"]
         colour = STATE_COLOUR.get(st, "muted")
         role = r.get("role")
         enabled = r.get("enabled", True)
-        key = (r["name"], role, st, r["doing"]["text"], enabled, r["doing"].get("other_busy"))
+        rv = self.rec or {}
+        key = (r["name"], role, st, r["doing"]["text"], enabled, r["doing"].get("other_busy"), rv.get("view"),
+               int(float(rv.get("silent_s") or 0) // 60))
+        self.r = r
         if key == self._key:                       # restyled only on a change: the strip refreshes often
             return
         self._key = key
@@ -143,6 +159,17 @@ class RadioChip(QFrame):
             short = "ready, other radio busy"
         if not enabled and busy:
             short += " · disabled for new work"
+        view = rv.get("view")
+        if view in ("running", "starting"):
+            short, colour = f"recorder {view}", "recorder"
+        elif view == "silent":                      # rule 9: a recorder that stopped reporting looks stopped
+            from marsad_desktop.live_data import silent_text
+            short, colour = f"recorder {silent_text(rv.get('silent_s') or 0)}", "alert"
+        elif view in ("stopped", "seen") and st not in ("surveying", "recording"):
+            import datetime as _dt
+            end = rv.get("stopped") or rv.get("updated")
+            when = _dt.datetime.fromtimestamp(float(end)).strftime("%H:%M") if end else ""
+            short += f" · recorder stopped {when}".rstrip()
         self.state.setText(short)
         self.state.setStyleSheet(f"color: {T.C[colour]};")
         # relay 016: a raised card, lit from above, its state colour down the left edge
@@ -153,8 +180,18 @@ class RadioChip(QFrame):
         self.setToolTip(f"{r['label']}\nserial {r.get('serial') or '?'} · {r['doing']['text']}\n"
                         f"{ROLE_WORD[role]} · click for the Radios panel")
 
+    # relay 019: the panel opens on the release, in one step. (It opened on the press, while the card was still held
+    # down, as an empty dialog that then filled itself in: the flicker before the panel settled.)
     def mousePressEvent(self, ev):
-        self.clicked.emit()
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        was, self._pressed = self._pressed, False
+        if was and ev.button() == Qt.MouseButton.LeftButton and self.rect().contains(ev.position().toPoint()):
+            self.clicked.emit()
+        ev.accept()
 
 
 class RadiosStrip(QWidget):
@@ -163,6 +200,7 @@ class RadiosStrip(QWidget):
     open_panel = Signal()
     swap = Signal()
     enable = Signal(str, bool)
+    set_setup = Signal(str)            # relay 019: a setup chosen from the strip's Setup ▾
 
     def __init__(self):
         super().__init__()
@@ -171,6 +209,7 @@ class RadiosStrip(QWidget):
         self.h.setSpacing(6)
         self.chips: list = []
         self.data: dict = {}
+        self.recs: dict = {}
         self.setToolTip("The radios: who surveys, who records, and what each is doing. Click for details.")
         self.swap_btn = QToolButton()
         self.swap_btn.setObjectName("Tool")
@@ -179,6 +218,40 @@ class RadiosStrip(QWidget):
         self.swap_btn.clicked.connect(self.swap.emit)
         self.h.addWidget(self.swap_btn)
         self.swap_btn.hide()
+        # relay 019: the setup for the two radios, beside Swap
+        self.setup_btn = QToolButton()
+        self.setup_btn.setObjectName("Tool")
+        self.setup_btn.setText("Setup ▾")
+        X.attach(self.setup_btn, "setup")
+        self.setup_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        from marsad_desktop.chain_screen import Menu
+        self.setup_menu = Menu(self)
+        self.setup_menu.aboutToShow.connect(self._fill_setup)
+        self.setup_btn.setMenu(self.setup_menu)
+        self.h.addWidget(self.setup_btn)
+
+    def _fill_setup(self):
+        from marsad_desktop import setups as SU
+        m = self.setup_menu
+        m.clear()
+        d = self.data or {}
+        cur = SU.chosen(d)
+        av = SU.availability(d)
+        m.add_heading("Setup for the radios")
+        for s in SU.ORDER:
+            a = m.addAction(SU.TITLES[s])
+            a.setCheckable(True)
+            a.setChecked(s == cur)
+            info = av[s]
+            a.setEnabled(info["ok"])
+            tip = SU.whatif_texts().get(s, {}).get("tip", "")
+            a.setToolTip(tip if info["ok"] else f"{tip}\nNot available now: {info['why']}")
+            if not info["ok"]:
+                a.setText(f"{SU.TITLES[s]}  ·  {'not supported yet' if not info['supported'] else 'not available'}")
+            a.triggered.connect(lambda _=False, s=s: self.set_setup.emit(s))
+        m.addSeparator()
+        a = m.addAction("What if… (the Radios panel)")
+        a.triggered.connect(lambda *_: self.open_panel.emit())
 
     def show_status(self, d: dict):
         self.data = d
@@ -191,11 +264,27 @@ class RadiosStrip(QWidget):
             self.chips.append(c)
         for i, c in enumerate(self.chips):
             if i < len(rs):
+                c.rec = self.recs.get(str(rs[i].get("serial") or ""))
                 c.show_radio(rs[i])
                 c.show()
             else:
                 c.hide()
         self.swap_btn.setVisible(len(rs) >= 2)
+        from marsad_desktop import setups as SU
+        self.setup_btn.setText(SU.TITLES[SU.chosen(d)] + " ▾")
+        self.setup_btn.setVisible(bool(rs))
+
+    def set_recorders(self, views: list):
+        """Relay 019: each radio card shows its recorder's state for the session the recorder list shows (the one
+        running now, else the most recent): running, starting, silent N min, or stopped."""
+        from marsad_desktop.live_data import pick_session
+        sel = pick_session(views)
+        shown = sel["current"] or ([sel["last"]] if sel["last"] else [])
+        self.recs = {str(v.get("serial") or ""): v for v in shown}
+        rs = (self.data or {}).get("radios") or []
+        for i, c in enumerate(self.chips):
+            if i < len(rs):
+                c.set_recorder(self.recs.get(str(rs[i].get("serial") or "")))
 
 
 # ---------------------------------------------------------------- the coverage map
@@ -353,7 +442,15 @@ class RadioCard(QFrame):
                                                               "drawn?\"" if ch.get("due") else ""), muted=True))
         notes = r.get("notes") or []
         if notes:
-            self.v.addWidget(X.titled(f"What the station knows about it ({len(notes)})", "radio_notes"))
+            # relay 019: a clear, larger section title, so the eye goes to it first
+            t = X.titled(f"What the station knows about it ({len(notes)})", "radio_notes", muted=False)
+            t.setObjectName("KnowsTitle")
+            for lab in [t] + t.findChildren(QLabel):
+                if isinstance(lab, QLabel):
+                    lab.setFont(T.ui_font(12, QFont.Weight.DemiBold))
+                    lab.setStyleSheet(f"color: {T.C['survey_light']};")
+            t.setContentsMargins(0, T.SPACE, 0, 2)
+            self.v.addWidget(t)
             for n in notes:
                 colour = {"bad": "alert", "warn": "anomaly", "ok": "open"}.get(n["level"], "text2")
                 w = _label(f"<span style='color:{T.C[colour]}; font-weight:600'>{n['title']}</span>"
@@ -365,15 +462,19 @@ class RadioCard(QFrame):
 
 
 class RadiosDialog(QDialog):
-    """The radios: what each is, what it is doing, who surveys and who records."""
+    """The radios: what each is, what it is doing, what the station can do with the radios enabled now, and the
+    setup for the two (relay 019: survey + record either way round, both survey, both record, one radio alone), with
+    each setup's "What if". Opened with the strip's last answer, so it shows complete at once (relay 019: no empty
+    panel that then fills itself in)."""
     changed = Signal(dict)
 
-    def __init__(self, svc: Service, parent=None):
+    def __init__(self, svc: Service, parent=None, initial: dict | None = None):
         super().__init__(parent)
         self.svc = svc
         self.setWindowTitle("Radios")
-        self.resize(1180, 820)
+        self.resize(1180, 860)
         self.d: dict = {}
+        self.rig = None                           # the rig used for runs: the splitter's figure for What if
         outer = QVBoxLayout(self)
         outer.setContentsMargins(T.SPACE * 2, T.SPACE * 1.5, T.SPACE * 2, T.SPACE * 1.5)
         outer.setSpacing(T.SPACE * 1.25)
@@ -384,35 +485,79 @@ class RadiosDialog(QDialog):
         h.addWidget(self.checked)
         outer.addLayout(h)
         self.mode = _label("", size=10.5)
+        self.mode.setObjectName("RadiosPossible")
         X.attach(self.mode, "radios_mode")
         mh = QHBoxLayout()
         mh.addWidget(self.mode, 1)
         mh.addWidget(X.info("radios_mode"), 0, Qt.AlignmentFlag.AlignTop)
         outer.addLayout(mh)
-        roles = QFrame()
-        roles.setObjectName("TextPanel")
-        rh = QHBoxLayout(roles)
-        rh.setContentsMargins(T.SPACE * 1.5, T.SPACE, T.SPACE * 1.5, T.SPACE)
-        rh.addWidget(_label("Survey + record:", bold=True, wrap=False))
-        rh.addWidget(X.info("roles"))
-        rh.addWidget(_label("surveys", muted=True, wrap=False))
+
+        # relay 019: the setup, and its What if
+        setup = QFrame()
+        setup.setObjectName("TextPanel")
+        sv = QVBoxLayout(setup)
+        sv.setContentsMargins(T.SPACE * 1.5, T.SPACE, T.SPACE * 1.5, T.SPACE)
+        sv.setSpacing(T.SPACE // 2 + 2)
+        st = QHBoxLayout()
+        st.addWidget(_label("Setup", bold=True, size=11, wrap=False))
+        st.addWidget(X.info("setup"))
+        st.addSpacing(T.SPACE)
+        from marsad_desktop import setups as SU
+        self.setup_btns = {}
+        from PySide6.QtWidgets import QButtonGroup, QPushButton
+        grp = QButtonGroup(self)
+        grp.setExclusive(True)
+        for s in SU.ORDER:
+            b = QPushButton(SU.TITLES[s])
+            b.setObjectName("Setup_" + s)
+            b.setCheckable(True)
+            b.setProperty("accent", True)
+            b.clicked.connect(lambda _=False, s=s: self._choose(s))
+            grp.addButton(b)
+            st.addWidget(b)
+            self.setup_btns[s] = b
+        st.addStretch(1)
+        sv.addLayout(st)
+        self.setup_why = _label("", muted=True)
+        self.setup_why.setObjectName("SetupWhy")
+        sv.addWidget(self.setup_why)
+        roles = QHBoxLayout()
+        self.roles_lbl = _label("Survey + record:", wrap=False)
+        roles.addWidget(self.roles_lbl)
+        self.roles_info = X.info("roles")
+        roles.addWidget(self.roles_info)
+        self.sur_lbl = _label("surveys", muted=True, wrap=False)
+        roles.addWidget(self.sur_lbl)
         self.sur = QComboBox()
-        rh.addWidget(self.sur)
-        rh.addWidget(_label("records", muted=True, wrap=False))
+        roles.addWidget(self.sur)
+        self.rec_lbl = _label("records", muted=True, wrap=False)
+        roles.addWidget(self.rec_lbl)
         self.rec = QComboBox()
-        rh.addWidget(self.rec)
+        roles.addWidget(self.rec)
         self.swap = QToolButton()
         self.swap.setObjectName("Tool")
         self.swap.setText("⇄ Swap")
         X.attach(self.swap, "swap")
         self.swap.clicked.connect(lambda: self._set({"swap": True}))
-        rh.addWidget(self.swap)
-        rh.addStretch(1)
+        roles.addWidget(self.swap)
+        self.one_lbl = _label("the radio", muted=True, wrap=False)
+        roles.addWidget(self.one_lbl)
+        self.one = QComboBox()
+        self.one.setObjectName("OneRadio")
+        roles.addWidget(self.one)
+        roles.addStretch(1)
         self.roles_note = _label("", muted=True)
-        rh.addWidget(self.roles_note, 2)
-        outer.addWidget(roles)
+        roles.addWidget(self.roles_note, 2)
+        sv.addLayout(roles)
         self.sur.activated.connect(lambda _i: self._pick("surveyor"))
         self.rec.activated.connect(lambda _i: self._pick("recorder"))
+        self.one.activated.connect(lambda _i: self._set({"one": self.one.currentData()}))
+        self.whatif = _label("")
+        self.whatif.setObjectName("WhatIf")
+        self.whatif.setTextFormat(Qt.TextFormat.RichText)
+        sv.addWidget(self.whatif)
+        outer.addWidget(setup)
+
         cov = QFrame()
         cov.setObjectName("TextPanel")
         cv = QVBoxLayout(cov)
@@ -439,20 +584,33 @@ class RadiosDialog(QDialog):
         outer.addWidget(scroll, 1)
         self.foot = _label("", muted=True)
         outer.addWidget(self.foot)
+        if initial:                          # the strip's last answer: the panel shows complete at once
+            self.show_status(initial)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
         QTimer.singleShot(0, self.refresh)
+        call(lambda: svc.chains(), self._got_rig)
+
+    def _got_rig(self, d, err):
+        if err:
+            return
+        from marsad_desktop import rig as R
+        self.rig = R.used_rig(d)[1]
+        if self.d:
+            self._show_setup(self.d)
 
     def refresh(self):
         call(self.svc.radios, lambda d, err: self.show_status(d) if not err else self.mode.setText(
             f"The service could not say: {err}"))
 
     def show_status(self, d: dict):
+        from marsad_desktop import setups as SU
         self.d = d
         self.checked.setText("checked " + time.strftime("%H:%M:%S", time.localtime(d.get("checked") or time.time())))
-        self.mode.setText((("Practice station: the radios here are made up (simulated), so Windows never finds them "
-                            "plugged in. ") if practice.on() else "") + d["mode"]["text"])
+        # relay 019: the top says what is possible with the radios enabled now
+        self.mode.setText(SU.possible_text(d) + ((" (Practice station: the radios here are made up, simulated.)")
+                                                 if practice.on() else ""))
         rs = d.get("radios") or []
         roles = d.get("roles") or {}
         for cb, key in ((self.sur, "surveyor"), (self.rec, "recorder")):
@@ -462,17 +620,18 @@ class RadiosDialog(QDialog):
                 cb.addItem(word(r["name"]), r["name"])
             cb.setCurrentIndex(max(0, cb.findData(roles.get(key))))
             cb.blockSignals(False)
-        two = len(rs) >= 2
-        for w in (self.sur, self.rec, self.swap):
-            w.setEnabled(two)
-        self.roles_note.setText(
-            ("Only used when both radios run together; a plain scan uses the radio you pick for it. "
-             + ("Both are plugged in." if d["mode"].get("survey_record") else
-                "Right now survey + record is not possible: both radios must be plugged in."))
-            if two else "Only one radio is configured in station.json.")
+        self.one.blockSignals(True)
+        self.one.clear()
+        for r in rs:
+            self.one.addItem(word(r["name"]) + ("" if r.get("enabled", True) else "  (disabled)"), r["name"])
+        one = roles.get("one") or (SU.usable(d)[0]["name"] if SU.usable(d) else (rs[0]["name"] if rs else None))
+        self.one.setCurrentIndex(max(0, self.one.findData(one)))
+        self.one.blockSignals(False)
+        self._show_setup(d)
         self.map.show_status(d)
         for r in rs:
             X.fetch(self.svc, r["name"])
+        two = len(rs) >= 2
         both = d.get("both_cover_mhz") or []
         self.cov_note.setText(
             ("Both can tune " + ", ".join(f"{jsnum(a)}–{jsnum(b)}" for a, b in both) + " MHz: in survey + record, "
@@ -490,6 +649,60 @@ class RadiosDialog(QDialog):
         self.foot.setText(f"Plugged in or not: {d.get('presence_source') or 'unknown'}. Radio programs running: {prog}. "
                           "The USB index is still found by serial when a run starts.")
         self.changed.emit(d)
+
+    def _show_setup(self, d: dict):
+        """The setup buttons (one checked; one not possible now greyed, saying why), the roles or the one radio it
+        uses, and its What if."""
+        from marsad_desktop import setups as SU
+        cur = SU.chosen(d)
+        av = SU.availability(d)
+        for s, b in self.setup_btns.items():
+            info = av[s]
+            b.setChecked(s == cur)
+            b.setEnabled(info["ok"] or s == cur)
+            tip = SU.whatif_texts().get(s, {}).get("tip", "")
+            b.setToolTip(tip + ("" if info["ok"] else f"\n\n{'Not supported yet' if not info['supported'] else 'Not available now'}: {info['why']}"))
+        why = av[cur]["why"]
+        off = [f"{SU.TITLES[s]}: {av[s]['why']}" for s in SU.ORDER if not av[s]["ok"] and s != cur]
+        self.setup_why.setText((f"{SU.TITLES[cur]} is chosen but not possible now: {why}. " if why else "")
+                               + ("Not available now: " + "; ".join(off) + "." if off else ""))
+        self.setup_why.setVisible(bool(why or off))
+        rs = d.get("radios") or []
+        pair = cur in ("survey_record",)
+        for w in (self.roles_lbl, self.sur_lbl, self.sur, self.rec_lbl, self.rec, self.swap):
+            w.setVisible(pair)
+        self.roles_info.setVisible(pair and X.shown())
+        self.roles_lbl.setText("Survey + record:")
+        for w in (self.one_lbl, self.one):
+            w.setVisible(cur in ("one_survey", "one_record"))
+        self.one_lbl.setText("surveys with" if cur == "one_survey" else "records with")
+        self.sur.setEnabled(len(rs) >= 2)
+        self.rec.setEnabled(len(rs) >= 2)
+        self.swap.setEnabled(len(rs) >= 2)
+        self.roles_note.setText(
+            "Survey + record needs both radios enabled and plugged in now: " + why if (pair and why) else
+            ("Each scan or recording is started on its own radio; the setup starts nothing." if cur in
+             ("both_survey", "both_record") else "A setup starts nothing: the Start panels follow it."))
+        w = SU.whatif(cur, d, self.rig)
+        html = [f"<p style='margin:6px 0 2px 0'><b>What if: {w['title']}</b>"
+                f" <span style='color:{T.C['muted']}'>· {w['tip']}</span></p>"]
+        for title, text in w["sections"]:
+            html.append(f"<div style='margin:2px 0'><span style='color:{T.C['survey_light']}; font-weight:600'>"
+                        f"{title}:</span> {text}</div>")
+        if w["facts"]:
+            html.append(f"<div style='margin:4px 0 0 0'><span style='color:{T.C['survey_light']}; font-weight:600'>"
+                        f"This station:</span> <span style='color:{T.C['text2']}'>{' '.join(w['facts'])}</span></div>")
+        self.whatif.setText("".join(html))
+
+    def _choose(self, setup: str):
+        from marsad_desktop import setups as SU
+        if not SU.availability(self.d).get(setup, {}).get("ok") and setup != SU.chosen(self.d):
+            self._show_setup(self.d)
+            return
+        body = {"setup": setup}
+        if setup in ("one_survey", "one_record") and self.one.currentData():
+            body["one"] = self.one.currentData()
+        self._set(body)
 
     def _pick(self, which):
         sur, rec = self.sur.currentData(), self.rec.currentData()

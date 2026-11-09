@@ -122,6 +122,89 @@ def running_banner(p: dict, rec_views: list, now) -> dict | None:
     return {"text": ". ".join(bits) + ".", "kind": kind} if bits else None
 
 
+# ---------------------------------------------------------------- relay 019: the recorder list
+def pick_session(rec_views: list) -> dict:
+    """Which recorder session(s) the list shows: every one running now (running, starting, or silent: a silent one
+    is still this session, said to be silent), else only the most recent one that stopped. {"current": [views],
+    "last": view or None}. Older sessions belong in Captures."""
+    views = list(rec_views or [])
+    current = [v for v in views if v.get("view") in ("running", "starting", "silent")]
+    if current:
+        return {"current": current, "last": None}
+    done = [v for v in views if v.get("started")]
+    last = max(done, key=lambda v: float(v.get("started") or 0)) if done else None
+    return {"current": [], "last": last}
+
+
+def _hm(t) -> str:
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(float(t)).strftime("%H:%M")
+    except (TypeError, ValueError, OSError):
+        return "?"
+
+
+def session_summary(v: dict | None) -> str:
+    """One line for a session: radio, mode, when, its events and captures, and its state in words (rule 9)."""
+    if not v:
+        return "No recorder session yet"
+    who = v.get("receiver") or v.get("serial") or "recorder"
+    mode = v.get("mode") or "watch"
+    n = int(v.get("events") or 0)
+    caps = int(v.get("captures") or 0)
+    counts = f"{n} event{'s' if n != 1 else ''}, {caps} capture{'s' if caps != 1 else ''}"
+    view = v.get("view")
+    if view in ("running", "starting"):
+        return f"{who} · {mode} · running since {_hm(v.get('started'))} · {counts}"
+    if view == "silent":
+        return f"{who} · {mode} · {silent_text(v.get('silent_s') or 0)} (since {_hm(v.get('started'))}) · {counts}"
+    end = v.get("stopped") or v.get("updated")
+    return f"Last session: {who} · {mode} · {_hm(v.get('started'))}–{_hm(end)} · {counts}"
+
+
+BADGES = ("open", "private", "anomaly", "new")
+
+
+def badge_of(ev: dict) -> str:
+    """The one badge a row carries: PRIVATE first (rule 2), then ANOMALY, then NEW, else OPEN."""
+    if ev.get("private"):
+        return "private"
+    if ev.get("anomaly"):
+        return "anomaly"
+    if ev.get("new"):
+        return "new"
+    return "open"
+
+
+def filter_events(events: list, badges=BADGES, band: str | None = None, min_db: float | None = None,
+                  collapse_private: bool = True) -> tuple[list, int]:
+    """The list's rows after its filters, and how many events the filters hide. Rows are events, or, with
+    collapse_private, one {"kind": "private_group", "band", "n", "at"} per private band (newest first by its latest
+    event). A private event's band is "private band" when the catalogue named none."""
+    shown, groups, hidden = [], {}, 0
+    for e in events or []:
+        b = badge_of(e)
+        if b not in badges or (band and (e.get("band") or "open band") != band) or \
+                (min_db is not None and float(e.get("snr_db") or 0) < float(min_db)):
+            hidden += 1
+            continue
+        if collapse_private and e.get("private"):
+            k = e.get("band") or "private band"
+            g = groups.get(k)
+            if g is None:
+                g = groups[k] = {"kind": "private_group", "band": k, "n": 0, "at": e.get("at")}
+                shown.append(g)
+            g["n"] += 1
+            g["at"] = max(float(g["at"] or 0), float(e.get("at") or 0))
+            continue
+        shown.append(dict(e, kind="event", badge=b))
+    return shown, hidden
+
+
+def bands_of(events: list) -> list[str]:
+    return sorted({e.get("band") or "open band" for e in events or []})
+
+
 # ---------------------------------------------------------------- the survey's position
 def progress(p: dict, fetched_at: float, now: float) -> dict:
     """Where the survey is, for the thin bar along the spectrum's top (rtl_power) or the current-hop
