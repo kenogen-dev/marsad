@@ -38,9 +38,20 @@ LOCAL_FILE = "station.local.json"
 STEP_ORDER = ["add", "measure", "draw", "confirm", "paths"]
 STEP_TITLES = {"add": "Add the radio", "measure": "Measure the radio", "draw": "Draw the rig in Chain",
                "confirm": "Confirm the rig is built as drawn", "paths": "Path checks through the rig"}
-MEASURES = ["range", "retune", "warmup", "floor"]
+# Relay 022: the guide's order. Warm-up comes straight after the 30 s range test, while the radio is still cold (it
+# must start cold); retune (90 s of streaming) and the floor (taken warm) follow it.
+MEASURES = ["range", "warmup", "retune", "floor"]
 PATHS = ["adsb", "baseline"]
 LOAD = "50 ohm load"
+# Relay 022: what each step's result rests on. When one of these changes after the step was done, the step reads
+# "needs re-checking" (and, being not done, keeps scanning locked) until it is run again.
+#   add    the radio itself: its tuner (which sets the gain used) and its serial
+#   range  the 100 MHz tile the load runs and the baseline record on, which the radio's range and gaps decide
+#   rig    the drawn rig's text, which the receive proof and the baseline go through
+DEPENDS = {"range": ("add",), "warmup": ("add", "range"), "retune": ("add",), "floor": ("add", "range"),
+           "adsb": ("add", "rig"), "baseline": ("add", "range", "rig")}
+BASIS_WORDS = {"add": "the radio (its tuner or serial)", "range": "the frequencies the measurement runs on (set by "
+               "the radio's range)", "rig": "the rig"}
 
 # What each measurement does, what to connect, how long, and what to expect (the window shows these before a run).
 STEPS = {
@@ -420,6 +431,8 @@ def result_of(station: Station, job: dict, status: dict) -> dict:
     code = status.get("exit_code")
     res = {"at": now(), "step": step, "short": bool(job.get("short")), "by": STEPS[step]["title"],
            "log": job.get("log"), "exit_code": code, "ok": False}
+    if job.get("basis") is not None:
+        res["basis"] = job["basis"]             # relay 022: what it rested on when it was started
     if step == "range":
         m, g = _RANGE.search(full), _GAP.search(full)
         if not m:
@@ -535,10 +548,76 @@ def record(station: Station, nick: str, res: dict) -> None:
     _save(station.root, doc)
 
 
-def accept_typical(station: Station, nick: str) -> None:
+def basis(station: Station, nick: str, chain_text: str = "") -> dict:
+    """Relay 022: what a step done now rests on (see DEPENDS), kept with its result."""
+    rx = station.receivers.get(nick) or {}
+    serial = ((station.data.get("recorder") or {}).get("serials") or {}).get(nick)
+    lo, hi = tile(rx)
+    return {"add": f"{rx.get('tuner') or ''}|{serial or ''}", "range": f"{lo:g}-{hi:g}", "rig": chain_text or ""}
+
+
+def changed_since(step: str, res: dict, now_basis: dict) -> list:
+    """Which of the step's foundations changed since its result was made (results from before relay 022 carry no
+    basis, and are taken as they are)."""
+    was = res.get("basis") or {}
+    return [d for d in DEPENDS.get(step, ()) if d in was and was[d] != now_basis.get(d)]
+
+
+def update_radio(station: Station, nick: str, serial=None, tuner=None, range_mhz=None, gaps_mhz=None, maker=None,
+                 product=None) -> dict:
+    """Relay 022: reopen step 1 and correct the radio (serial, tuner, range, gaps, maker, product). Its later steps
+    that rest on what changed then read "needs re-checking"."""
+    raw = _raw(station)
+    recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
+    if nick not in recs:
+        raise ValueError(f"This station has no radio called {nick}.")
+    e = recs[nick]
+    rec = raw.setdefault("recorder", {})
+    serials = rec.setdefault("serials", {})
+    doc = load(station)
+    r = doc["radios"].setdefault(nick, {"results": {}})
+    facts = r.setdefault("facts", {})
+    if serial is not None and str(serial).strip() and str(serial).strip() != str(serials.get(nick) or ""):
+        serial = str(serial).strip()
+        for other, s_ in serials.items():
+            if other != nick and str(s_) == serial:
+                raise ValueError(f"Serial {serial} is already this station's {other}.")
+        serials[nick] = serial
+        r["serial"] = serial
+    if tuner is not None:
+        key = tuner_key(tuner) or (tuner or "").lower()
+        if key not in TUNER_GAINS:
+            raise ValueError(f"Unknown tuner {tuner!r}: choose E4000 or R820T/R860.")
+        e["tuner"] = key
+        r["tuner"] = key
+    if range_mhz is not None:
+        rng = [float(v) for v in range_mhz]
+        if len(rng) != 2 or not rng[0] < rng[1]:
+            raise ValueError("The range is two frequencies in MHz, low then high.")
+        if rng != [float(v) for v in e.get("range_mhz") or []]:
+            e["range_mhz"] = rng
+            facts["range_mhz"] = {"value": rng, "source": f"entered by the owner {now()[:10]}"}
+    if gaps_mhz is not None:
+        gaps = [[float(a), float(b)] for a, b in gaps_mhz]
+        if gaps != [[float(a), float(b)] for a, b in e.get("gaps_mhz") or []]:
+            e["gaps_mhz"] = gaps
+            facts["gaps_mhz"] = {"value": gaps, "source": f"entered by the owner {now()[:10]}"}
+    if maker is not None or product is not None:
+        usb = e.setdefault("usb", {})
+        if maker is not None:
+            usb["maker"] = maker
+        if product is not None:
+            usb["product"] = product
+    station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    _save(station.root, doc)
+    return {"radio": nick, "entry": e}
+
+
+def accept_typical(station: Station, nick: str, chain_text: str = "") -> None:
     """For a tuner with no range-measuring command: the owner keeps the typical figures, still marked typical."""
     rx = station.receivers.get(nick) or {}
     record(station, nick, {"at": now(), "step": "range", "short": False, "ok": True, "accepted_typical": True,
+                           "basis": basis(station, nick, chain_text),
                            "by": "the owner (no measuring command for this tuner)",
                            "range_mhz": rx.get("range_mhz"), "gaps_mhz": rx.get("gaps_mhz"),
                            "note": "typical figures kept, not measured (no command measures this tuner's range)"})
@@ -558,12 +637,50 @@ def latest(r: dict, step: str, full: bool = True) -> dict | None:
     return rs[-1] if rs else None
 
 
+def _sub_state(station: Station, nick: str, r: dict, m: str, running: set, now_basis: dict) -> tuple:
+    """One measurement's or path check's state and words. Relay 022: a done step whose foundations changed since
+    (DEPENDS) reads "needs re-checking"; so does a range changed by hand after it was measured."""
+    last = latest(r, m)
+    if (nick, m) in running:
+        return "in progress", "running now: closing this guide or moving Back does not stop it"
+    if last and last.get("ok"):
+        moved = changed_since(m, last, now_basis)
+        if moved:
+            when = str(last.get("at", ""))[:16].replace("T", " ")
+            words = " and ".join(BASIS_WORDS[d] for d in moved)
+            return "needs re-checking", (words[0].upper() + words[1:] + f" changed since this was done ({when}): run "
+                                         f"it again. Was: {last.get('note') or 'done'}")
+        if m == "range":
+            rx = station.receivers.get(nick) or {}
+            same = ([float(v) for v in last.get("range_mhz") or []] == [float(v) for v in rx.get("range_mhz") or []]
+                    and [[float(a), float(b)] for a, b in last.get("gaps_mhz") or []]
+                    == [[float(a), float(b)] for a, b in rx.get("gaps_mhz") or []])
+            if not same:
+                return "needs re-checking", ("The range was changed by hand since it was "
+                                             + ("kept" if last.get("accepted_typical") else "measured")
+                                             + ": measure it again, or keep the figures as they are now.")
+        return "done", last.get("note") or ""
+    if last:
+        return "needs attention", last.get("note") or ""
+    return "not started", ""
+
+
+def _agg(states: list) -> str:
+    if all(s == "done" for s in states):
+        return "done"
+    for s in ("in progress", "needs attention", "needs re-checking"):
+        if s in states:
+            return s
+    return "in progress" if "done" in states else "not started"
+
+
 def checklist(station: Station, nick: str, chain_text: str, running: set) -> dict:
-    """Each step's state for one radio: "done", "in progress", "needs attention" or "not started", what is missing,
-    and whether scans on it may start."""
+    """Each step's state for one radio: "done", "in progress", "needs attention", "needs re-checking" (relay 022) or
+    "not started", what is missing, and whether scans on it may start."""
     doc = load(station)
     r = doc["radios"].get(nick) or {}
     serials = (station.data.get("recorder") or {}).get("serials") or {}
+    now_basis = basis(station, nick, chain_text)
     steps = []
 
     def add(key, state, detail, sub=None):
@@ -574,33 +691,27 @@ def checklist(station: Station, nick: str, chain_text: str, running: set) -> dic
         f"serial {serials.get(nick)}" if have else "Add the radio first.")
     sub = []
     for m in MEASURES:
-        last = latest(r, m)
-        st = ("in progress" if (nick, m) in running else "done" if last and last.get("ok") else
-              "needs attention" if last else "not started")
-        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": (last or {}).get("note") or ""})
+        st, detail = _sub_state(station, nick, r, m, running, now_basis)
+        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": detail,
+                    "results": len((r.get("results") or {}).get(m) or [])})
     states = [s["state"] for s in sub]
-    add("measure", "done" if all(s == "done" for s in states) else "in progress" if "in progress" in states else
-        "needs attention" if "needs attention" in states else "in progress" if "done" in states else "not started",
-        f"{states.count('done')} of {len(MEASURES)} measured", sub)
+    add("measure", _agg(states), f"{states.count('done')} of {len(MEASURES)} measured", sub)
     add("draw", "done" if chain_text else "not started",
         chain_text if chain_text else "The rig used for runs has no path to this radio. Draw it on the Chain screen and "
                                       "use it for runs.")
     conf = r.get("rig_confirmed") or {}
     ok_conf = bool(chain_text) and conf.get("text") == chain_text
-    add("confirm", "done" if ok_conf else "needs attention" if conf else "not started",
+    add("confirm", "done" if ok_conf else "needs re-checking" if conf else "not started",
         f"confirmed {conf.get('at', '')[:16].replace('T', ' ')}" if ok_conf else
         "The drawing changed since it was confirmed: confirm it again." if conf else
         "Check the rig matches the drawing, then confirm.")
     sub = []
     for m in PATHS:
-        last = latest(r, m)
-        st = ("in progress" if (nick, m) in running else "done" if last and last.get("ok") else
-              "needs attention" if last else "not started")
-        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": (last or {}).get("note") or ""})
+        st, detail = _sub_state(station, nick, r, m, running, now_basis)
+        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": detail,
+                    "results": len((r.get("results") or {}).get(m) or [])})
     states = [s["state"] for s in sub]
-    add("paths", "done" if all(s == "done" for s in states) else "in progress" if "in progress" in states else
-        "needs attention" if "needs attention" in states else "not started",
-        f"{states.count('done')} of {len(PATHS)} passed", sub)
+    add("paths", _agg(states), f"{states.count('done')} of {len(PATHS)} passed", sub)
     missing = next((s for s in steps if s["state"] != "done"), None)
     return {"radio": nick, "steps": steps, "ready": missing is None, "facts": r.get("facts") or {},
             "missing": None if missing is None else {"step": missing["step"], "number": STEP_ORDER.index(missing["step"]) + 1,

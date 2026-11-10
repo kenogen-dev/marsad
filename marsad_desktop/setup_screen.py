@@ -4,9 +4,12 @@
                      optional location that is written only to that station's own station.local.json and never shown
                      again: the window says "set" or "not set".
   FirstRunDialog     the first time the window has no station: New Station, or open an existing one.
-  SetupDialog        each radio's checklist (add, measure, draw, confirm, path checks), each step's state and a button
-                     to do it. Each measurement says what it does, what to connect, how long and what to expect before
-                     it runs, offers a short test first, and keeps every result with its date.
+  SetupDialog        relay 022: a step-by-step guide per radio (a step list down the side, Back and Next, a page per
+                     step: add, measure x4, draw, confirm, path checks x2). Each measurement says what it does, what to
+                     connect, how long and what to expect before it runs, offers a short test first, and keeps every
+                     result with its date. Changing a finished step marks the later ones resting on it "needs
+                     re-checking"; closing keeps the progress and the page; a run in the background keeps running.
+  EditRadioDialog    relay 022: step 1 reopened, to correct the radio.
   AddRadioDialog     the RTL-SDRs Windows sees, by serial; the tuner found by the engine's own probe once the owner
                      says go (it opens the radio for a moment); the tuner's typical figures marked "typical, not yet
                      measured"; a nickname. Saved into station.json the way the engine reads it.
@@ -27,8 +30,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QFram
 from marsad_desktop import theme as T
 from marsad_desktop.scan_start import call
 
-STATE_COLOUR = {"done": "open", "in progress": "survey_light", "needs attention": "anomaly", "not started": "muted"}
-STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "not started": "○"}
+from marsad.setup import STEP_ORDER, STEP_TITLES, STEPS as STEPS_TEXT                         # noqa: E402
+
+STATE_COLOUR = {"done": "open", "in progress": "survey_light", "needs attention": "alert_text",
+                "needs re-checking": "anomaly", "not started": "muted"}
+STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "needs re-checking": "↻", "not started": "○"}
 
 
 def _label(text, muted=False, size=None, bold=False, wrap=True):
@@ -59,10 +65,11 @@ def _float(text):
 # ---------------------------------------------------------------- New Station
 
 class LocationBox(QFrame):
-    """Optional, private. Typed once; never shown again."""
+    """Optional, private. Typed once (or found by Windows, relay 022); never shown again."""
 
     def __init__(self, note_set: str | None = None):
         super().__init__()
+        self.setObjectName("LocationBox")
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         self.on = QCheckBox("Add location for outdoor weather and sun height")
@@ -71,14 +78,35 @@ class LocationBox(QFrame):
                            "never shown or exported. You can skip it.", muted=True))
         row = QHBoxLayout()
         self.lat = QLineEdit()
+        self.lat.setObjectName("LocLat")
         self.lat.setPlaceholderText("latitude, decimal degrees")
         self.lon = QLineEdit()
+        self.lon.setObjectName("LocLon")
         self.lon.setPlaceholderText("longitude, decimal degrees, west negative")
         for w in (self.lat, self.lon):
             row.addWidget(w)
+        # relay 022: Windows' own location service fills both fields for the owner to confirm; nothing is saved here
+        self.b_find = _button("Find my location")
+        self.b_find.setObjectName("FindLocation")
+        self.b_find.setToolTip("Asks Windows' own location service on this PC (GPS or nearby Wi-Fi, as Windows "
+                               "decides). Marsad sends nothing anywhere and uses no internet address lookup. The two "
+                               "fields are filled for you to check; nothing is kept until you save.")
+        self.b_find.clicked.connect(self.find)
+        row.addWidget(self.b_find)
         v.addLayout(row)
+        self.round = QCheckBox("Round to about 1 km (two decimal places)")
+        self.round.setObjectName("LocRound")
+        self.round.setChecked(True)
+        self.round.setToolTip("Plenty for outdoor weather and the sun's height, and the value kept is less exact. "
+                              "Untick to keep every decimal.")
+        self.round.toggled.connect(self._reround)
+        v.addWidget(self.round)
+        self.found = _label("", muted=True)
+        self.found.setObjectName("LocFound")
+        v.addWidget(self.found)
         if note_set is not None:
             v.addWidget(_label(note_set, muted=True))
+        self._raw = None                        # what Windows reported, in memory only, until saved or closed
         self.on.toggled.connect(self._enable)
         self._enable(False)
 
@@ -86,18 +114,57 @@ class LocationBox(QFrame):
         self.lat.setEnabled(on)
         self.lon.setEnabled(on)
 
+    def find(self):
+        from marsad_desktop import locate as L
+        self.b_find.setEnabled(False)
+        self.found.setText("Asking Windows' location service…")
+
+        def got(d, err):
+            self.b_find.setEnabled(True)
+            if err or not d:
+                self.found.setText(f"Windows' location service did not answer ({err}). Type the values by hand.")
+                return
+            if not d.get("ok"):
+                self.found.setText(d.get("text") or "No position. Type the values by hand.")
+                return
+            self._raw = (d["lat"], d["lon"])
+            self.on.setChecked(True)
+            self._fill()
+            src = {"WiFi": "nearby Wi-Fi", "Satellite": "GPS", "Cellular": "the mobile network",
+                   "IPAddress": "the network address"}.get(d.get("source") or "", d.get("source") or "Windows")
+            self.found.setText(f"Found by Windows from {src}, {L.accuracy_words(d.get('accuracy_m'))}. Check the two "
+                               "values, change them if you like, then save. Nothing is kept until you do.")
+        call(lambda: L.find(), got)
+
+    def _fill(self):
+        from marsad_desktop import locate as L
+        if self._raw is None:
+            return
+        on = self.round.isChecked()
+        self.lat.setText(f"{L.rounded(self._raw[0], on):g}" if on else repr(self._raw[0]))
+        self.lon.setText(f"{L.rounded(self._raw[1], on):g}" if on else repr(self._raw[1]))
+
+    def _reround(self, on):
+        """The privacy option: Windows' figures shown rounded or in full. Typed figures are rounded when saved."""
+        if self._raw is not None:
+            self._fill()
+
     def value(self):
-        """None (skipped), or {"lat", "lon"}; raises ValueError in words."""
+        """None (skipped), or {"lat", "lon"}, rounded to about 1 km when that is ticked; raises ValueError in words."""
+        from marsad_desktop import locate as L
         if not self.on.isChecked():
             return None
         lat, lon = _float(self.lat.text()), _float(self.lon.text())
         if lat is None or lon is None:
             raise ValueError("Type both latitude and longitude in decimal degrees, or untick the location.")
-        return {"lat": lat, "lon": lon}
+        on = self.round.isChecked()
+        return {"lat": L.rounded(lat, on), "lon": L.rounded(lon, on)}
 
     def clear(self):
         self.lat.clear()
         self.lon.clear()
+        self._raw = None
+        self.found.setText("")
 
 
 class NewStationDialog(QDialog):
@@ -398,11 +465,107 @@ class AddRadioDialog(QDialog):
         call(lambda: self.svc.setup_post("radio", body), got)
 
 
-# ---------------------------------------------------------------- Set up this station
+# ---------------------------------------------------------------- Set up this station (relay 022: a guide)
+
+class EditRadioDialog(QDialog):
+    """Relay 022: step 1 reopened. Correct the radio's serial, tuner, range, blind spots, maker or product. The later
+    steps that rest on what changes then read "needs re-checking"."""
+
+    def __init__(self, svc, radio: dict, parent=None):
+        super().__init__(parent)
+        self.svc = svc
+        self.nick = radio["radio"]
+        self.result = None
+        e = radio.get("entry") or {}
+        self.setWindowTitle(f"Change {self.nick}")
+        self.setObjectName("EditRadioDialog")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
+        v.setSpacing(T.SPACE)
+        v.addWidget(_label(f"Change {self.nick}", size=13, bold=True))
+        v.addWidget(_label("Steps that rest on what you change (the measurements run on the radio's frequencies, the "
+                           "path checks through the rig) will read \"needs re-checking\" until they are run again. "
+                           "Nothing already recorded is removed.", muted=True))
+        g = QGridLayout()
+        self.serial = QLineEdit(str(((radio.get("facts") or {}).get("serial") or {}).get("value") or
+                                    _serial_of(radio) or ""))
+        self.tuner = QComboBox()
+        self.tuner.addItem("Elonics E4000 (zero-IF)", "e4000")
+        self.tuner.addItem("Rafael Micro R820T / R860 (low-IF)", "r820t")
+        self.tuner.setCurrentIndex(max(0, self.tuner.findData(e.get("tuner"))))
+        lo, hi = (e.get("range_mhz") or [0, 0])[:2]
+        self.lo, self.hi = QLineEdit(f"{lo:g}"), QLineEdit(f"{hi:g}")
+        self.gaps = QLineEdit(", ".join(f"{a:g}-{b:g}" for a, b in e.get("gaps_mhz") or []))
+        usb = e.get("usb") or {}
+        self.maker, self.product = QLineEdit(usb.get("maker") or ""), QLineEdit(usb.get("product") or "")
+        for i, (k, w) in enumerate([("Serial", self.serial), ("Tuner", self.tuner), ("Range low, MHz", self.lo),
+                                    ("Range high, MHz", self.hi), ("Blind spots (PLL gap), MHz", self.gaps),
+                                    ("Maker", self.maker), ("Product", self.product)]):
+            g.addWidget(_label(k, wrap=False), i, 0)
+            g.addWidget(w, i, 1)
+        v.addLayout(g)
+        self.why = _label("", muted=True)
+        v.addWidget(self.why)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        c = _button("Cancel")
+        c.clicked.connect(self.reject)
+        self.ok = _button("Save changes", primary=True)
+        self.ok.clicked.connect(self.save)
+        row.addWidget(c)
+        row.addWidget(self.ok)
+        v.addLayout(row)
+        self.resize(560, self.sizeHint().height())
+
+    def save(self):
+        try:
+            gaps = []
+            for part in [p for p in self.gaps.text().replace(" ", "").split(",") if p]:
+                a, b = part.split("-")
+                gaps.append([float(a), float(b)])
+        except ValueError:
+            self.why.setText("Blind spots are written like 1105-1268, comma separated.")
+            return
+        lo, hi = _float(self.lo.text()), _float(self.hi.text())
+        if lo is None or hi is None:
+            self.why.setText("The range needs a low and a high frequency in MHz.")
+            return
+        body = {"radio": self.nick, "serial": self.serial.text().strip(), "tuner": self.tuner.currentData(),
+                "range_mhz": [lo, hi], "gaps_mhz": gaps, "maker": self.maker.text().strip(),
+                "product": self.product.text().strip()}
+        self.ok.setEnabled(False)
+
+        def got(d, err):
+            self.ok.setEnabled(True)
+            if err:
+                self.why.setText(err)
+                return
+            self.result = d
+            self.accept()
+        call(lambda: self.svc.setup_post("radio_update", body), got)
+
+
+def _serial_of(radio: dict) -> str:
+    detail = next((s.get("detail") or "" for s in radio.get("steps") or [] if s.get("step") == "add"), "")
+    return detail.replace("serial ", "", 1) if detail.startswith("serial ") else ""
+
+
+# The guide's pages, in order: (checklist step, page key). Measure and Path checks have one page per part.
+PAGES = [("add", "add"), ("measure", "range"), ("measure", "warmup"), ("measure", "retune"), ("measure", "floor"),
+         ("draw", "draw"), ("confirm", "confirm"), ("paths", "adsb"), ("paths", "baseline")]
+TOUCHED = ("done", "needs re-checking", "in progress", "needs attention")
+
 
 class SetupDialog(QDialog):
-    """Each radio's checklist. Opened from File (or Station) > Set up this station…, and from the line Live Scan shows
-    while scanning is locked."""
+    """Set up this station, as a step-by-step guide (relay 022; relay 021 made it a checklist).
+
+    A step list down the side (Add the radio, Measure x4, Draw the rig, Confirm, Path checks x2) shows where you are
+    and each step's state. Back is always there; a finished step can be reopened, and changing it marks the later
+    steps that rest on it "needs re-checking" (marsad.setup.DEPENDS). Next opens only when this step is complete,
+    with a line saying what is still needed. A finished step in the list can be jumped to; a later unfinished one
+    stays locked. Closing keeps the progress (results live with the station) and the page (the window's preferences);
+    a measurement keeps running in the background whatever the guide does, and shows as running.
+    """
     open_chain = Signal()
     changed = Signal(dict)
 
@@ -412,9 +575,10 @@ class SetupDialog(QDialog):
         self.folder = station_folder
         self.d: dict = {}
         self.radio = None
+        self.page = None                        # the page key shown
         self.setWindowTitle("Set up this station")
         self.setObjectName("SetupDialog")
-        self.resize(980, 760)
+        self.resize(1040, 760)
         v = QVBoxLayout(self)
         v.setContentsMargins(T.SPACE * 2, T.SPACE * 2, T.SPACE * 2, T.SPACE * 2)
         v.setSpacing(T.SPACE)
@@ -431,8 +595,7 @@ class SetupDialog(QDialog):
         head.addWidget(self.b_loc)
         v.addLayout(head)
         self.intro = _label("Each radio is measured and its rig drawn and checked before its first scan. Start a "
-                            "scan and Start recording stay locked for a radio until all five steps are done.",
-                            muted=True)
+                            "scan and Start recording stay locked for a radio until every step is done.", muted=True)
         v.addWidget(self.intro)
         top = QHBoxLayout()
         self.picker = QComboBox()
@@ -449,21 +612,39 @@ class SetupDialog(QDialog):
         self.summary = _label("", wrap=False)
         top.addWidget(self.summary)
         v.addLayout(top)
+        mid = QHBoxLayout()
+        self.steps_list = QListWidget()
+        self.steps_list.setObjectName("SetupSteps")
+        self.steps_list.setFixedWidth(280)
+        self.steps_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.steps_list.itemClicked.connect(self._clicked)
+        mid.addWidget(self.steps_list)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.Shape.NoFrame)
         self.body = QWidget()
-        self.steps = QVBoxLayout(self.body)
-        self.steps.setContentsMargins(0, 0, 0, 0)
+        self.steps = QVBoxLayout(self.body)          # the page shown (named as in relay 021, for its checks)
+        self.steps.setContentsMargins(T.SPACE, 0, 0, 0)
         self.steps.setSpacing(T.SPACE)
         sc.setWidget(self.body)
-        v.addWidget(sc, 1)
+        mid.addWidget(sc, 1)
+        v.addLayout(mid, 1)
+        self.needed = _label("", wrap=True)
+        self.needed.setObjectName("SetupNeeded")
+        v.addWidget(self.needed)
         self.foot = _label("", muted=True)
         v.addWidget(self.foot)
         row = QHBoxLayout()
-        row.addStretch(1)
+        self.b_back = _button("← Back")
+        self.b_back.setObjectName("SetupBack")
+        self.b_back.clicked.connect(self.back)
+        self.b_next = _button("Next →", primary=True)
+        self.b_next.clicked.connect(self.next)
         close = _button("Close")
         close.clicked.connect(self.accept)
+        row.addWidget(self.b_back)
+        row.addStretch(1)
+        row.addWidget(self.b_next)
         row.addWidget(close)
         v.addLayout(row)
         self.timer = QTimer(self)
@@ -473,7 +654,7 @@ class SetupDialog(QDialog):
         self._key = None
         self.refresh()
 
-    # data
+    # ---- data
     def refresh(self):
         if self._busy:
             return
@@ -495,7 +676,7 @@ class SetupDialog(QDialog):
         self.b_loc.setVisible(bool(self.folder))
         if not d.get("tracked"):
             self.intro.setText("This station was set up before the setup checklist existed, so nothing is locked here. "
-                               "The steps below can still be run for any radio.")
+                               "The steps can still be run for any radio.")
         names = [r["radio"] for r in d.get("radios") or []]
         cur = self.radio if self.radio in names else (names[0] if names else None)
         self.picker.blockSignals(True)
@@ -505,58 +686,204 @@ class SetupDialog(QDialog):
                 self.picker.addItem(r["radio"], r["radio"])
         self.picker.setCurrentIndex(max(0, self.picker.findData(cur)))
         self.picker.blockSignals(False)
+        if cur != self.radio:
+            self.page = None
         self.radio = cur
         self._show()
         self.changed.emit(d)
 
     def _pick(self, *_):
         self.radio = self.picker.currentData()
+        self.page = None
         self._key = None
         self._show()
 
     def _radio(self) -> dict | None:
         return next((r for r in self.d.get("radios") or [] if r["radio"] == self.radio), None)
 
-    # drawing the steps (rebuilt only when what they show changed; painting held off meanwhile)
+    # ---- the pages and their states
+    def page_state(self, key: str) -> tuple[str, str]:
+        """(state, detail) of one page, from the service's checklist."""
+        r = self._radio()
+        if r is None:
+            return "not started", ""
+        for s in r.get("steps") or []:
+            if s["step"] == key:
+                return s["state"], s.get("detail") or ""
+            for sub in s.get("sub") or []:
+                if sub["step"] == key:
+                    return sub["state"], sub.get("detail") or ""
+        return "not started", ""
+
+    def reachable(self, key: str) -> bool:
+        """A page may be opened from the list when it has been started before, or every page before it is done."""
+        keys = [k for _, k in PAGES]
+        if self.page_state(key)[0] in TOUCHED:
+            return True
+        return all(self.page_state(k)[0] == "done" for k in keys[:keys.index(key)])
+
+    def blocker(self, key: str) -> str | None:
+        """The first unfinished page before this one, in words, or None."""
+        keys = [k for _, k in PAGES]
+        for k in keys[:keys.index(key)]:
+            if self.page_state(k)[0] != "done":
+                return self._page_title(k)
+        return None
+
+    def frontier(self) -> str:
+        """The first page not done (the last page when all are)."""
+        return next((k for _, k in PAGES if self.page_state(k)[0] != "done"), PAGES[-1][1])
+
+    def _page_title(self, key: str) -> str:
+        step = next(s for s, k in PAGES if k == key)
+        n = STEP_ORDER.index(step) + 1
+        if key in ("add", "draw", "confirm"):
+            return f"step {n}, {STEP_TITLES[key]}"
+        return f"step {n}, {STEPS_TEXT.get(key, {}).get('title', key)}"
+
+    def _pref_key(self) -> str:
+        return f"setup/page/{(self.folder or '').lower()}/{self.radio or ''}"
+
+    def _remember_page(self):
+        from marsad_desktop.chain_screen import prefs
+        if self.radio and self.page:
+            prefs().setValue(self._pref_key(), self.page)
+
+    def _restore_page(self) -> str:
+        """The page this radio's guide was left on (closing keeps it), when it can still be opened; else where the
+        work is."""
+        from marsad_desktop.chain_screen import prefs
+        saved = str(prefs().value(self._pref_key(), "") or "")
+        keys = [k for _, k in PAGES]
+        if saved in keys and self.reachable(saved):
+            return saved
+        return self.frontier()
+
+    def go(self, key: str):
+        self.page = key
+        self.foot.setText("")
+        self._remember_page()
+        self._key = None
+        self._show()
+
+    def back(self):
+        keys = [k for _, k in PAGES]
+        i = keys.index(self.page or keys[0])
+        if i > 0:
+            self.go(keys[i - 1])
+
+    def next(self):
+        keys = [k for _, k in PAGES]
+        i = keys.index(self.page or keys[0])
+        if i + 1 < len(keys) and self.page_state(self.page)[0] == "done":
+            self.go(keys[i + 1])
+
+    def _clicked(self, it):
+        key = it.data(Qt.ItemDataRole.UserRole)
+        if key and self.reachable(key):
+            self.go(key)
+        elif key:
+            self.foot.setText(f"Locked: finish {self.blocker(key)} first.")
+
+    # ---- drawing (rebuilt only when what it shows changed; painting held off meanwhile)
     def _show(self):
         r = self._radio()
-        key = repr((self.radio, r and r.get("steps"), r and r.get("facts"), self.d.get("jobs")))
+        if self.page is None:
+            self.page = self._restore_page() if r is not None else "add"
+            self._remember_page()
+        key = repr((self.radio, self.page, r and r.get("steps"), r and r.get("facts"), r and r.get("entry"),
+                    self.d.get("jobs")))
         if key == self._key:
             return
         self._key = key
         self.body.setUpdatesEnabled(False)
         try:
+            self._fill_list()
             self._empty(self.steps)
             if r is None:
                 self.summary.setText("")
-                self.steps.addWidget(self._step_box(1, "Add a radio", "not started",
+                self.steps.addWidget(self._page_box("add", "Add a radio", "not started",
                                                     "No radio yet. Add one: Marsad lists the RTL-SDRs Windows sees.",
-                                                    [("Add a radio…", self.add_radio)]))
+                                                    [("Add a radio…", self.add_radio, True)]))
                 self.steps.addStretch(1)
+                self._nav()
                 return
             m = r.get("missing")
             self.summary.setText("Ready: scans can start on this radio" if r.get("ready") else
                                  f"Next: step {m['number']}, {m['title']}")
-            for i, s in enumerate(r["steps"], 1):
-                acts = []
-                if s["step"] == "add":
-                    acts = [("Add another radio…", self.add_radio)]
-                elif s["step"] == "draw":
-                    acts = [("Open Chain", self._open_chain)]
-                elif s["step"] == "confirm":
-                    acts = [("It's built as drawn…", self.confirm_rig)] if r["steps"][2]["state"] == "done" else []
-                box = self._step_box(i, s["title"], s["state"], s["detail"], acts)
-                for sub in s.get("sub") or []:
-                    box.layout().addWidget(self._sub_row(r, sub))
-                self.steps.addWidget(box)
-            facts = r.get("facts") or {}
-            if facts:
-                self.steps.addWidget(_label("This radio's profile: " + "; ".join(
-                    f"{k.replace('_', ' ')} {v.get('value')} ({v.get('source')})" for k, v in facts.items()),
-                    muted=True))
+            self._fill_page(r)
             self.steps.addStretch(1)
+            self._nav()
         finally:
             self.body.setUpdatesEnabled(True)
+
+    def _fill_list(self):
+        self.steps_list.blockSignals(True)
+        self.steps_list.clear()
+        last_step = None
+        for step, key in PAGES:
+            if step != last_step and step in ("measure", "paths"):
+                n = STEP_ORDER.index(step) + 1
+                h = QListWidgetItem(f"{n}. {STEP_TITLES[step]}")
+                h.setFlags(Qt.ItemFlag.NoItemFlags)
+                f = h.font()
+                f.setBold(True)
+                h.setFont(f)
+                h.setForeground(T.color("text2"))
+                self.steps_list.addItem(h)
+            last_step = step
+            state, _ = self.page_state(key) if self._radio() is not None else ("not started", "")
+            n = STEP_ORDER.index(step) + 1
+            name = (f"{n}. {STEP_TITLES[key]}" if key in ("add", "draw", "confirm")
+                    else f"     {STEPS_TEXT[key]['title'].split(' (')[0]}")
+            open_ = self.reachable(key) if self._radio() is not None else key == "add"
+            mark = STATE_MARK.get(state, "○") if open_ else "\U0001F512"
+            it = QListWidgetItem(f"{mark}  {name}" + ("   ◀" if key == self.page else ""))
+            it.setData(Qt.ItemDataRole.UserRole, key)
+            it.setData(Qt.ItemDataRole.UserRole + 1, state)
+            it.setForeground(T.color(STATE_COLOUR.get(state, "muted")) if open_ else T.color("faint"))
+            it.setToolTip(f"{state}" if open_ else f"Locked: finish {self.blocker(key)} first")
+            if key == self.page:
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
+            self.steps_list.addItem(it)
+            if key == self.page:
+                self.steps_list.setCurrentItem(it)
+        self.steps_list.blockSignals(False)
+
+    def _nav(self):
+        """Back always there; Next only when this page is done, with what is still needed in words."""
+        keys = [k for _, k in PAGES]
+        i = keys.index(self.page)
+        self.b_back.setEnabled(i > 0)
+        state, detail = self.page_state(self.page) if self._radio() is not None else ("not started", "")
+        last = i + 1 >= len(keys)
+        self.b_next.setEnabled(state == "done" and not last)
+        r = self._radio()
+        if r is not None and r.get("ready"):
+            text = "Every step is done: scanning is unlocked for this radio."
+        elif state == "done":
+            text = "Done. Next goes on to " + (self._page_title(keys[i + 1]) if not last else "the end") + "."
+        elif state == "in progress":
+            text = ("Still needed: this run to finish. It keeps running in the background if you go Back or close "
+                    "the guide.")
+        elif state == "needs re-checking":
+            text = "Still needed: run it again (what changed is said above)."
+        elif state == "needs attention":
+            text = "Still needed: a run that succeeds. The last one did not: " + (detail or "see its result.")
+        else:
+            text = "Still needed: " + {
+                "add": "add the radio.",
+                "draw": "draw the rig on the Chain screen and use it for runs.",
+                "confirm": "check the rig against the drawing, then confirm it.",
+                "range": "run the full measurement, or keep the typical range (a short test does not count).",
+            }.get(self.page, "run the full measurement (a short test does not count).")
+            b = self.blocker(self.page)
+            if b:
+                text = f"Locked: finish {b} first."
+        self.needed.setText(text)
+        self.needed.setProperty("state", state)
 
     @staticmethod
     def _empty(lay):
@@ -568,62 +895,129 @@ class SetupDialog(QDialog):
             elif it.layout() is not None:
                 SetupDialog._empty(it.layout())
 
-    def _step_box(self, n, title, state, detail, actions):
+    def _page_box(self, key, title, state, detail, actions, actions_last=False):
         f = QFrame()
         f.setObjectName("TextPanel")
         lay = QVBoxLayout(f)
         lay.setContentsMargins(T.SPACE * 1.5, T.SPACE, T.SPACE * 1.5, T.SPACE)
         h = QHBoxLayout()
         col = T.C[STATE_COLOUR.get(state, "muted")]
-        h.addWidget(_label(f"<span style='color:{col}'>{STATE_MARK.get(state, '○')}</span>&nbsp; {n}. {title}",
-                           bold=True, wrap=False))
+        h.addWidget(_label(f"<span style='color:{col}'>{STATE_MARK.get(state, '○')}</span>&nbsp; {title}",
+                           size=11.5, bold=True, wrap=False))
         st = _label(state, wrap=False)
         st.setStyleSheet(f"color: {col};")
         st.setObjectName("StepState")
         h.addWidget(st)
         h.addStretch(1)
-        for text, fn in actions:
-            b = _button(text)
-            b.clicked.connect(fn)
-            h.addWidget(b)
         lay.addLayout(h)
         if detail:
             lay.addWidget(_label(detail, muted=True))
+        if actions and not actions_last:
+            lay.addLayout(self._actions(actions))
         f.setProperty("step_state", state)
+        f.setProperty("page", key)
         return f
 
-    def _sub_row(self, r, sub):
-        w = QWidget()
-        h = QHBoxLayout(w)
-        h.setContentsMargins(T.SPACE * 2, 0, 0, 0)
-        col = T.C[STATE_COLOUR.get(sub["state"], "muted")]
-        h.addWidget(_label(f"<span style='color:{col}'>{STATE_MARK.get(sub['state'], '○')}</span>&nbsp; {sub['title']}",
-                           wrap=False))
-        h.addWidget(_label(sub.get("detail") or sub["state"], muted=True), 1)
-        running = sub["state"] == "in progress"
-        if sub["step"] == "range" and (r.get("entry") or {}).get("tuner") != "e4000" and sub["state"] != "done":
-            b = _button("Keep the typical range…")
-            b.setToolTip("No command measures this tuner's range here. Its typical figures are kept and stay marked "
-                         "\"typical, not measured\".")
-            b.clicked.connect(lambda *_: self.accept_typical())
-            h.addWidget(b)
-        else:
-            for text, short in (("Short test", True), ("Run…", False)):
-                b = _button(text)
-                b.setEnabled(not running)
-                b.clicked.connect(lambda *_, s=sub["step"], sh=short: self.run_step(s, sh))
-                h.addWidget(b)
-        w.setProperty("sub_step", sub["step"])
-        return w
+    @staticmethod
+    def _actions(actions):
+        row = QHBoxLayout()
+        for text, fn, on in actions:
+            b = _button(text)
+            b.setEnabled(on)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch(1)
+        return row
 
-    # actions
+    def _fill_page(self, r: dict):
+        key = self.page
+        state, detail = self.page_state(key)
+        locked = self.blocker(key) if state not in TOUCHED else None
+        running = state == "in progress"
+        if key == "add":
+            e = r.get("entry") or {}
+            facts = r.get("facts") or {}
+            lines = [f"serial {_serial_of(r) or 'not known'}, tuner {e.get('tuner') or '?'}",
+                     "range " + "–".join(f"{x:g}" for x in e.get("range_mhz") or []) + " MHz"
+                     + (", blind spots " + ", ".join(f"{a:g}–{b:g}" for a, b in e.get("gaps_mhz") or [])
+                        if e.get("gaps_mhz") else "")]
+            box = self._page_box("add", f"Step 1. {STEP_TITLES['add']}: {self.radio}", state, "; ".join(lines),
+                                 [("Change this radio…", self.edit_radio, not self._radio_running(r)),
+                                  ("Add another radio…", self.add_radio, True)])
+            if facts:
+                box.layout().addWidget(_label("This radio's profile: " + "; ".join(
+                    f"{k.replace('_', ' ')} {v.get('value')} ({v.get('source')})" for k, v in facts.items()),
+                    muted=True))
+            box.layout().addWidget(_label("Changing the radio marks the steps that rest on it \"needs re-checking\": "
+                                          "the measurements if its tuner, serial or frequencies change, the path "
+                                          "checks if its tuner or serial does.", muted=True))
+            self.steps.addWidget(box)
+            return
+        if key == "draw":
+            self.steps.addWidget(self._page_box("draw", f"Step 3. {STEP_TITLES['draw']}", state, detail,
+                                                [("Open Chain", self._open_chain, True)]))
+            self.steps.addWidget(_label("Draw the rig on the Chain screen and press Use for runs. This page turns done "
+                                        "when the rig used for runs has a path to this radio.", muted=True))
+            return
+        if key == "confirm":
+            self.steps.addWidget(self._page_box(
+                "confirm", f"Step 4. {STEP_TITLES['confirm']}", state, detail,
+                [("It's built as drawn…", self.confirm_rig, self.page_state("draw")[0] == "done")]))
+            return
+        s = STEPS_TEXT.get(key) or {}
+        n = STEP_ORDER.index(next(st for st, k in PAGES if k == key)) + 1
+        acts = []
+        if key == "range" and (r.get("entry") or {}).get("tuner") != "e4000":
+            acts.append(("Keep the typical range…", self.accept_typical, not running and not locked))
+        else:
+            acts.append(("Short test", lambda *_, k=key: self.run_step(k, True), not running and not locked))
+            acts.append(("Run…", lambda *_, k=key: self.run_step(k, False), not running and not locked))
+            if key == "range":
+                acts.append(("Keep the range as it is…", self.accept_typical,
+                             not running and not locked and state == "needs re-checking"))
+        box = self._page_box(key, f"Step {n}. {s.get('title', key)}", state, detail, acts, actions_last=True)
+        g = QGridLayout()
+        g.setColumnStretch(1, 1)
+        g.setHorizontalSpacing(T.SPACE * 2)
+        for i, (k, word) in enumerate((("what", "What it does"), ("connect", "What to connect"),
+                                       ("duration", "How long"), ("expect", "What to expect"))):
+            g.addWidget(_label(word, bold=True, wrap=False), i, 0, Qt.AlignmentFlag.AlignTop)
+            g.addWidget(_label(s.get(k, ""), muted=True), i, 1)
+        box.layout().addLayout(g)
+        sub = next((x for st in r.get("steps") or [] for x in st.get("sub") or [] if x["step"] == key), {})
+        kept = int(sub.get("results") or 0)
+        box.layout().addWidget(_label(f"{kept} result{'s' if kept != 1 else ''} kept for this step (never replaced; "
+                                      "the newest full run counts, short tests never complete it)." if kept else
+                                      "No result yet.", muted=True))
+        if locked:
+            box.layout().addWidget(_label(f"Locked until {locked} is done.", muted=True))
+        box.layout().addLayout(self._actions(acts))         # the buttons after the explanation
+        self.steps.addWidget(box)
+
+    def _radio_running(self, r: dict) -> bool:
+        return any(sub["state"] == "in progress" for s in r.get("steps") or [] for sub in s.get("sub") or [])
+
+    # ---- actions
     def add_radio(self):
         d = AddRadioDialog(self.svc, self.d, self)
         if d.exec() and d.added:
             self.radio = (d.added or {}).get("radio")
+            self.page = None
             self._key = None
             if d.added.get("status"):
                 self.show_status(d.added["status"])
+            else:
+                self.refresh()
+
+    def edit_radio(self):
+        r = self._radio()
+        if r is None:
+            return
+        d = EditRadioDialog(self.svc, r, self)
+        if d.exec() and d.result:
+            self._key = None
+            if d.result.get("status"):
+                self.show_status(d.result["status"])
             else:
                 self.refresh()
 
@@ -632,9 +1026,9 @@ class SetupDialog(QDialog):
         self.accept()
 
     def accept_typical(self):
-        if QMessageBox.question(self, "Keep the typical range?", "No command here measures this tuner's tuning range. "
-                                "Keep its typical figures? They stay marked \"typical, not measured\" in the radio's "
-                                "profile.") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Keep the range?", "Keep the radio's range and blind spots as they are now? "
+                                "They stay marked as typical or as entered, not measured.") != \
+                QMessageBox.StandardButton.Yes:
             return
         call(lambda: self.svc.setup_post("accept_typical", {"radio": self.radio}),
              lambda d, err: self.show_status(d) if not err else self.foot.setText(err))
@@ -654,7 +1048,8 @@ class SetupDialog(QDialog):
         text = (f"{s.get('what', '')}\n\nWhat to connect: {s.get('connect', '')}\nHow long: {s.get('duration', '')}"
                 f"\nWhat to expect: {s.get('expect', '')}\n\n"
                 + ("This is the short test: a quick run of the same command, to see it works before the full one."
-                   if short else "Run the full measurement now? It opens the radio."))
+                   if short else "Run the full measurement now? It opens the radio. It keeps running in the "
+                                 "background if you move Back or close this guide."))
         if QMessageBox.question(self, s.get("title", step) + (" (short test)" if short else ""),
                                 text) != QMessageBox.StandardButton.Yes:
             return
@@ -668,13 +1063,18 @@ class SetupDialog(QDialog):
                 self.show_status(d["status"])
         call(lambda: self.svc.setup_post("run", {"radio": self.radio, "step": step, "short": short}), got)
 
+    def done(self, r):
+        self._remember_page()
+        super().done(r)
+
     def change_location(self):
         """Change or clear the location: written only to this station's station.local.json, never read back."""
         from marsad import setup as S
         d = QDialog(self)
         d.setWindowTitle("Station location")
+        d.setObjectName("LocationDialog")
         v = QVBoxLayout(d)
-        box = LocationBox("The current location is never shown. Type a new one, or tick nothing and press Clear.")
+        box = LocationBox("The current location is never shown. Type a new one, find it, or press Clear.")
         v.addWidget(box)
         row = QHBoxLayout()
         clear = _button("Clear the location")
@@ -688,6 +1088,7 @@ class SetupDialog(QDialog):
         why = _label("", muted=True)
         v.addWidget(why)
         cancel.clicked.connect(d.reject)
+        self._loc_dlg = d
 
         def do(loc):
             try:
@@ -706,9 +1107,10 @@ class SetupDialog(QDialog):
                 why.setText(str(exc))
                 return
             if loc is None:
-                why.setText("Tick the box and type a location, or use Clear.")
+                why.setText("Tick the box and type a location (or find it), or use Clear.")
                 return
             do(loc)
         save.clicked.connect(on_save)
         clear.clicked.connect(lambda: do(None))
+        d.finished.connect(lambda *_: box.clear())         # nothing found or typed outlives the dialog
         d.exec()

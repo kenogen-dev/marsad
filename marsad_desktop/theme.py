@@ -7,6 +7,8 @@ the base values the same way the design canvas mixes them.
 """
 from __future__ import annotations
 
+import colorsys
+import itertools
 from functools import lru_cache
 
 # The palette itself is plain Python, so its arithmetic (and the contrast tests) need no Qt;
@@ -73,7 +75,7 @@ def _derive(b: dict) -> dict:
         line_strong=_mix(b["lines"], b["text"], 0.10),
         text2=_mix(b["text"], b["muted"], 0.5),
         faint=_mix(b["muted"], b["panel"], 0.5),
-        wire=_mix(b["muted"], b["panel"], 0.25),
+        wire=b.get("wire") or _mix(b["muted"], b["panel"], 0.25),
         survey_light=_mix(b["survey"], "#FFFFFF", 0.35),
         survey_bg=_mix(b["panel"], b["survey"], 0.08),
         survey_sel=_mix(b["panel"], b["survey"], 0.12),
@@ -84,12 +86,12 @@ def _derive(b: dict) -> dict:
         # Colour coding of parts by what they do (Chain screen). Relay 006: every section of the
         # Parts list has a hue of its own, told apart from its neighbours (tests/test_desktop_theme.py).
         cat_source=b["open"],
-        cat_sma="#F48FB1",                                        # SMA adapters, DC blocks, pads, bulkheads
-        cat_cable="#E07A5F",                                      # coax (copper), on the wires
+        cat_sma=b.get("cat_sma", "#F48FB1"),                      # SMA adapters, DC blocks, pads, bulkheads
+        cat_cable=b.get("cat_cable", "#E07A5F"),                  # coax (copper), on the wires
         cat_condition=b["private"],
         cat_split=b["anomaly"],
         cat_digital=_mix(b["muted"], b["panel"], 0.15),
-        cat_enclosure="#C9B79C",
+        cat_enclosure=b.get("cat_enclosure", "#C9B79C"),
         # Relay 005: the finished look.
         side=_mix(b["background"], b["panel"], 0.6),            # the Parts panel's own surface
         tile=_mix(b["panel"], b["text"], 0.07),                  # a palette tile, a step up from it
@@ -102,7 +104,7 @@ def _derive(b: dict) -> dict:
         shadow="#000000",
         # Power sources and power wires: lighter than the radio colours, so a power wire differs
         # from an RF branch in brightness as well as in hue (and it is dashed).
-        power=_mix(_mix(b["open"], b["anomaly"], 0.55), "#FFFFFF", 0.4),
+        power=b.get("power") or _mix(_mix(b["open"], b["anomaly"], 0.55), "#FFFFFF", 0.4),
         power_bg=_mix(b["panel"], _mix(b["open"], b["anomaly"], 0.55), 0.10),
         guide=_mix(b["alert"], "#FFFFFF", 0.15),                 # smart guide lines while dragging
         lock=_mix(b["muted"], b["text"], 0.2),
@@ -140,6 +142,175 @@ def _derive(b: dict) -> dict:
 
 
 C = _derive(BASE)
+
+# ---------------------------------------------------------------- relay 022: themes
+# Named token sets, with the Marsad Design System's names (the BASE keys), so the design project can copy them in.
+# Each is a base set; everything else is derived from it by _derive, exactly as for the original palette. Optional
+# keys cat_sma / cat_cable / cat_enclosure move a Chain parts colour where a theme's accent would sit on it, and
+# power / wire set those two wire colours where the derived ones would be as light as the accent or the recorder.
+# "Original" is BASE unchanged (it keeps the survey/recorder lightness issue of 2026-11-06: see THEME_EXEMPT).
+TOKENS = ("background", "panel", "lines", "text", "muted", "survey", "recorder", "open", "private", "anomaly", "alert")
+THEMES: dict[str, dict] = {
+    "Original": dict(BASE, note="The palette the window has had since relay 002."),
+    "Observatory": dict(
+        note="Deep navy ground, cold starlight-white text, a pale ice-blue accent.",
+        background="#090E1B", panel="#101829", lines="#243049", text="#F3F6FF", muted="#9DABC6",
+        survey="#A1CBF2", recorder="#CB8643", open="#45CCAE", private="#BE9EFF", anomaly="#F3CF5E",
+        alert="#FF6B6B", power="#CEE5BC", wire="#747F97"),
+    "Graphite & Amber": dict(
+        note="Neutral graphite with an instrument-amber accent, like an old bench meter.",
+        background="#101113", panel="#18191C", lines="#2D2F33", text="#F4F1EA", muted="#A5A198",
+        survey="#FFB547", recorder="#5D8FEA", open="#46C8A3", private="#C39DFF", anomaly="#EDEA6A",
+        alert="#FF5F57", cat_cable="#D9826A"),
+    "Phosphor": dict(
+        note="Near-black with a soft green phosphor accent, like an oscilloscope, kept subtle.",
+        background="#070A08", panel="#0E1310", lines="#202A23", text="#ECF5EE", muted="#94A79A",
+        survey="#8EE3A8", recorder="#DB81CE", open="#45B9DC", private="#B7A0FF", anomaly="#E9D35C",
+        alert="#FF6A5E", power="#80907D", wire="#6C7C72"),
+    "Carbon & Copper": dict(
+        note="Warm charcoal with a copper accent.",
+        background="#12100F", panel="#1B1816", lines="#332D29", text="#F7F1EA", muted="#AA9F95",
+        survey="#DD8F66", recorder="#BCD8FF", open="#4CC7B0", private="#BE9CFF", anomaly="#F0D35A",
+        alert="#FF5C7A", cat_cable="#9CC7B4", cat_enclosure="#D2C09A", power="#ACC098"),
+    "Slate & Teal": dict(
+        note="Blue-grey slate with a deep teal accent.",
+        background="#0E1418", panel="#162026", lines="#2B3941", text="#F1F6F8", muted="#9AACB6",
+        survey="#66D5C6", recorder="#DE8138", open="#93D46A", private="#B99DFF", anomaly="#F4CE58",
+        alert="#FF6B6B"),
+    "Ink & Coral": dict(
+        note="Blue-black ink with a muted coral accent.",
+        background="#0A0C13", panel="#12151E", lines="#272B38", text="#F6F3F0", muted="#A3A0AA",
+        survey="#FF907C", recorder="#C4DCFF", open="#43C7B6", private="#B79CFF", anomaly="#F2D25E",
+        alert="#FF4C8E", cat_cable="#8FC9A8", cat_sma="#9FC3F0", power="#B4CAA4"),
+    "Basalt": dict(
+        note="Warm dark grey with a sand accent, very low saturation.",
+        background="#121110", panel="#1B1A18", lines="#312F2B", text="#F2EEE7", muted="#A7A198",
+        survey="#D8C39A", recorder="#6F93C2", open="#76C3A8", private="#B3A0DE", anomaly="#EFA93A",
+        alert="#EE6A5E", cat_enclosure="#9DB4C4", power="#ECEBD2"),
+    "High contrast": dict(
+        note="Pure black, white text and strong accents, for clarity above all.",
+        background="#000000", panel="#0B0B0B", lines="#5C5C5C", text="#FFFFFF", muted="#D2D2D2",
+        survey="#22E1FF", recorder="#F28300", open="#2BE38B", private="#D59CFF", anomaly="#FFE81A",
+        alert="#FF4545", power="#CCF29F", wire="#808080"),
+}
+THEME_DEFAULT = "Original"
+# Rules a theme is excused from, and why (shown in the picker and the result, never silently).
+THEME_EXEMPT = {"Original": {"survey_recorder_lightness":
+                             "kept as it was: its survey blue and recorder orange are equally light (the issue raised "
+                             "on 2026-11-06), which the new themes fix"}}
+_CURRENT = [THEME_DEFAULT]
+
+
+def palette(name: str) -> dict:
+    """A theme's whole palette (base and derived), without touching the window's own."""
+    base = {k: v for k, v in (THEMES.get(name) or THEMES[THEME_DEFAULT]).items() if k != "note"}
+    return _derive(base)
+
+
+def current() -> str:
+    return _CURRENT[0]
+
+
+def use(name: str) -> str:
+    """Make `name` the window's palette, in place (every screen reads C when it paints), and forget every cached
+    colour made from the old one. Unknown names fall back to Original. Returns the name used."""
+    name = name if name in THEMES else THEME_DEFAULT
+    new = palette(name)
+    C.clear()
+    C.update(new)
+    _CACHE.clear()
+    text_on.cache_clear()
+    _CURRENT[0] = name
+    return name
+
+
+def _lab(h: str) -> tuple[float, float, float]:
+    """CIELAB (D65) of a #rrggbb colour: L* is lightness as the eye judges it."""
+    def lin(v):
+        v /= 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(x) for x in _rgb(h))
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+
+    def f(t):
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    return 116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))
+
+
+def lightness(h: str) -> float:
+    return _lab(h)[0]
+
+
+def delta_e(a: str, b: str) -> float:
+    """CIE76 colour difference: about 2 is just noticeable, 30 and more is plainly a different colour."""
+    return sum((p - q) ** 2 for p, q in zip(_lab(a), _lab(b))) ** 0.5
+
+
+# The checks every theme must pass (tests/test_desktop_themes_022.py runs them for each; the picker shows them).
+TEXT_SURFACES = ("background", "side", "panel", "bar", "raised", "raised2", "tile", "tile_hover", "menu",
+                 "menu_hover", "elev_overlay", "survey_sel", "check_bg", "plot")
+TEXT_COLOURS = ("text", "text2", "muted", "survey", "survey_light", "recorder_light")
+ICON_COLOURS = ("survey", "recorder", "open", "private", "anomaly", "alert", "cat_source", "cat_sma", "cat_cable",
+                "cat_condition", "cat_split", "cat_digital", "cat_enclosure", "power", "wire", "guide", "lock")
+ICON_SURFACES = ("background", "panel", "tile", "tile_hover", "raised", "plot")
+MEANINGS = ("survey", "open", "private", "anomaly", "alert")      # the accent and the four meanings
+SURVEY_RECORDER_L = 15.0        # L* apart, at least: lightness, not only hue (2026-11-06)
+MEANING_DE = 30.0               # CIE76 apart, at least, for the meanings and the accent
+ELEVATION_STEP = 1.03           # each elevation level at least this luminance ratio above the one below
+
+
+def problems(p: dict, name: str = "") -> list[str]:
+    """Every rule this palette breaks, in words (empty: it passes). Rules a theme is excused from are left out."""
+    out = []
+    exempt = THEME_EXEMPT.get(name, {})
+    for fg in TEXT_COLOURS:
+        for bg in TEXT_SURFACES:
+            if contrast(p[fg], p[bg]) < 4.5:
+                out.append(f"text {fg} on {bg}: {contrast(p[fg], p[bg]):.2f}:1, needs 4.5:1")
+    for surface in ("menu", "raised"):                   # see-through menus and cards, over the lightest things
+        for under in ("#E8ECF1", "#FFFFFF", p["survey"], p["anomaly"]):
+            seen = _mix(p[surface], under, 1 - FLOAT_ALPHA)
+            for fg in ("text", "muted", "survey_light"):
+                if contrast(p[fg], seen) < 4.5:
+                    out.append(f"text {fg} on a see-through {surface} over {under}: {contrast(p[fg], seen):.2f}:1")
+    for fg in ICON_COLOURS:
+        for bg in ICON_SURFACES:
+            if contrast(p[fg], p[bg]) < 3.0:
+                out.append(f"icon/large {fg} on {bg}: {contrast(p[fg], p[bg]):.2f}:1, needs 3:1")
+    for fill in ("primary", "primary_hover"):
+        if contrast(DARK_TEXT, p[fill]) < 4.5:
+            out.append(f"button text on {fill}: {contrast(DARK_TEXT, p[fill]):.2f}:1, needs 4.5:1")
+    for bg in ("background", "alert_bg"):
+        if contrast(p["alert_text"], p[bg]) < 4.5:
+            out.append(f"alert text on {bg}: {contrast(p['alert_text'], p[bg]):.2f}:1, needs 4.5:1")
+    if "survey_recorder_lightness" not in exempt:
+        d = abs(lightness(p["survey"]) - lightness(p["recorder"]))
+        if d < SURVEY_RECORDER_L:
+            out.append(f"survey and recorder lightness only {d:.1f} L* apart, needs {SURVEY_RECORDER_L:g}")
+    for i, a in enumerate(MEANINGS):
+        for b in MEANINGS[i + 1:]:
+            if delta_e(p[a], p[b]) < MEANING_DE:
+                out.append(f"{a} and {b} too alike: {delta_e(p[a], p[b]):.1f} apart, needs {MEANING_DE:g}")
+    levels = [p["elev_" + k] for k in ELEVATIONS]
+    for lo, hi, a, b in zip(levels, levels[1:], ELEVATIONS, ELEVATIONS[1:]):
+        if (luminance(hi) + 0.05) / (luminance(lo) + 0.05) < ELEVATION_STEP:
+            out.append(f"elevation {b} not a step above {a}")
+    for a, b in itertools.combinations(("wire", "power", "survey", "recorder", "guide"), 2):
+        if {a, b} in ({"guide", "survey"}, {"guide", "recorder"}) or ({a, b} == {"survey", "recorder"} and exempt):
+            continue
+        if contrast(p[a], p[b]) < 1.25:
+            out.append(f"wires {a} and {b} differ too little in brightness: {contrast(p[a], p[b]):.2f}")
+    sections = ("cat_source", "cat_sma", "cat_cable", "cat_condition", "cat_split", "cat_digital", "cat_enclosure",
+                "power", "survey")
+    for a, b in itertools.combinations(sections, 2):
+        ha, la, sa = colorsys.rgb_to_hls(*(v / 255 for v in _rgb(p[a])))
+        hb, lb, sb = colorsys.rgb_to_hls(*(v / 255 for v in _rgb(p[b])))
+        hue = min(abs(ha - hb), 1 - abs(ha - hb)) * 360
+        if not (hue >= 18 or abs(la - lb) >= 0.12 or abs(sa - sb) >= 0.35):
+            out.append(f"Chain parts {a} and {b} too alike")
+    return out
 
 # A node's own colour (relay 006): the swatches offered on its card and right-click menu.
 SWATCHES = [("Blue", "#4CC2FF"), ("Orange", "#FF9F43"), ("Teal", "#3CC8BE"), ("Violet", "#B48CFF"),
@@ -214,9 +385,9 @@ def qc(name: str, alpha: float | None = None):
     return q
 
 
-def rgba(name: str, alpha: float) -> str:
-    """A palette colour with transparency, for style sheets."""
-    r, g, b = _rgb(C[name])
+def rgba(name: str, alpha: float, p: dict | None = None) -> str:
+    """A palette colour with transparency, for style sheets (the window's palette, or `p`)."""
+    r, g, b = _rgb((C if p is None else p)[name])
     return f"rgba({r},{g},{b},{alpha})"
 
 
@@ -277,15 +448,24 @@ def gradient(top: str, bottom: str) -> str:
     return f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {top}, stop:1 {bottom})"
 
 
-def lit_edges(level: str, side: str = "lines") -> str:
+def lit_edges(level: str, side: str = "lines", p: dict | None = None) -> str:
     """A hairline border whose top edge carries the level's 1 px highlight, so layers separate (relay 016)."""
+    C = globals()["C"] if p is None else p
     a = HIGHLIGHT_ALPHA[level]
     top = _mix(C[side], "#FFFFFF", min(1.0, a * 2.5))
     bottom = _mix(C[side], "#000000", 0.25)
     return f"border: {BORDER}px solid {C[side]}; border-top-color: {top}; border-bottom-color: {bottom};"
 
 
-def stylesheet() -> str:
+def stylesheet(p: dict | None = None) -> str:
+    """The window's style sheet, from its palette or (relay 022: the theme picker's preview) from palette `p`."""
+    C = globals()["C"] if p is None else p
+
+    def rgba(name, alpha):
+        return globals()["rgba"](name, alpha, C)
+
+    def lit_edges(level, side="lines"):
+        return globals()["lit_edges"](level, side, C)
     r6, r4 = round(RADIUS * 0.75), round(RADIUS * 0.5)
     b, s = BORDER, SPACE
     btn = gradient(C["btn_top"], C["btn_bottom"])

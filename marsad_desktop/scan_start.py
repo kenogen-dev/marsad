@@ -60,7 +60,10 @@ class _Job(QRunnable):
             out, err = None, str(exc)
         except Exception as exc:  # noqa: BLE001 - shown to the owner, never a crash
             out, err = None, f"{type(exc).__name__}: {exc}"
-        self.sig.done.emit(out, err)
+        try:
+            self.sig.done.emit(out, err)
+        except RuntimeError:            # relay 022: the window that asked was closed (a theme change, a station
+            pass                        # switch) before the answer came: nobody is left to tell
 
 
 _LIVE: set = set()

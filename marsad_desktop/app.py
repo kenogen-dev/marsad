@@ -273,8 +273,20 @@ class Window(QMainWindow):
         self.menu_sets = []
         bar = self.menuBar()
         bar.setObjectName("MenuBar")
+        from marsad_desktop.chain_screen import Menu
         for w in self.screens:
             menus = w.build_menus(self.open_settings, self.about) if hasattr(w, "build_menus") else []
+            # relay 022: View > Theme… on every screen (a View menu is made where a screen has none)
+            view = next((m for m in menus if m.title().replace("&", "") == "View"), None)
+            if view is None:
+                view = Menu(self)
+                view.setTitle("&View")
+                menus.insert(0, view)
+            else:
+                view.addSeparator()
+            a = view.addAction("Theme…")
+            a.setObjectName("ThemeAction")
+            a.triggered.connect(lambda *_: self.open_theme())
             acts = [bar.addMenu(m) for m in menus]
             self.menu_sets.append(acts)
 
@@ -492,6 +504,28 @@ class Window(QMainWindow):
             self.close()
         call(lambda: ST.ensure_service(folder), got)
 
+    def open_theme(self):
+        """Relay 022: View > Theme…. Apply makes the theme the window's palette, remembers it, and rebuilds the window
+        on it (every screen, plot and panel), on the same screen and station; a scan is never touched."""
+        from marsad_desktop import theme_picker as TP
+        d = TP.ThemeDialog(self, T.current())
+        self._theme_dlg = d
+        if not d.exec() or not d.chosen or d.chosen == T.current():
+            return
+        if not self.chain.can_close():
+            return
+        apply_theme(d.chosen)
+        TP.remember(d.chosen)
+        w = Window(self.svc, start=SCREENS[self.stack.currentIndex()], station_folder=self.station_folder)
+        w.resize(self.size())
+        w.move(self.pos())
+        if self.isMaximized():
+            w.showMaximized()
+        _OPEN.append(w)
+        w.show()
+        self.rebuilt_as = w
+        self.close()
+
     def open_setup(self):
         from marsad_desktop.setup_screen import SetupDialog
         d = SetupDialog(self.svc, self, station_folder=self.station_folder)
@@ -511,7 +545,18 @@ class Window(QMainWindow):
             ev.ignore()
 
 
-_OPEN: list = []                    # windows opened by a station switch, kept alive
+_OPEN: list = []                    # windows opened by a station switch or a theme change, kept alive
+
+
+def apply_theme(name: str) -> str:
+    """Relay 022: the palette, the application's style sheet and the plots' colours, all at once."""
+    used = T.use(name)
+    app = QApplication.instance()
+    if app is not None:
+        app.setStyleSheet(T.stylesheet())
+    from marsad_desktop import live_screen
+    live_screen.apply_plot_theme()
+    return used
 
 
 def choose_station():
@@ -548,7 +593,8 @@ def main(argv=None) -> int:
     app = QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("Marsad")
     app.setFont(T.ui_font())
-    app.setStyleSheet(T.stylesheet())
+    from marsad_desktop import theme_picker
+    apply_theme(theme_picker.saved())              # relay 022: the theme chosen last (Original until one is)
     from marsad_desktop import trace
     trace.start_from_prefs()                       # relay 020: Settings > Diagnostics (off by default)
     svc, folder = choose_station()

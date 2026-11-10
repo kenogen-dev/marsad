@@ -38,6 +38,12 @@ from .service import Service, ServiceError
 
 pg.setConfigOptions(antialias=False, background=T.C["plot"], foreground=T.C["muted"], useNumba=False)
 
+
+def apply_plot_theme() -> None:
+    """Relay 022: plots made after a theme change take its plot and axis colours (the waterfall's colour map is
+    Live Scan's own choice and is not touched)."""
+    pg.setConfigOptions(background=T.C["plot"], foreground=T.C["muted"])
+
 FFTW_NOTE = ("rtl_power_fftw's own scale: about 26 dB below rtl_power's at 2.4 MS/s (measured at 1.93 GHz, "
              "g29). Never read the two engines on one axis.")
 QUIET_S = 0.35                       # a gesture counts as over this long after the view last moved

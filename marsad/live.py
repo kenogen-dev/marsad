@@ -2025,8 +2025,15 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
     if nick not in station.receivers:
         raise ValueError(f"This station has no radio called {nick!r}.")
     if path == "/setup/accept_typical":
-        S.accept_typical(station, nick)
+        S.accept_typical(station, nick, chain_for(station, nick)["text"])
         return setup_status(station)
+    if path == "/setup/radio_update":            # relay 022: step 1 reopened and corrected
+        if setup_running(station) & {(nick, m) for m in S.STEPS}:
+            raise ValueError("A setup step is running on this radio: change it once that run has finished.")
+        out = S.update_radio(station, nick, form.get("serial"), form.get("tuner"), form.get("range_mhz"),
+                             form.get("gaps_mhz"), form.get("maker"), form.get("product"))
+        _reload_station(station)
+        return dict(out, status=setup_status(station))
     if path == "/setup/confirm_rig":
         text = chain_for(station, nick)["text"]
         if not text:
@@ -2058,7 +2065,8 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
         got = launch_outside(station, argv, f"setup_{step}_{nick}" + ("_short" if short else ""))
         doc = S.load(station)
         job = {"id": f"{int(time.time() * 1000)}", "radio": nick, "step": step, "short": short, "log": got["log"],
-               "started": S.now(), "argv": [str(a) for a in argv]}
+               "started": S.now(), "argv": [str(a) for a in argv],
+               "basis": S.basis(station, nick, chain_for(station, nick)["text"])}      # relay 022
         doc["jobs"].append(job)
         S._save(station.root, doc)
         return {"job": job, "line": " ".join(cmd.get("args") or []), "status": setup_status(station)}
