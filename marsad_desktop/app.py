@@ -172,9 +172,12 @@ class SettingsDialog(QDialog):
 
 
 class Window(QMainWindow):
-    def __init__(self, service: Service, start: str = "Live Scan"):
+    def __init__(self, service: Service, start: str = "Live Scan", station_folder: str | None = None):
         super().__init__()
         self.svc = service
+        self.station_folder = station_folder          # relay 021: the station open here (None: the service's own)
+        self.station = {}                             # /station/info
+        self.setup = {}
         from marsad_desktop import tips
         tips.install()                    # relay 016: long tooltips wrap
         from marsad_desktop import practice
@@ -275,6 +278,18 @@ class Window(QMainWindow):
             acts = [bar.addMenu(m) for m in menus]
             self.menu_sets.append(acts)
 
+        # relay 021: the Station menu, on every screen: new, open, switch, set up
+        from marsad_desktop.chain_screen import Menu
+        sm = Menu(self)
+        sm.setTitle("&Station")
+        sm.setObjectName("StationMenu")
+        sm.aboutToShow.connect(lambda: self._fill_station_menu(sm))
+        self.station_menu = sm
+        first = bar.actions()[0] if bar.actions() else None
+        if first is not None:
+            bar.insertMenu(first, sm)
+        else:
+            bar.addMenu(sm)
         i = SCREENS.index(start) if start in SCREENS else SCREENS.index("Live Scan")
         self.group.button(i).setChecked(True)
         self._show_screen(i)
@@ -283,6 +298,10 @@ class Window(QMainWindow):
         # relay 020: "Use for runs" shows at once in the header and on every radio's chain (Radios panel, Start panels)
         self.chain.used.connect(self._summary)
         self.chain.used.connect(self.radio_state.refresh)
+        self.live.setup_requested.connect(self.open_setup)
+        self.setup_timer = QTimer(self)                # relay 021: whether scanning is locked, and why
+        self.setup_timer.timeout.connect(self._ask_setup)
+        self.setup_timer.start(8000)
         self.live.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
         self.live.open_rig_version.connect(self.open_rig_version)
         self.statusBar().setStyleSheet(f"color: {T.C['muted']}; border-top: 1px solid {T.C['lines']};")
@@ -336,6 +355,8 @@ class Window(QMainWindow):
     def _first_load(self):
         self._ping()
         self._radios()
+        self._ask_station()
+        self._ask_setup()
         self.chain.reload(first=True)
 
     def _ping(self):
@@ -378,10 +399,109 @@ class Window(QMainWindow):
                 bits.append(f"<span style='color:{T.C[colour]}'>●</span> {name} {word}")
         elif self._ok is False:
             bits.append(f"<span style='color:{T.C['muted']}'>radios not known: the service is not answering</span>")
+        if self.station.get("name"):
+            bits.insert(0, f"<b>{self.station['name']}</b>")
         used = self.chain.used_rig_name() if self.chain.display else None
         if used:
             bits.append(f"<span style='color:{T.C['muted']}'>runs record</span> {used}")
         self.summary.setText("&nbsp;&nbsp;&nbsp;".join(bits))
+
+    # -- relay 021: the station open here
+    def _ask_station(self):
+        from marsad_desktop.scan_start import call
+
+        def got(d, err):
+            if err or not d:
+                return
+            self.station = d
+            self.station_folder = self.station_folder or d.get("root")
+            name = d.get("name") or ""
+            self.setWindowTitle(("Marsad \u2014 Practice station" if self.practice else "Marsad")
+                                + (f" \u2014 {name}" if name else ""))
+            self._summary()
+        call(self.svc.station_info, got)
+
+    def _ask_setup(self):
+        from marsad_desktop.scan_start import call
+        if getattr(self, "_setup_busy", False):
+            return
+        self._setup_busy = True
+
+        def got(d, err):
+            self._setup_busy = False
+            if not err and d:
+                self.setup = d
+                self.live.show_setup(d)
+        call(self.svc.setup_status, got)
+
+    def _fill_station_menu(self, m):
+        from marsad_desktop import stations as ST
+        m.clear()
+        a = m.addAction("New Station\u2026")
+        a.triggered.connect(lambda *_: self.new_station())
+        a = m.addAction("Open Station\u2026")
+        a.triggered.connect(lambda *_: self.open_station_dialog())
+        sub = m.addMenu("Switch Station")
+        sub.setObjectName("SwitchStation")
+        here = self.station_folder
+        for e in ST.registry().get("stations") or []:
+            cur = bool(here) and ST._same(e["folder"], here)
+            b = sub.addAction(f"{e['name']}   \u00b7   {e['folder']}" + ("   (open now)" if cur else ""))
+            b.setEnabled(not cur)
+            b.triggered.connect(lambda _=False, f=e["folder"]: self.open_station(f))
+        if not sub.actions():
+            b = sub.addAction("No other station yet")
+            b.setEnabled(False)
+        m.addSeparator()
+        a = m.addAction("Set up this station\u2026")
+        a.triggered.connect(lambda *_: self.open_setup())
+
+    def new_station(self):
+        from marsad_desktop.setup_screen import NewStationDialog
+        d = NewStationDialog(self)
+        if d.exec() and d.created:
+            self.open_station(d.created["folder"], name=d.created["name"])
+
+    def open_station_dialog(self):
+        from marsad_desktop.setup_screen import pick_existing_station
+        f = pick_existing_station(self, str(self.station_folder or ""))
+        if f:
+            self.open_station(f)
+
+    def open_station(self, folder: str, name: str | None = None):
+        """Switch to another station: its service (found answering, or started), then a fresh window on it. This window
+        closes; nothing in the station being left changes."""
+        from marsad_desktop import stations as ST
+        from marsad_desktop.scan_start import call
+        if not self.chain.can_close():
+            return
+        self.statusBar().showMessage(f"Opening the station at {folder}\u2026", 15000)
+
+        def got(base, err):
+            if err:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Station not opened", err)
+                return
+            ST.remember(folder, name)
+            w = Window(Service(base), start="Live Scan", station_folder=str(folder))
+            w.resize(self.size())
+            w.move(self.pos())
+            _OPEN.append(w)
+            w.show()
+            self.switched_to = w
+            self.close()
+        call(lambda: ST.ensure_service(folder), got)
+
+    def open_setup(self):
+        from marsad_desktop.setup_screen import SetupDialog
+        d = SetupDialog(self.svc, self, station_folder=self.station_folder)
+        d.open_chain.connect(lambda: (self.group.button(SCREENS.index("Chain")).setChecked(True),
+                                      self._show_screen(SCREENS.index("Chain"))))
+        d.changed.connect(self.live.show_setup)
+        self._setup_dlg = d
+        d.exec()
+        self._ask_setup()
+        self.radio_state.refresh()
 
     def closeEvent(self, ev):
         if self.chain.can_close():
@@ -391,6 +511,39 @@ class Window(QMainWindow):
             ev.ignore()
 
 
+_OPEN: list = []                    # windows opened by a station switch, kept alive
+
+
+def choose_station():
+    """Relay 021: the station to open. With MARSAD_SERVICE (the launchers and the checks) that service's station; else
+    the one opened last; else, the first time, New Station or Open an existing station. Returns (Service, folder), or
+    (None, None) when the owner quits."""
+    from marsad_desktop import stations as ST
+    if os.environ.get("MARSAD_SERVICE"):
+        svc = Service()
+        folder = ST.station_of(svc.base)
+        if folder:
+            ST.remember(folder)
+        return svc, folder
+    reg = ST.registry()
+    folder = reg.get("last")
+    if not folder or not (Path(folder) / "station.json").exists():
+        from marsad_desktop.setup_screen import FirstRunDialog
+        home = ST.home_station()
+        d = FirstRunDialog(home=str(home) if home else None)
+        if not d.exec() or not d.folder:
+            return None, None
+        folder = d.folder
+    try:
+        base = ST.ensure_service(folder)
+    except RuntimeError as exc:
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(None, "Station not opened", str(exc))
+        return None, None
+    ST.remember(folder)
+    return Service(base), folder
+
+
 def main(argv=None) -> int:
     app = QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("Marsad")
@@ -398,7 +551,10 @@ def main(argv=None) -> int:
     app.setStyleSheet(T.stylesheet())
     from marsad_desktop import trace
     trace.start_from_prefs()                       # relay 020: Settings > Diagnostics (off by default)
-    w = Window(Service(), start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"))
+    svc, folder = choose_station()
+    if svc is None:
+        return 0
+    w = Window(svc, start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"), station_folder=folder)
     w.show()
     return app.exec()
 

@@ -586,7 +586,8 @@ class RadiosDialog(QDialog):
     panel that then fills itself in)."""
     changed = Signal(dict)
 
-    def __init__(self, svc: Service, parent=None, initial: dict | None = None, state: "RadioState | None" = None):
+    def __init__(self, svc: Service, parent=None, initial: dict | None = None, state: "RadioState | None" = None,
+                 ahead: bool = False):
         super().__init__(parent)
         self.svc = svc
         self.state = state                        # relay 020: the window's one radio state, when it has one
@@ -708,11 +709,11 @@ class RadiosDialog(QDialog):
         if initial:                          # the strip's last answer: the panel shows complete at once
             self.show_status(initial)
         if state is not None:                # relay 020: one source of truth; the state asks, every view listens
-            state.changed.connect(self.show_status)
-            state.want_fast(True)
+            state.changed.connect(self._state_changed)
             self.finished.connect(lambda *_: state.want_fast(False))
-            self.finished.connect(lambda *_: self._disconnect())
-            QTimer.singleShot(0, state.refresh)
+            if not ahead:                    # relay 021: a panel built ahead asks nothing until it is opened
+                state.want_fast(True)
+                QTimer.singleShot(0, state.refresh)
         else:
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.refresh)
@@ -720,11 +721,24 @@ class RadiosDialog(QDialog):
             QTimer.singleShot(0, self.refresh)
         call(lambda: svc.chains(), self._got_rig)
 
-    def _disconnect(self):
-        try:
-            self.state.changed.disconnect(self.show_status)
-        except (RuntimeError, TypeError):
-            pass
+    def _state_changed(self, d: dict):
+        """Relay 021: the panel is built once and reused, so while closed it only keeps the newest answer; it draws it
+        when it opens."""
+        if self.isVisible():
+            self.show_status(d)
+        else:
+            self._pending = d
+
+    def reopen(self):
+        """Open again: drawn at once from the window's radio state, then refreshed (as a fresh panel was)."""
+        d = getattr(self, "_pending", None) or (self.state.data if self.state is not None else None)
+        self._pending = None
+        if d:
+            self.show_status(d)
+        if self.state is not None:
+            self.state.want_fast(True)
+            QTimer.singleShot(0, self.state.refresh)
+        call(lambda: self.svc.chains(), self._got_rig)
 
     def _got_rig(self, d, err):
         if err:

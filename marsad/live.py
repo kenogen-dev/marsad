@@ -1908,7 +1908,161 @@ def scan_checks(station: Station, rx: str, detect: bool = True) -> dict:
         radio = {"found": False, "rx": rx, "disabled": True,
                  "text": f"The {radio_word(rx)} is disabled in this window (the switch on its card). Enable it "
                          "there to use it; its role and settings are kept."}
-    return {"in_use": use, "radio": radio, "chain": chain_for(station, rx)}
+    ch = chain_for(station, rx)
+    lock = setup_lock(station, rx, ch["text"])
+    if lock:                                         # relay 021: a radio not yet set up on a new station
+        radio = {"found": False, "rx": rx, "setup": True, "text": lock}
+    return {"in_use": use, "radio": radio, "chain": ch}
+
+
+# ---- relay 021: setting up a new station's radios (marsad/setup.py); stations made before it are never locked
+
+# The service answers on several threads; two status requests at once both found the same finished step and raced
+# to record it (on Windows the second file swap is refused). Setup work runs one request at a time.
+SETUP_LOCK = threading.RLock()
+
+
+def setup_lock(station: Station, rx: str, chain_text: str | None = None) -> str | None:
+    from . import setup as S
+    if not S.tracked(station):
+        return None
+    if chain_text is None:
+        chain_text = chain_for(station, rx)["text"]
+    return S.lock_reason(station, rx, chain_text, setup_running(station))
+
+
+def setup_running(station: Station) -> set:
+    from . import setup as S
+    return {(j["radio"], j["step"]) for j in S.load(station).get("jobs") or [] if not j.get("done")}
+
+
+def _reload_station(station: Station) -> None:
+    """station.json changed under the service (a radio added, a range measured, retune saved): read it again, in place,
+    so every route sees it."""
+    station.data = Station.load(station.root).data
+
+
+def setup_collect(station: Station) -> None:
+    """Finished setup steps: read each one's result from its own output and keep it."""
+    from . import setup as S
+    doc = S.load(station)
+    changed = False
+    for job in doc.get("jobs") or []:
+        if job.get("done"):
+            continue
+        st = launch_status(station, job["log"])
+        if st["exit_code"] is None:
+            continue
+        res = S.result_of(station, job, st)
+        S.record(station, job["radio"], res)
+        changed = True
+        fresh = S.load(station)
+        for j in fresh["jobs"]:
+            if j.get("id") == job["id"]:
+                j["done"] = True
+        S._save(station.root, fresh)
+    if changed:
+        _reload_station(station)
+
+
+def setup_status(station: Station) -> dict:
+    with SETUP_LOCK:
+        return _setup_status(station)
+
+
+def _setup_status(station: Station) -> dict:
+    from . import setup as S
+    setup_collect(station)
+    _reload_station(station)
+    running = setup_running(station)
+    radios = []
+    for nick in station.receivers:
+        c = S.checklist(station, nick, chain_for(station, nick)["text"], running)
+        c["typical"] = S.typical(station.tuner_of(nick) or "")
+        c["entry"] = station.receivers[nick]
+        radios.append(c)
+    usb = usb_radios()
+    mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
+    visible = None if usb is None else [{"serial": s, "name": n, "radio": mine.get(str(s))} for s, n in usb.items()]
+    return {"tracked": S.tracked(station), "info": S.station_info(station), "radios": radios, "visible": visible,
+            "steps": S.STEPS, "jobs": [j for j in S.load(station)["jobs"] if not j.get("done")]}
+
+
+def setup_detect(station: Station) -> dict:
+    """Ask each plugged-in radio its serial and tuner (rtl_eeprom opens it for a moment): refused while any radio
+    program runs (rule 7), which would also make the answer wrong."""
+    from . import setup as S
+    busy = host.running_sdr_programs()
+    if busy:
+        raise ValueError("A radio program is running (" + ", ".join(busy) + "). Detecting opens each radio for a "
+                         "moment, so it waits until nothing is using one.")
+    got = detect_receivers(station)
+    found = []
+    for f in got.get("found") or []:
+        key = S.tuner_key(f.get("tuner"))
+        found.append(dict(f, tuner_key=key, typical=S.typical(key) if key else None))
+    dup = S.duplicate_serials(found)
+    return {"found": found, "error": got.get("error"), "duplicates": dup, "duplicate_help": S.DUP_HELP if dup else ""}
+
+
+def setup_post(station: Station, path: str, form: dict) -> dict:
+    with SETUP_LOCK:
+        return _setup_post(station, path, form)
+
+
+def _setup_post(station: Station, path: str, form: dict) -> dict:
+    from . import setup as S
+    from .rtlpower import find_tool
+    if path == "/setup/detect":
+        return setup_detect(station)
+    if path == "/setup/radio":
+        out = S.add_radio(station, form.get("serial"), form.get("nickname"), form.get("tuner"),
+                          form.get("range_mhz"), form.get("gaps_mhz"), form.get("label") or "",
+                          form.get("maker") or "", form.get("product") or "")
+        _reload_station(station)
+        return dict(out, status=setup_status(station))
+    nick = str(form.get("radio") or "")
+    if nick not in station.receivers:
+        raise ValueError(f"This station has no radio called {nick!r}.")
+    if path == "/setup/accept_typical":
+        S.accept_typical(station, nick)
+        return setup_status(station)
+    if path == "/setup/confirm_rig":
+        text = chain_for(station, nick)["text"]
+        if not text:
+            raise ValueError("The rig has no path to this radio yet: draw it on the Chain screen and use it for runs.")
+        S.confirm_rig(station, nick, text)
+        return setup_status(station)
+    if path == "/setup/run":
+        step, short = str(form.get("step") or ""), bool(form.get("short"))
+        if step not in S.STEPS:
+            raise ValueError(f"unknown step {step!r}")
+        if (nick, step) in setup_running(station):
+            raise ValueError("This step is already running.")
+        use = radio_in_use(station, nick)
+        if use["blocked"]:
+            raise ValueError(use["text"] + " Nothing was started.")
+        rad = find_radio(station, nick)
+        if not rad.get("found"):
+            raise ValueError(rad["text"] + " Nothing was started.")
+        cmd = S.step_command(station, nick, step, short, int(rad["device"]), chain_for(station, nick)["text"])
+        if cmd.get("missing"):
+            raise ValueError(cmd["missing"])
+        if cmd["kind"] == "tool":
+            exe = find_tool(cmd["tool"], station.tool_dirs())
+            if exe is None:
+                raise ValueError(f"{cmd['tool']} was not found in rtl-sdr/ or on PATH.")
+            argv = [str(exe), *cmd["args"]]
+        else:
+            argv = marsad_argv(station, cmd["args"])
+        got = launch_outside(station, argv, f"setup_{step}_{nick}" + ("_short" if short else ""))
+        doc = S.load(station)
+        job = {"id": f"{int(time.time() * 1000)}", "radio": nick, "step": step, "short": short, "log": got["log"],
+               "started": S.now(), "argv": [str(a) for a in argv]}
+        doc["jobs"].append(job)
+        S._save(station.root, doc)
+        return {"job": job, "line": " ".join(cmd.get("args") or []), "status": setup_status(station)}
+    raise ValueError(f"unknown route {path}")
 
 
 # ---- launching outside every process tree (rule 1)
@@ -2331,6 +2485,9 @@ def watch_plan(station: Station, form: dict, detect: bool = False) -> dict:
                                          else find_radio(station, r))}
         if r in disabled_radios(station):
             checks["radios"][r]["radio"] = scan_checks(station, r, detect=False)["radio"]
+        lock = setup_lock(station, r, chains[r] if not (form.get("chains") or {}).get(r) else None)
+        if lock:                                     # relay 021: not set up yet on a new station
+            checks["radios"][r]["radio"] = {"found": False, "rx": r, "setup": True, "text": lock}
     cmd = watch_command(station, w, chains)
     out = {"settings": w, "line": cmd["line"], "argv": cmd["argv"], "checks": checks, "chains": chains}
     if w["mode"] == "survey":
@@ -3134,6 +3291,12 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                         out = SCAN_POST_ROUTES[u.path](station, form)
                     except SystemExit as exc:
                         raise ValueError(str(exc).strip() or "refused")
+                elif u.path.startswith("/setup/"):
+                    from . import setup as _S       # relay 021: set up a new station's radios
+                    try:
+                        out = setup_post(station, u.path, form)
+                    except SystemExit as exc:
+                        raise ValueError(str(exc).strip() or "refused")
                 elif u.path == "/scan/stop":
                     name = str(form.get("file") or "")
                     t = live["tail"] if (live["path"] and name == live["path"].name) else TAILERS.get(name)
@@ -3156,7 +3319,7 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 # interpreter), so this is what says the app is up while it loads.
                 t = live["tail"]
                 busy = t is not None and not t.loaded
-                body = json.dumps({"app": "marsad", "follow": follow,
+                body = json.dumps({"app": "marsad", "follow": follow, "station": str(station.root),
                                    "loading": t.path.name if busy else None}).encode()
             elif u.path == "/data":
                 since = int(q.get("since", ["0"])[0])
@@ -3208,6 +3371,13 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 try:
                     body = json.dumps(radios_status(station)).encode()
                 except (ValueError, SystemExit) as exc:
+                    body = json.dumps({"error": str(exc)}).encode()
+            elif u.path in ("/setup/status", "/station/info"):
+                from . import setup as _S       # relay 021
+                try:
+                    body = json.dumps(setup_status(station) if u.path == "/setup/status"
+                                      else _S.station_info(station)).encode()
+                except (OSError, ValueError) as exc:
                     body = json.dumps({"error": str(exc)}).encode()
             elif u.path == "/launch/status":
                 try:                     # relay 020: how a run launched from the window is doing, from its log

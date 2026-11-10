@@ -879,6 +879,7 @@ class RecorderPanel(QFrame):
 # ---------------------------------------------------------------- the screen
 class LiveScreen(QWidget):
     status = Signal(str)
+    setup_requested = Signal()       # relay 021: open “Set up this station”
     open_rig_version = Signal(dict)        # relay 012: {"ref": the run's rig_reference, "run": its tag}
 
     def __init__(self, svc: Service, radio_state=None):
@@ -1096,6 +1097,26 @@ class LiveScreen(QWidget):
         self.start_bar.hide()
         self._start_log_path = None
         root.addWidget(self.start_bar)
+        # relay 021: on a station made by New Station, scans stay locked per radio until its setup is done; this line
+        # says which step is missing and opens the checklist
+        self.setup_bar = QFrame()
+        self.setup_bar.setObjectName("SetupBar")
+        su = QHBoxLayout(self.setup_bar)
+        su.setContentsMargins(T.SPACE * 2, 5, T.SPACE * 2, 5)
+        su.setSpacing(T.SPACE)
+        self.setup_text = QLabel()
+        self.setup_text.setObjectName("SetupText")
+        self.setup_text.setWordWrap(True)
+        self.setup_open = QToolButton()
+        self.setup_open.setObjectName("Primary")
+        self.setup_open.setText("Set up this station…")
+        self.setup_open.clicked.connect(lambda *_: self.setup_requested.emit())
+        su.addWidget(self.setup_text, 1)
+        su.addWidget(self.setup_open)
+        self.setup_bar.setStyleSheet(f"QFrame#SetupBar {{ background: {T.rgba('anomaly', 0.10)};"
+                                     f" border-bottom: 1px solid {T.rgba('anomaly', 0.45)}; }}")
+        self.setup_bar.hide()
+        root.addWidget(self.setup_bar)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setHandleWidth(6)
@@ -1349,6 +1370,7 @@ class LiveScreen(QWidget):
             _watch_input()
             QTimer.singleShot(1500, lambda: self._prebuild("scan"))
             QTimer.singleShot(2500, lambda: self._prebuild("watch"))
+            QTimer.singleShot(3500, lambda: self._prebuild("radios"))
 
     def _ask_radios(self):
         """The radio strip: presence by serial from Windows' device list, nothing opened (cheap). Relay 020: asked
@@ -1397,9 +1419,15 @@ class LiveScreen(QWidget):
             self._radios_open = False
 
     def _open_radios(self):
+        """Relay 021: the Radios panel is built once (while idle, like the Start panels) and reopened, drawn at once
+        from the window's radio state. Its first opening was the slowest step of the walk-through."""
         from .radios import RadiosDialog
-        d = RadiosDialog(self.svc, self, state=self.radio_state)
-        self._radios_dlg = d
+        d = getattr(self, "_radios_dlg", None)
+        if d is None:
+            d = RadiosDialog(self.svc, self, state=self.radio_state)
+            self._radios_dlg = d
+        else:
+            d.reopen()
         d.exec()
 
     def hideEvent(self, ev):
@@ -2303,10 +2331,12 @@ class LiveScreen(QWidget):
         a.triggered.connect(X.set_shown)
 
         t = menu("&Tools")
-        for text, slot in (("Start a scan…", self.open_start), ("Start recording…", self.open_watch),
-                           ("Radios…", self.open_radios)):
+        for text, slot, btn in (("Start a scan…", self.open_start, self.btn_start),
+                                ("Start recording…", self.open_watch, self.btn_record), ("Radios…", self.open_radios, None)):
             a = t.addAction(text)
             a.triggered.connect(lambda *_, s=slot: s())
+            if btn is not None:              # relay 021: locked with the toolbar button, saying why
+                t.aboutToShow.connect(lambda a=a, b=btn: (a.setEnabled(b.isEnabled()), a.setToolTip(b.toolTip())))
         a = t.addAction("Stop run…")
         t.aboutToShow.connect(lambda a=a: (a.setEnabled(self.btn_stop.isEnabled()), a.setToolTip(self.btn_stop.toolTip())))
         a.triggered.connect(lambda *_: self.stop_run())
@@ -2340,13 +2370,15 @@ class LiveScreen(QWidget):
     # -- starting scans and recorder sessions (relay 010)
     # relay 020: the Start panels are built once (each took 90-160 ms to build, every time it opened) and opened again,
     # refreshed. They are built while the window is idle shortly after it opens, so the first opening is quick too.
-    def _start_dialog(self, kind: str):
+    def _start_dialog(self, kind: str, ahead: bool = False):
+        """The panel, built once. Built ahead (while idle) it loads nothing until opened: its answers drawn into a hidden
+        panel had landed in the middle of other work (relay 021)."""
         attr = "_dlg_" + kind
         d = getattr(self, attr, None)
         if d is not None:
             return d, False
         from .scan_start import StartScanDialog, StartWatchDialog
-        d = (StartScanDialog if kind == "scan" else StartWatchDialog)(self.svc, self)
+        d = (StartScanDialog if kind == "scan" else StartWatchDialog)(self.svc, self, defer_load=ahead)
         d.started.connect(self._launched)
         self._feed_dialog(d)
         setattr(self, attr, d)
@@ -2356,13 +2388,27 @@ class LiveScreen(QWidget):
         """Build a Start panel while the owner is not using the window: no click, key or wheel for 2 s (the build
         holds the window ~100-150 ms, which must not land in the middle of a gesture). Tried again until then."""
         from PySide6.QtWidgets import QApplication
+        if kind == "radios":
+            if getattr(self, "_radios_dlg", None) is not None:
+                return
+            from PySide6.QtWidgets import QApplication as _QA
+            if not (self.isVisible() and time.monotonic() - _INPUT[0] >= 2.0 and _QA.activeModalWidget() is None):
+                QTimer.singleShot(700, lambda: self._prebuild("radios"))
+                return
+            from .radios import RadiosDialog
+            self._radios_dlg = RadiosDialog(self.svc, self, state=self.radio_state, ahead=True)
+            self._radios_dlg.winId()            # its native window made now, not at the first click
+            return
         if getattr(self, "_dlg_" + kind, None) is not None:
             return
         idle = time.monotonic() - _INPUT[0] >= 2.0
         if not (self.isVisible() and idle and QApplication.activeModalWidget() is None):
             QTimer.singleShot(700, lambda: self._prebuild(kind))
             return
-        self._start_dialog(kind)
+        d, _new = self._start_dialog(kind, ahead=True)
+        d.ensurePolished()                 # its styling done now, while idle, not at the first click on a panel
+        for w in d.findChildren(QWidget):
+            w.ensurePolished()
 
     def open_start(self):
         d, new = self._start_dialog("scan")
@@ -2502,6 +2548,39 @@ class LiveScreen(QWidget):
         still names another newest (a race with a second start), open this one by name."""
         self._expect_file = (recording, time.monotonic())
         self.open_survey(None)
+
+    def show_setup(self, d: dict):
+        """Relay 021: scanning locked or not on this station. Untracked stations (every one made before New Station)
+        show nothing and lock nothing."""
+        self.setup_status = d or {}
+        radios = (d or {}).get("radios") or []
+        if not (d or {}).get("tracked"):
+            self.setup_bar.hide()
+            self._lock_starts(None)
+            return
+        ready = [r["radio"] for r in radios if r.get("ready")]
+        waiting = [r for r in radios if not r.get("ready")]
+        if not radios:
+            why = "No radio yet: step 1, Add a radio. Scanning starts once a radio is set up."
+        elif waiting:
+            parts = [f"{r['radio']}: step {r['missing']['number']}, {r['missing']['title']}" for r in waiting]
+            why = ("Scanning is locked until each radio is set up. " if not ready else
+                   f"Ready: {', '.join(ready)}. Not yet: ") + "; ".join(parts) + "."
+        else:
+            why = ""
+        self.setup_text.setText(why)
+        self.setup_bar.setVisible(bool(why))
+        self._lock_starts(None if ready else (why or None))
+
+    def _lock_starts(self, why: str | None):
+        """Start a scan and Start recorder are disabled while no radio may start, saying exactly why."""
+        for b, tip in ((self.btn_start, "Start a scan"), (self.btn_record, "Start recording"),
+                       (self.rec_panel.btn_rec, "Start a recorder session")):
+            b.setEnabled(why is None)
+            if why:
+                b.setToolTip(f"{tip}: locked. {why} Station > Set up this station… finishes it.")
+            elif b.toolTip().startswith(tip + ": locked"):
+                b.setToolTip(tip)
 
     def _start_banner(self, kind: str, text: str, log: str | None = None):
         colour = {"starting": "survey_light", "started": "open", "refused": "anomaly", "failed": "alert"}[kind]

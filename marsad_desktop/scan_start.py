@@ -708,7 +708,8 @@ class ChecksPanel(QFrame):
                 self._row("ok", f"{_word(rx)} by serial", r["text"])
             elif r.get("found") is False:
                 self.blocked = True
-                self._row("bad", f"{_word(rx)} disabled" if r.get("disabled") else f"{_word(rx)} not found", r["text"])
+                self._row("bad", f"{_word(rx)} disabled" if r.get("disabled") else
+                          f"{_word(rx)} not set up yet" if r.get("setup") else f"{_word(rx)} not found", r["text"])
             else:
                 self._row("warn", f"{_word(rx)} by serial", r.get("text") or "Not checked yet.")
             ch = c.get("chain") or {}
@@ -1155,7 +1156,7 @@ class StartScanDialog(QDialog):
     """Start a scan: saved scans first, a full new scan one step away."""
     started = Signal(dict)
 
-    def __init__(self, svc: Service, parent=None):
+    def __init__(self, svc: Service, parent=None, defer_load: bool = False):
         super().__init__(parent)
         self.svc = svc
         self.setWindowTitle("Start a scan")
@@ -1173,7 +1174,8 @@ class StartScanDialog(QDialog):
         self.timer.setInterval(150)
         self.timer.timeout.connect(self._ask_plan)
         self._build()
-        QTimer.singleShot(0, self.reload)
+        if not defer_load:          # relay 021: a panel built ahead (hidden) loads nothing until it is opened
+            QTimer.singleShot(0, self.reload)
 
     # layout
     def _build(self):
@@ -1964,7 +1966,7 @@ class StartWatchDialog(QDialog):
     The private-band table and the storage caps come from the engine and have no field here."""
     started = Signal(dict)
 
-    def __init__(self, svc: Service, parent=None):
+    def __init__(self, svc: Service, parent=None, defer_load: bool = False):
         super().__init__(parent)
         self.svc = svc
         self.setWindowTitle("Start recorder")
@@ -1978,7 +1980,8 @@ class StartWatchDialog(QDialog):
         self.timer.setInterval(200)
         self.timer.timeout.connect(self._ask)
         self._build()
-        QTimer.singleShot(0, self.reload)
+        if not defer_load:          # relay 021: a panel built ahead (hidden) loads nothing until it is opened
+            QTimer.singleShot(0, self.reload)
 
     def _build(self):
         outer = QHBoxLayout(self)

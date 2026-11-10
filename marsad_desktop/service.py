@@ -148,6 +148,19 @@ class Service:
         """station.json exactly as it is on disk ({"text"}); station.local.json is never read."""
         return self._call("/station/json", timeout=30)
 
+    # -- Relay 021: the station and its radios' setup
+    def station_info(self) -> dict:
+        """The open station: its folder, name, description, whether it is tracked, location "set" or not."""
+        return self._call("/station/info", timeout=15)
+
+    def setup_status(self) -> dict:
+        """Each radio's setup checklist, the radios Windows sees by serial, the steps' texts."""
+        return self._call("/setup/status", timeout=60)
+
+    def setup_post(self, path: str, body: dict) -> dict:
+        """/setup/detect, /setup/radio, /setup/run, /setup/accept_typical, /setup/confirm_rig."""
+        return self._call("/setup/" + path, body, timeout=120)
+
     def launch_status(self, log: str) -> dict:
         """Relay 020: how a run launched from the window is doing: the recording it names, or how it ended and the
         engine's own words."""

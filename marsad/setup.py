@@ -1,0 +1,619 @@
+"""Relay 021: a new station, its radios, and each radio's setup before any scan.
+
+A station made by New Station carries `station_setup.json`. While it does, each radio has a checklist:
+
+    1 add      the radio is in station.json, matched by its serial
+    2 measure  its tuning range and blind spots, retune time, warm-up drift and terminated floor
+    3 draw     the rig used for runs has a path to it (the Chain screen)
+    4 confirm  the owner said the rig is built as drawn (cleared when the drawing changes)
+    5 paths    an ADS-B receive proof through the rig, and a first baseline survey with the antenna
+
+and scans on that radio stay refused until all five are done. A station without the file (every station made before
+this, the owner's own among them) is not tracked and nothing is refused.
+
+Every measurement is an existing command, launched like a scan (outside every process tree, with its log and exit
+code): `rtl_test -t` for the E4000's range and gap, `marsad calibrate-retune --save`, `marsad run` from cold into a
+50 ohm load read by `marsad drift`, a short terminated `marsad run` marked terminated in the archive, `marsad
+adsb-check`, and a short `marsad run` with the rig's chain. Where no command exists (the range of an R820T/R860 has no
+measuring tool here), the step says so and the owner can accept the tuner's typical figures, which stay marked "typical,
+not measured". Results are kept, never replaced: each has its date, its step and its run, and the newest counts.
+
+The location is written only to the new station's own `station.local.json`; nothing here reads one back.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import io
+import json
+import os
+import re
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from .config import DEFAULT_FILE, STATION_FILE, Station
+from .rtlpower import TUNER_GAINS, TUNER_LABEL
+
+SETUP_FILE = "station_setup.json"
+LOCAL_FILE = "station.local.json"
+STEP_ORDER = ["add", "measure", "draw", "confirm", "paths"]
+STEP_TITLES = {"add": "Add the radio", "measure": "Measure the radio", "draw": "Draw the rig in Chain",
+               "confirm": "Confirm the rig is built as drawn", "paths": "Path checks through the rig"}
+MEASURES = ["range", "retune", "warmup", "floor"]
+PATHS = ["adsb", "baseline"]
+LOAD = "50 ohm load"
+
+# What each measurement does, what to connect, how long, and what to expect (the window shows these before a run).
+STEPS = {
+    "range": {"title": "Tuning range and blind spots (PLL gap)",
+              "what": "Asks the tuner which frequencies it can lock to, with rtl_test's own PLL test. The E4000 has a "
+                      "gap in the L band whose edges vary from unit to unit and move as it warms; this finds yours.",
+              "connect": "Nothing needs to be connected.", "duration": "about 30 s",
+              "expect": "An E4000 locks from about 52 MHz to about 2.2 GHz, with a gap of roughly 1.1 to 1.25 GHz. "
+                        "Run it cold (before other steps) for the widest figures."},
+    "retune": {"title": "Retune time per hop",
+               "what": "Times how long rtl_power spends retuning between hops on this computer, which sets how much "
+                       "of a sweep is spent listening. Saved into station.json (one figure for the station: the "
+                       "engine does not keep one per radio).",
+               "connect": "Nothing needs to be connected.", "duration": "90 s (short test 20 s)",
+               "expect": "About 40 to 60 ms per hop on most PCs."},
+    "warmup": {"title": "Warm-up drift",
+               "what": "Records from cold for an hour into a 50 ohm load and reads the per-sweep whole-band median with "
+                       "`marsad drift`: how long this radio takes to settle, which becomes its recommended warm-up.",
+               "connect": "Fit the 50 ohm terminator on the radio's input. If the radio has a bias-tee that is always "
+                          "on, put a DC block between the radio and the load, or the load shorts the bias-tee.",
+               "duration": "60 min (short test 3 min). Start it with the radio cold: unplugged or idle for an hour.",
+               "expect": "The floor falls a few tenths of a dB over the first 10 to 60 minutes, then holds within about "
+                         "0.1 dB."},
+    "floor": {"title": "Its own floor (terminated baseline)",
+              "what": "A short run into the 50 ohm load at the starting settings: the receiver's own floor, with no "
+                      "antenna. It is marked terminated in the archive, so the waterfall's internal layer can match "
+                      "later runs against it.",
+              "connect": "Fit the 50 ohm terminator on the radio's input (with a DC block if its bias-tee is always "
+                         "on).",
+              "duration": "10 min (short test 2 min). Warm the radio first (the warm-up step says how long).",
+              "expect": "A flat floor with only the radio's own clock lines above it."},
+    "adsb": {"title": "Receive proof (ADS-B)",
+             "what": "Listens at 1090 MHz for 60 s through the whole rig and counts aircraft messages: proof the "
+                     "antenna path receives at all before any survey relies on it.",
+             "connect": "The rig as drawn, antenna on.", "duration": "60 s (short test 15 s)",
+             "expect": "Hundreds of frames a minute with any traffic overhead; zero means the path is not receiving."},
+    "baseline": {"title": "First baseline with the antenna",
+                 "what": "A short survey at the starting settings with the rig's real chain: the first run of this "
+                         "radio's comparison set.",
+                 "connect": "The rig as drawn, antenna on.", "duration": "10 min (short test 2 min)",
+                 "expect": "Signals above a floor a little higher than the terminated one."},
+}
+
+
+def now() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------- stations
+
+def default_folder(name: str, documents: Path | None = None) -> Path:
+    """Documents\\Marsad\\Stations\\<name>."""
+    docs = documents or Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents"
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", name).strip(" .-") or "station"
+    return docs / "Marsad" / "Stations" / safe
+
+
+def folder_problem(folder: Path) -> str | None:
+    """A new station's folder must be new or empty, and never inside (or around) another station."""
+    folder = Path(folder).resolve()
+    if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
+        return f"{folder} is not empty. Pick a new or empty folder."
+    for p in [folder, *folder.parents]:
+        if (p / STATION_FILE).exists():
+            return f"{folder} is inside the station at {p}. Pick a folder outside every station."
+    if folder.exists():
+        for sub in folder.rglob(STATION_FILE):
+            return f"{folder} holds a station at {sub.parent}."
+    return None
+
+
+def location_problem(loc) -> str | None:
+    if loc is None:
+        return None
+    try:
+        lat, lon = float(loc["lat"]), float(loc["lon"])
+    except (KeyError, TypeError, ValueError):
+        return "The location needs a latitude and a longitude in decimal degrees."
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return "Latitude runs -90 to 90 and longitude -180 to 180."
+    return None
+
+
+def create_station(folder, name: str, description: str = "", location: dict | None = None) -> dict:
+    """New Station: the engine's own `marsad init` file, emptied of radios, plus the setup file that turns the
+    checklists on. The location, if given, goes only into this station's station.local.json."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("A station needs a name.")
+    folder = Path(folder)
+    err = folder_problem(folder) or location_problem(location)
+    if err:
+        raise ValueError(err)
+    folder.mkdir(parents=True, exist_ok=True)
+    data = json.loads(DEFAULT_FILE.read_text(encoding="utf-8"))          # what `marsad init` writes
+    data["station_name"] = name
+    data["description"] = description or ""
+    data["receivers"] = {}                                                # no radios until Add Radio
+    data["default_receiver"] = None
+    rec = data.get("recorder") if isinstance(data.get("recorder"), dict) else {}
+    rec["serials"], rec["ppm"] = {}, {}
+    rec["roles"] = {}
+    data["recorder"] = rec
+    d = data.get("defaults") if isinstance(data.get("defaults"), dict) else {}
+    d["chain_order"] = ""                                                 # no rig until one is drawn for this station
+    d.pop("chain_used_at", None)
+    data["defaults"] = d
+    (folder / STATION_FILE).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    # No rigs: without a chain.json the engine seeds two example chains ("antenna", "probe") and calls one current
+    (folder / "chain.json").write_text(json.dumps({"schema": 1, "current": None, "chains": {}}, indent=1) + "\n",
+                                       encoding="utf-8")
+    _save(folder, {"schema": 1, "tracked": True, "created": now(), "name": name, "radios": {}, "jobs": []})
+    if location is not None:
+        (folder / LOCAL_FILE).write_text(json.dumps({"location": {"lat": float(location["lat"]),
+                                                                  "lon": float(location["lon"])}}, indent=1),
+                                         encoding="utf-8")
+    for sub in ("surveys", "reports", "recordings", "logs"):
+        (folder / sub).mkdir(exist_ok=True)
+    return {"folder": str(folder.resolve()), "name": name}
+
+
+def set_location(folder, location: dict | None) -> None:
+    """Change or clear a station's location: written to its station.local.json only, never read back."""
+    err = location_problem(location)
+    if err:
+        raise ValueError(err)
+    p = Path(folder) / LOCAL_FILE
+    if location is None:
+        if p.exists():
+            p.unlink()
+        return
+    p.write_text(json.dumps({"location": {"lat": float(location["lat"]), "lon": float(location["lon"])}}, indent=1),
+                 encoding="utf-8")
+
+
+def station_info(station: Station) -> dict:
+    """What the window shows about a station. The location is "set" or "not set", never its value."""
+    doc = load(station)
+    raw = _raw(station)
+    return {"root": str(station.root), "name": raw.get("station_name") or doc.get("name") or station.root.name,
+            "description": raw.get("description") or "", "tracked": bool(doc.get("tracked")),
+            "location_set": "location" in station.data}
+
+
+# ---------------------------------------------------------------- the setup file
+
+def _path(root) -> Path:
+    return Path(root) / SETUP_FILE
+
+
+def load(station_or_root) -> dict:
+    root = station_or_root.root if isinstance(station_or_root, Station) else Path(station_or_root)
+    p = _path(root)
+    if not p.exists():
+        return {"tracked": False, "radios": {}, "jobs": []}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"tracked": True, "radios": {}, "jobs": [], "unreadable": True}
+    d.setdefault("radios", {})
+    d.setdefault("jobs", [])
+    return d
+
+
+def _save(root, doc: dict) -> None:
+    p = _path(root)
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    for attempt in range(20):           # Windows refuses the swap while another process is reading the file
+        try:
+            os.replace(tmp, p)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            import time as _t
+            _t.sleep(0.05)
+
+
+def tracked(station: Station) -> bool:
+    return bool(load(station).get("tracked"))
+
+
+def _raw(station: Station) -> dict:
+    try:
+        return json.loads(station.file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------- radios
+
+def typical(tuner: str) -> dict:
+    """The tuner's typical figures from the engine's own template, marked as not measured."""
+    tuner = (tuner or "").lower()
+    tpl = json.loads(DEFAULT_FILE.read_text(encoding="utf-8")).get("receivers") or {}
+    key = "r820t" if tuner in ("r820t", "r860", "r828d") else tuner
+    t = tpl.get(key) or {}
+    return {"tuner": key or tuner, "label": t.get("label") or f"RTL-SDR ({tuner})",
+            "range_mhz": t.get("range_mhz") or [24, 1766], "gaps_mhz": t.get("gaps_mhz") or [],
+            "gains": TUNER_GAINS.get(key) or [], "tuner_label": TUNER_LABEL.get(key, tuner),
+            "source": "typical for this tuner, not yet measured"}
+
+
+def tuner_key(text: str | None) -> str | None:
+    """rtl_eeprom's tuner words to the engine's tuner key."""
+    t = (text or "").lower()
+    if "e4000" in t or "elonics" in t:
+        return "e4000"
+    if "r820" in t or "r860" in t or "rafael" in t or "r828" in t:
+        return "r820t"
+    return None
+
+
+def duplicate_serials(found: list) -> list:
+    seen, dup = {}, set()
+    for f in found:
+        s = str(f.get("serial") or "")
+        if s and s in seen:
+            dup.add(s)
+        seen[s] = True
+    return sorted(dup)
+
+
+DUP_HELP = ("Two radios report the same serial (many are sold as 00000001), so marsad cannot tell them apart. "
+            "Give one a unique serial with rtl_eeprom (for example `rtl_eeprom -d 1 -s 00000102` with only that "
+            "radio's index), then unplug and replug it. marsad does not do this for you: it writes to the radio.")
+
+
+def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mhz=None, gaps_mhz=None,
+              label: str = "", maker: str = "", product: str = "") -> dict:
+    """Add Radio: a receiver in station.json, in the format the engine reads, matched by serial (rule 8)."""
+    nick = (nickname or "").strip()
+    serial = str(serial or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,23}", nick):
+        raise ValueError("A nickname is 1 to 24 letters, digits, - or _, starting with a letter or digit.")
+    if not serial:
+        raise ValueError("The radio's serial is needed: marsad finds each radio by it.")
+    raw = _raw(station)
+    recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
+    if nick in recs:
+        raise ValueError(f"This station already has a radio called {nick}.")
+    rec = raw.get("recorder") if isinstance(raw.get("recorder"), dict) else {}
+    serials = rec.get("serials") if isinstance(rec.get("serials"), dict) else {}
+    for other, s in serials.items():
+        if str(s) == serial:
+            raise ValueError(f"Serial {serial} is already this station's {other}.")
+    key = tuner_key(tuner) or (tuner or "").lower()
+    if key not in TUNER_GAINS:
+        raise ValueError(f"Unknown tuner {tuner!r}: choose E4000 or R820T/R860.")
+    typ = typical(key)
+    rng = [float(v) for v in (range_mhz or typ["range_mhz"])]
+    if len(rng) != 2 or not rng[0] < rng[1]:
+        raise ValueError("The range is two frequencies in MHz, low then high.")
+    gaps = [[float(a), float(b)] for a, b in (gaps_mhz if gaps_mhz is not None else typ["gaps_mhz"])]
+    entry = {"label": label or typ["label"], "tuner": key, "range_mhz": rng, "gaps_mhz": gaps, "device": 0}
+    if maker or product:
+        entry["usb"] = {"maker": maker, "product": product}
+    recs[nick] = entry
+    raw["receivers"] = recs
+    serials[nick] = serial
+    rec["serials"] = serials
+    raw["recorder"] = rec
+    if not raw.get("default_receiver") or raw.get("default_receiver") not in recs:
+        raw["default_receiver"] = nick
+    station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    doc = load(station)
+    doc["radios"][nick] = {"serial": serial, "added": now(), "tuner": key,
+                           "facts": {"range_mhz": {"value": rng, "source": "typical for this tuner, not yet measured"
+                                                   if range_mhz is None or rng == [float(v) for v in typ["range_mhz"]]
+                                                   else "entered by the owner"},
+                                     "gaps_mhz": {"value": gaps, "source": "typical for this tuner, not yet measured"
+                                                  if gaps_mhz is None or gaps == typ["gaps_mhz"]
+                                                  else "entered by the owner"}},
+                           "results": {}}
+    _save(station.root, doc)
+    return {"radio": nick, "entry": entry}
+
+
+# ---------------------------------------------------------------- commands for each step
+
+def tile(rx: dict) -> tuple[float, float]:
+    """The starting settings' range: 100 MHz a quarter of the way up the radio's range, clear of its gaps."""
+    lo, hi = rx.get("range_mhz") or [24, 1766]
+    a = round((lo + (hi - lo) * 0.25) / 10) * 10
+    for g0, g1 in rx.get("gaps_mhz") or []:
+        if a < g1 and a + 100 > g0:
+            a = round(g1 / 10 + 1) * 10
+    a = max(a, lo + 1)
+    return float(a), float(min(a + 100, hi - 1))
+
+
+def gain_for(tuner: str) -> float:
+    ladder = TUNER_GAINS.get(tuner) or [29.0]
+    return min(ladder, key=lambda g: abs(g - 29.0))
+
+
+def step_command(station: Station, nick: str, step: str, short: bool, device: int, rig_chain: str = "") -> dict:
+    """The existing command for one step, as engine arguments (kind "marsad") or a tool's (kind "tool"), or why
+    there is none."""
+    rx = station.receivers.get(nick) or {}
+    tuner = rx.get("tuner") or ""
+    g = gain_for(tuner)
+    lo, hi = tile(rx)
+    freq = f"{lo:g}M:{hi:g}M:50k"
+    stamp_tag = f"setup-{step}-{nick}" + ("-short" if short else "")
+    if step == "range":
+        if tuner != "e4000":
+            return {"missing": f"There is no command here that measures an {TUNER_LABEL.get(tuner, tuner)}'s range: "
+                               "rtl_test -t tests only the E4000's PLL. Keep the tuner's typical range (it stays "
+                               "marked \"typical, not measured\"), or type measured figures if you have them."}
+        return {"kind": "tool", "tool": "rtl_test", "args": ["-t", "-d", str(device)]}
+    if step == "retune":
+        return {"kind": "marsad", "args": ["calibrate-retune", "--device", str(device), "--gain", f"{g:g}", "--save",
+                                           "--seconds", "20" if short else "90"]}
+    if step in ("warmup", "floor", "baseline"):
+        dur = {"warmup": "3m" if short else "60m", "floor": "2m" if short else "10m",
+               "baseline": "2m" if short else "10m"}[step]
+        chain = rig_chain if step == "baseline" else f"{LOAD} > {nick}"
+        cond = {"warmup": "setup: warm-up drift from cold, 50 ohm load on the input",
+                "floor": "setup: the radio's own floor, 50 ohm load on the input",
+                "baseline": "setup: first baseline with the antenna, the rig as drawn"}[step]
+        if step == "baseline" and not chain:
+            return {"missing": "The rig has no path to this radio yet: draw it on the Chain screen first."}
+        return {"kind": "marsad", "args": ["run", "custom", dur, "--freq", freq, "--gain", f"{g:g}", "--integration",
+                                           "30", "--receiver", nick, "--device", str(device), "--tag", stamp_tag,
+                                           "--chain", chain, "--conditions", cond, "--non-interactive"]}
+    if step == "adsb":
+        adsb_gain = 40.2 if tuner == "r820t" else gain_for(tuner)       # adsb-check's own default is an R820T step
+        return {"kind": "marsad", "args": ["adsb-check", "--seconds", "15" if short else "60", "--device", str(device),
+                                           "--gain", f"{adsb_gain:g}",
+                                           "--label", (rig_chain or nick)[:200]]}
+    raise ValueError(f"unknown step {step!r}")
+
+
+# ---------------------------------------------------------------- results
+
+_RANGE = re.compile(r"E4K range:\s*(-?\d+)\s*to\s*(\d+)\s*MHz", re.I)
+_GAP = re.compile(r"E4K L-band gap:\s*(\d+)\s*to\s*(\d+)\s*MHz", re.I)
+_RETUNE = re.compile(r"retune per hop\s+([\d.]+)\s*ms")
+_SIDECAR_ADSB = re.compile(r"sidecar:\s*(\S+\.json)\s*$", re.M)
+
+
+def _drift(station: Station, recording: str) -> dict:
+    """`marsad drift` on a setup run's recording: its own printed verdict, read back."""
+    from . import drift
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            drift.main([str(station.surveys / recording)], station)
+    except SystemExit as exc:
+        return {"error": str(exc).strip() or "drift could not read the run"}
+    text = buf.getvalue()
+    out = {"text": text}
+    m = re.search(r"settled by sweep\s+(\d+) of (\d+)(?:\s+\(~(\d+) min in\))?", text)
+    if m:
+        out["settle_sweep"], out["sweeps"] = int(m.group(1)), int(m.group(2))
+        out["settle_min"] = int(m.group(3)) if m.group(3) else None
+    m = re.search(r"after settling:\s+mean\s+([+-][\d.]+) dB", text)
+    if m:
+        out["mean_db"] = float(m.group(1))
+    m = re.search(r"total change\s+([+-][\d.]+) dB", text)
+    if m:
+        out["total_change_db"] = float(m.group(1))
+    out["pass"] = "VERDICT: PASS" in text
+    return out
+
+
+def result_of(station: Station, job: dict, status: dict) -> dict:
+    """What a finished step found, from its own output. ok False says why in plain words (never quietly accepted)."""
+    step, text = job["step"], "\n".join(status.get("lines") or [])
+    log = Path(job.get("log") or "")
+    try:
+        full = log.read_text(encoding="utf-8", errors="replace") if log.exists() else text
+    except OSError:
+        full = text
+    code = status.get("exit_code")
+    res = {"at": now(), "step": step, "short": bool(job.get("short")), "by": STEPS[step]["title"],
+           "log": job.get("log"), "exit_code": code, "ok": False}
+    if step == "range":
+        m, g = _RANGE.search(full), _GAP.search(full)
+        if not m:
+            res["note"] = "rtl_test did not report a range: " + (status.get("reason") or "no output")
+            return res
+        lo, hi = float(m.group(1)), float(m.group(2))
+        res.update(range_mhz=[lo, hi], gaps_mhz=[[float(g.group(1)), float(g.group(2))]] if g else [])
+        res["ok"] = 20 <= lo < hi <= 2600
+        res["note"] = (f"locks {lo:g} to {hi:g} MHz" + (f", gap {g.group(1)} to {g.group(2)} MHz" if g else "")
+                       + ("" if res["ok"] else ": these figures look wrong for an RTL-SDR; run it again"))
+        return res
+    if step == "retune":
+        m = _RETUNE.search(full)
+        if not m:
+            res["note"] = "calibrate-retune did not report a figure: " + (status.get("reason") or "no output")
+            return res
+        v = float(m.group(1))
+        res.update(retune_ms_per_hop=v, ok=5 <= v <= 500)
+        res["note"] = f"{v:g} ms per hop" + ("" if res["ok"] else ": outside what an RTL-SDR does; run it again")
+        return res
+    if step == "adsb":
+        m = list(_SIDECAR_ADSB.finditer(full))
+        try:
+            side = json.loads(Path(m[-1].group(1)).read_text()) if m else {}
+        except (OSError, ValueError):
+            side = {}
+        st = side.get("stats") or {}
+        verdict = side.get("verdict") or "error"
+        res.update(verdict=verdict, frames_per_min=st.get("frames_per_min"), aircraft=st.get("icao_distinct"),
+                   df17=(st.get("df_counts") or {}).get("17") or (st.get("df_counts") or {}).get(17),
+                   ok=verdict == "pass")
+        res["note"] = (f"{verdict.upper()}: {st.get('frames_per_min', 0)} frames/min, {st.get('icao_distinct', 0)} "
+                       f"aircraft" + ("" if verdict == "pass" else ". " + ADSB_ADVICE))
+        return res
+    rec = status.get("recording")
+    if not rec or not (station.surveys / rec).exists():
+        res["note"] = "the run wrote no recording: " + (status.get("reason") or f"exit {code}")
+        return res
+    res["recording"] = rec
+    d = _drift(station, rec)
+    if d.get("error"):
+        res["note"] = d["error"]
+        return res
+    res.update({k: v for k, v in d.items() if k != "text"})
+    if step == "warmup":
+        mins = d.get("settle_min")
+        res["warmup_min"] = mins
+        res["ok"] = mins is not None and not job.get("short")
+        res["note"] = (f"settled after about {mins} min (sweep {d.get('settle_sweep')} of {d.get('sweeps')}), total "
+                       f"change {d.get('total_change_db', 0):+.2f} dB" if mins is not None else
+                       "the run did not settle within its length: run the full hour")
+        if job.get("short"):
+            res["note"] += " (short test: too short to set a warm-up)"
+    elif step == "floor":
+        res["floor_db"] = d.get("mean_db")
+        res["ok"] = d.get("mean_db") is not None
+        marked = _mark_terminated(station, rec)
+        res["marked_terminated"] = marked
+        res["note"] = (f"floor {d['mean_db']:+.2f} dB (relative, rtl_power's scale), "
+                       + ("marked terminated in the archive" if marked else
+                          "not in the archive yet, so not marked terminated: `marsad archive mark <run> --terminated` "
+                          "does it once the run is archived")
+                       if d.get("mean_db") is not None else "no settled floor could be read")
+    elif step == "baseline":
+        res["ok"] = (d.get("sweeps") or 0) >= 2
+        res["note"] = (f"{d.get('sweeps')} sweeps recorded: the first run of this radio's comparison set"
+                       if res["ok"] else "too few sweeps to count as a baseline")
+    return res
+
+
+ADSB_ADVICE = ("Check the antenna is connected through the rig as drawn, that nothing else is using the radio, and that "
+               "the gain is not at its lowest. With no aircraft overhead a quiet result can be honest: try again at a "
+               "busier time before changing anything.")
+
+
+def _mark_terminated(station: Station, recording: str) -> bool:
+    """`marsad archive mark <run> --terminated`, so /internal can match later runs against it. False when the archive
+    does not hold the run (yet); the measured floor stands either way."""
+    from . import archive
+    try:
+        with redirect_stdout(io.StringIO()):
+            return archive.main(["mark", Path(recording).stem, "--terminated"], station) == 0
+    except (SystemExit, Exception):  # noqa: BLE001
+        return False
+
+
+def record(station: Station, nick: str, res: dict) -> None:
+    """Keep a result (never replace one) and apply what the engine reads: a measured range and gap go into the
+    radio's station.json entry; the retune figure was saved by calibrate-retune itself."""
+    doc = load(station)
+    r = doc["radios"].setdefault(nick, {"results": {}})
+    r.setdefault("results", {}).setdefault(res["step"], []).append(res)
+    if res["step"] == "range" and res.get("ok") and not res.get("short"):
+        raw = _raw(station)
+        e = (raw.get("receivers") or {}).get(nick)
+        if e is not None:
+            e["range_mhz"], e["gaps_mhz"] = res["range_mhz"], res["gaps_mhz"]
+            station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+            r.setdefault("facts", {})["range_mhz"] = {"value": res["range_mhz"], "source": f"measured {res['at'][:10]} "
+                                                      "by Tuning range and blind spots"}
+            r["facts"]["gaps_mhz"] = {"value": res["gaps_mhz"], "source": f"measured {res['at'][:10]} by Tuning range "
+                                      "and blind spots"}
+    if res["step"] == "warmup" and res.get("ok"):
+        r.setdefault("facts", {})["warmup_min"] = {"value": res.get("warmup_min"),
+                                                   "source": f"measured {res['at'][:10]} by Warm-up drift"}
+    if res["step"] == "floor" and res.get("ok"):
+        r.setdefault("facts", {})["floor_db"] = {"value": res.get("floor_db"), "recording": res.get("recording"),
+                                                 "source": f"measured {res['at'][:10]} by Its own floor"}
+    if res["step"] == "retune" and res.get("ok") and not res.get("short"):
+        r.setdefault("facts", {})["retune_ms_per_hop"] = {"value": res.get("retune_ms_per_hop"),
+                                                          "source": f"measured {res['at'][:10]} by Retune time per hop "
+                                                                    "(saved for the whole station)"}
+    _save(station.root, doc)
+
+
+def accept_typical(station: Station, nick: str) -> None:
+    """For a tuner with no range-measuring command: the owner keeps the typical figures, still marked typical."""
+    rx = station.receivers.get(nick) or {}
+    record(station, nick, {"at": now(), "step": "range", "short": False, "ok": True, "accepted_typical": True,
+                           "by": "the owner (no measuring command for this tuner)",
+                           "range_mhz": rx.get("range_mhz"), "gaps_mhz": rx.get("gaps_mhz"),
+                           "note": "typical figures kept, not measured (no command measures this tuner's range)"})
+
+
+def confirm_rig(station: Station, nick: str, chain_text: str) -> None:
+    doc = load(station)
+    r = doc["radios"].setdefault(nick, {"results": {}})
+    r["rig_confirmed"] = {"at": now(), "text": chain_text}
+    _save(station.root, doc)
+
+
+# ---------------------------------------------------------------- the checklist
+
+def latest(r: dict, step: str, full: bool = True) -> dict | None:
+    rs = [x for x in (r.get("results") or {}).get(step) or [] if not (full and x.get("short"))]
+    return rs[-1] if rs else None
+
+
+def checklist(station: Station, nick: str, chain_text: str, running: set) -> dict:
+    """Each step's state for one radio: "done", "in progress", "needs attention" or "not started", what is missing,
+    and whether scans on it may start."""
+    doc = load(station)
+    r = doc["radios"].get(nick) or {}
+    serials = (station.data.get("recorder") or {}).get("serials") or {}
+    steps = []
+
+    def add(key, state, detail, sub=None):
+        steps.append({"step": key, "title": STEP_TITLES[key], "state": state, "detail": detail, "sub": sub or []})
+
+    have = nick in station.receivers and bool(serials.get(nick))
+    add("add", "done" if have else "not started",
+        f"serial {serials.get(nick)}" if have else "Add the radio first.")
+    sub = []
+    for m in MEASURES:
+        last = latest(r, m)
+        st = ("in progress" if (nick, m) in running else "done" if last and last.get("ok") else
+              "needs attention" if last else "not started")
+        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": (last or {}).get("note") or ""})
+    states = [s["state"] for s in sub]
+    add("measure", "done" if all(s == "done" for s in states) else "in progress" if "in progress" in states else
+        "needs attention" if "needs attention" in states else "in progress" if "done" in states else "not started",
+        f"{states.count('done')} of {len(MEASURES)} measured", sub)
+    add("draw", "done" if chain_text else "not started",
+        chain_text if chain_text else "The rig used for runs has no path to this radio. Draw it on the Chain screen and "
+                                      "use it for runs.")
+    conf = r.get("rig_confirmed") or {}
+    ok_conf = bool(chain_text) and conf.get("text") == chain_text
+    add("confirm", "done" if ok_conf else "needs attention" if conf else "not started",
+        f"confirmed {conf.get('at', '')[:16].replace('T', ' ')}" if ok_conf else
+        "The drawing changed since it was confirmed: confirm it again." if conf else
+        "Check the rig matches the drawing, then confirm.")
+    sub = []
+    for m in PATHS:
+        last = latest(r, m)
+        st = ("in progress" if (nick, m) in running else "done" if last and last.get("ok") else
+              "needs attention" if last else "not started")
+        sub.append({"step": m, "title": STEPS[m]["title"], "state": st, "detail": (last or {}).get("note") or ""})
+    states = [s["state"] for s in sub]
+    add("paths", "done" if all(s == "done" for s in states) else "in progress" if "in progress" in states else
+        "needs attention" if "needs attention" in states else "not started",
+        f"{states.count('done')} of {len(PATHS)} passed", sub)
+    missing = next((s for s in steps if s["state"] != "done"), None)
+    return {"radio": nick, "steps": steps, "ready": missing is None, "facts": r.get("facts") or {},
+            "missing": None if missing is None else {"step": missing["step"], "number": STEP_ORDER.index(missing["step"]) + 1,
+                                                     "title": missing["title"], "detail": missing["detail"]}}
+
+
+def lock_reason(station: Station, nick: str, chain_text: str = "", running: set | None = None) -> str | None:
+    """Why a scan on this radio may not start yet (None: it may). Untracked stations never lock."""
+    if not tracked(station):
+        return None
+    c = checklist(station, nick, chain_text, running or set())
+    if c["ready"]:
+        return None
+    m = c["missing"]
+    return (f"The {nick} is not set up yet: step {m['number']}, {m['title']} ({m['detail']}). "
+            "Open Set up this station to finish it.")
