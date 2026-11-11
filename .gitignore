@@ -34,3 +34,7 @@ rtl_err.txt
 
 # pip install -e . metadata
 *.egg-info/
+
+# Station setup records written by the program (relay 026)
+station_setup.json
+station_archive.json

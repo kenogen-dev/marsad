@@ -224,6 +224,7 @@ class ThemeDialog(QDialog):
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
         self.apply = QPushButton("Apply")
+        self.apply.setDefault(True)          # relay 026: Enter applies
         self.apply.setObjectName("Primary")
         self.apply.clicked.connect(self._apply)
         btns.addWidget(cancel)

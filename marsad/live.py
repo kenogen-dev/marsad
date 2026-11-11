@@ -1057,9 +1057,13 @@ def chain_layout_summary(station: Station) -> dict:
     rec = station.data.get("recorder") or {}
     serials = rec.get("serials") or {}
     roles = rec.get("roles") or {}
+    from . import setup as S
     return {"chain": chain.summary(station), "layout": layout,
             "serials": {str(k): str(v) for k, v in serials.items()},
-            "roles": {str(k): str(v) for k, v in roles.items()}}
+            "roles": {str(k): str(v) for k, v in roles.items()},
+            # relay 026: radios removed from the station, so the Chain checks can say so on a path that ends at one
+            "removed_radios": {str(a["radio"]): str(a.get("serial") or "") for a in S.archived_radios(station)
+                               if a["radio"] not in station.receivers}}
 
 
 def chain_layout_save(station: Station, form: dict) -> dict:
@@ -2013,7 +2017,8 @@ def _setup_status(station: Station) -> dict:
     mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
     visible = None if usb is None else [{"serial": s, "name": n, "radio": mine.get(str(s))} for s, n in usb.items()]
     return {"tracked": S.tracked(station), "info": S.station_info(station), "radios": radios, "visible": visible,
-            "steps": S.STEPS, "jobs": [j for j in S.load(station)["jobs"] if not j.get("done")]}
+            "steps": S.STEPS, "jobs": [j for j in S.load(station)["jobs"] if not j.get("done")],
+            "archived": S.archived_radios(station)}                                 # relay 026: removed radios
 
 
 def setup_detect(station: Station) -> dict:
@@ -2026,9 +2031,13 @@ def setup_detect(station: Station) -> dict:
                          "moment, so it waits until nothing is using one.")
     got = detect_receivers(station)
     found = []
+    mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
     for f in got.get("found") or []:
         key = S.tuner_key(f.get("tuner"))
-        found.append(dict(f, tuner_key=key, typical=S.typical(key) if key else None))
+        gone = S.archived_by_serial(station, str(f.get("serial") or ""))
+        # relay 026: whether this station has it already, or had it and removed it (Restore is offered first)
+        found.append(dict(f, tuner_key=key, typical=S.typical(key) if key else None,
+                          radio=mine.get(str(f.get("serial") or "")), archived=gone))
     dup = S.duplicate_serials(found)
     return {"found": found, "error": got.get("error"), "duplicates": dup, "duplicate_help": S.DUP_HELP if dup else ""}
 
@@ -2046,19 +2055,50 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
     if path == "/setup/radio":
         out = S.add_radio(station, form.get("serial"), form.get("nickname"), form.get("tuner"),
                           form.get("range_mhz"), form.get("gaps_mhz"), form.get("label") or "",
-                          form.get("maker") or "", form.get("product") or "")
+                          form.get("maker") or "", form.get("product") or "", bool(form.get("fresh")))
+        _reload_station(station)
+        return dict(out, status=setup_status(station))
+    if path == "/setup/radio_restore":           # relay 026: a removed radio back, with its history
+        out = S.restore_radio(station, str(form.get("id") or ""), str(form.get("nickname") or ""))
         _reload_station(station)
         return dict(out, status=setup_status(station))
     nick = str(form.get("radio") or "")
     if nick not in station.receivers:
         raise ValueError(f"This station has no radio called {nick!r}.")
+    if path == "/setup/radio_uses":              # relay 026: may its nickname still change?
+        return {"radio": nick, "uses": S.nickname_uses(station, nick)}
+    if path == "/setup/radio_redo":              # relay 026: its checklist again from step 1, history kept
+        if setup_running(station) & {(nick, m) for m in S.STEPS}:
+            raise ValueError("A setup step is running on this radio: redo its setup once that run has finished, or "
+                             "cancel the run first.")
+        S.redo_radio(station, nick)
+        return setup_status(station)
+    if path == "/setup/radio_remove":            # relay 026: off the active list, kept in the archive
+        if setup_running(station) & {(nick, m) for m in S.STEPS}:
+            raise ValueError(f"A setup step is running on {nick}, so it can't be removed now. Cancel that run, or "
+                             "wait for it to finish, then remove it.")
+        use = radio_in_use(station, nick)
+        if use.get("blocked"):
+            raise ValueError(f"{nick} is in use, so it can't be removed now. " + str(use.get("text") or ""))
+        out = S.remove_radio(station, nick)
+        _reload_station(station)
+        return dict(out, status=setup_status(station))
     if path == "/setup/accept_typical":
         S.accept_typical(station, nick, chain_for(station, nick)["text"])
         return setup_status(station)
     if path == "/setup/radio_update":            # relay 022: step 1 reopened and corrected
         if setup_running(station) & {(nick, m) for m in S.STEPS}:
             raise ValueError("A setup step is running on this radio: change it once that run has finished.")
-        out = S.update_radio(station, nick, form.get("serial"), form.get("tuner"), form.get("range_mhz"),
+        serial_now = str(((station.data.get("recorder") or {}).get("serials") or {}).get(nick) or "")
+        if form.get("serial") is not None and str(form.get("serial")).strip() not in ("", serial_now):
+            # relay 026 (rule 8): the serial is how the radio is found, so it is never edited. Re-detect re-reads it
+            raise ValueError("The serial can't be changed: it is how marsad finds this radio. If this is a different "
+                             "radio, remove this one and add the other.")
+        new_nick = str(form.get("nickname") or "").strip()
+        if new_nick and new_nick != nick:          # first, so a refused rename leaves nothing half-changed
+            S.rename_radio(station, nick, new_nick)
+            nick = new_nick
+        out = S.update_radio(station, nick, None, form.get("tuner"), form.get("range_mhz"),
                              form.get("gaps_mhz"), form.get("maker"), form.get("product"))
         _reload_station(station)
         return dict(out, status=setup_status(station))

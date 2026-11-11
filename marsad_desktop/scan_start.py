@@ -1214,6 +1214,11 @@ class StartScanDialog(QDialog):
         self.b_start = tool("Start", "Launch the run outside the window and the service: closing either never "
                                      "stops it", "Primary")
         self.b_start.clicked.connect(lambda: self.start(dry=False))
+        self.b_cancel = tool("Cancel", "Close without starting anything (Esc does the same). A run already started "
+                                       "keeps running.")
+        self.b_cancel.setObjectName("Tool")
+        self.b_cancel.clicked.connect(self.reject)         # relay 026: never trapped
+        foot.addWidget(self.b_cancel)
         foot.addWidget(self.b_dry)
         foot.addWidget(self.b_start)
         mv.addLayout(foot)
@@ -1250,7 +1255,8 @@ class StartScanDialog(QDialog):
         self.b_ren.clicked.connect(lambda: self._change("rename"))
         self.b_dup = tool("Duplicate…")
         self.b_dup.clicked.connect(lambda: self._change("duplicate"))
-        self.b_arc = tool("Archive", "Hide it from this list. Nothing is deleted: Show archived brings it back")
+        self.b_arc = tool("Remove…", "Take it off this list. It is kept under Archived: Show archived lists it, "
+                                     "with Restore")
         self.b_arc.clicked.connect(lambda: self._change("archive"))
         for b in (self.b_edit, self.b_save, self.b_ren, self.b_dup, self.b_arc):
             row.addWidget(b)
@@ -1555,7 +1561,7 @@ class StartScanDialog(QDialog):
         for b in (self.b_ren, self.b_dup):
             b.setEnabled(e["kind"] == "saved")
         self.b_arc.setEnabled(e["kind"] == "saved")
-        self.b_arc.setText("Restore" if e.get("archived") else "Archive")
+        self.b_arc.setText("Restore" if e.get("archived") else "Remove…")
         self._load_setup()
         self._show_edited()
         self._show_other_radio()
@@ -1913,8 +1919,9 @@ class StartScanDialog(QDialog):
                 return
             body["new_name"] = new.strip()
         elif action == "archive":
-            if QMessageBox.question(self, "Archive saved scan", f"Archive “{e['name']}”? It leaves this list; nothing "
-                                    "is deleted, and Show archived brings it back.") != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, "Remove saved scan", f"Remove saved scan “{e['name']}”?\n\nEvery run "
+                                    "made with it is kept. You can restore it from Archived (tick Show archived, "
+                                    "then Restore).") != QMessageBox.StandardButton.Yes:
                 return
 
         def got(d, err):
@@ -2017,7 +2024,8 @@ class StartWatchDialog(QDialog):
         self.b_ren.clicked.connect(lambda: self._change("rename"))
         self.b_dup = tool("Duplicate…")
         self.b_dup.clicked.connect(lambda: self._change("duplicate"))
-        self.b_arc = tool("Archive", "Hide it from the list; nothing is deleted")
+        self.b_arc = tool("Remove…", "Take it off the list. It is kept under Archived: Show archived lists it, "
+                                     "with Restore")
         self.b_arc.clicked.connect(lambda: self._change("archive"))
         for b in (self.b_save, self.b_ren, self.b_dup, self.b_arc):
             row.addWidget(b)
@@ -2039,6 +2047,7 @@ class StartWatchDialog(QDialog):
         self.m_fixed = QPushButton("Fixed frequency")
         grp = QButtonGroup(self)
         for b in (self.m_survey, self.m_fixed):
+            b.setAutoDefault(False)          # relay 026: Enter never flips the mode by accident
             b.setCheckable(True)
             b.setProperty("accent", True)
             grp.addButton(b)
@@ -2156,6 +2165,10 @@ class StartWatchDialog(QDialog):
         self.b_dry.clicked.connect(lambda: self.start(True))
         self.b_start = tool("Start", "Launch the recorder outside the window and the service", "Primary")
         self.b_start.clicked.connect(lambda: self.start(False))
+        self.b_cancel = tool("Cancel", "Close without starting anything (Esc does the same). A recorder already "
+                                       "started keeps running.")
+        self.b_cancel.clicked.connect(self.reject)         # relay 026: never trapped
+        foot.addWidget(self.b_cancel)
         foot.addWidget(self.b_dry)
         foot.addWidget(self.b_start)
         mv.addLayout(foot)
@@ -2334,6 +2347,7 @@ class StartWatchDialog(QDialog):
         e = cur.data(Qt.ItemDataRole.UserRole) if cur else None
         if not e:
             return
+        self.b_arc.setText("Restore" if e.get("archived") else "Remove…")      # relay 026
         st = e.get("settings") or {}
         (self.m_fixed if st.get("mode") == "fixed" else self.m_survey).setChecked(True)
         for k, w in self.o.items():
@@ -2455,6 +2469,11 @@ class StartWatchDialog(QDialog):
             return
         if e.get("archived") and action == "archive":
             action = "restore"
+        if action == "archive" and QMessageBox.question(
+                self, "Remove recorder session", f"Remove recorder session “{e['name']}”?\n\nEvery capture "
+                "made with it is kept. You can restore it from Archived (tick Show archived, then Restore)."
+        ) != QMessageBox.StandardButton.Yes:
+            return
         body = {"kind": "watch", "action": action, "name": e["name"]}
         if action in ("rename", "duplicate"):
             new, ok = QInputDialog.getText(self, action.capitalize(), "New name:", text=e["name"])

@@ -4636,6 +4636,7 @@ class ChainScreen(QWidget):
         self.summary, self.layout_doc = {"chains": {}, "current": None}, R.empty_layout()
         self.labels = R.labels_from(None)
         self.receivers, self.serials, self.roles = [], {}, {}
+        self.removed_radios: dict = {}
         self.display: dict = {}
         self.rig_name: str | None = None
         self.rig = R.new_rig()
@@ -5865,7 +5866,7 @@ class ChainScreen(QWidget):
         act(f, "History…", self.history_dialog,
             lambda: (bool(self.display.get(self.rig_name or "", {}).get("history")),
                      "No earlier versions yet: each Save keeps the one before it"))
-        act(f, "Archive rig…", self.archive_rig,
+        act(f, "Remove rig…", self.archive_rig,
             lambda: (not self.read_only and self._why_not_archive(asks_first=True) is None,
                      self._why_not_archive(asks_first=True) or ""))
         act(f, "Restore rig", self.restore_rig, lambda: (self.read_only and not self.version_view,
@@ -5997,10 +5998,11 @@ class ChainScreen(QWidget):
             a.setToolTip("Bring it back to the rig list, editable and usable for runs")
             a.triggered.connect(self.restore_rig)
         else:
-            a = m.addAction(tool_icon("archive"), "Archive rig…")
+            a = m.addAction(tool_icon("archive"), "Remove rig…")
             why = self._why_not_archive(asks_first=True)
             a.setEnabled(why is None)
-            a.setToolTip(why or "Move it to the Archived section of the rig list. Nothing is removed.")
+            a.setToolTip(why or "Take it off the rig list. It is kept under Archived, with its history; Restore "
+                                "brings it back.")
             a.triggered.connect(self.archive_rig)
         gone = sorted(n for n, x in self.display.items() if x.get("archived"))
         sub = Menu(m)
@@ -6021,7 +6023,7 @@ class ChainScreen(QWidget):
         if not d:
             return "Open a rig first"
         if not d.get("chains") and not d.get("draft"):
-            return "This rig has never been saved: there is nothing to archive"
+            return "This rig has never been saved: there is nothing to remove"
         if self.dirty and not asks_first:
             return "Save it or undo the changes first"
         if self.rig_is_used(d):
@@ -6035,20 +6037,20 @@ class ChainScreen(QWidget):
             return
         why = self._why_not_archive()
         if why:
-            self.show_notice(f"Not archived: {why}.")
+            self.show_notice(f"Not removed: {why}.")
             return
         name = self.rig_name
-        b = QMessageBox.question(self, "Archive rig",
-                                 f"Archive “{name}”?\n\nIt moves to the Archived section of the rig list and opens "
-                                 "read-only. Nothing is removed: its chains stay in chain.json exactly as they are, "
-                                 "and Restore (Rig menu) brings it back.")
+        b = QMessageBox.question(self, "Remove rig",            # relay 026: the same words for every setup item
+                                 f"Remove rig “{name}”?\n\nIts drawing, its history and every run that used it are "
+                                 "kept. You can restore it from Archived (the rig list, or Rig › Open an archived "
+                                 "rig, then Restore rig).")
         if b != QMessageBox.StandardButton.Yes:
             return
         if self._set_archived(name, True):
             live = sorted((n for n, x in self.display.items() if not x.get("archived")), key=str.lower)
             if live:
                 self.open_rig(live[0])
-            self.status.emit(f"“{name}” archived")
+            self.status.emit(f"“{name}” removed: kept under Archived")
 
     def restore_rig(self):
         name = self.rig_name
@@ -6636,6 +6638,7 @@ class ChainScreen(QWidget):
         self.receivers = list(summ.get("receivers") or [])
         self.serials = got.get("serials") or {}
         self.roles = got.get("roles") or {}
+        self.removed_radios = got.get("removed_radios") or {}          # relay 026: flagged in Checks
         try:
             self.layout_doc = R.check_layout(got.get("layout") or {})
         except ValueError as exc:
@@ -8552,7 +8555,7 @@ class ChainScreen(QWidget):
     def _fill_checks(self):
         """Relay 018: the Checks footer. Problems first, then warnings, then notes, each counted in its colour; the
         first message beside the counts; a click on it, or on any in the full list, selects what it is about."""
-        self.check_list = R.checks_by_level(self.rig) if self.rig_name is not None else []
+        self.check_list = R.checks_by_level(self.rig, self.removed_radios) if self.rig_name is not None else []
         empty = ("No problems found" if self.rig["nodes"] else
                  "Nothing on the grid yet" if self.rig_name is not None else "No rig open")
         self.footer.show_checks(self.check_list, empty)
@@ -8752,7 +8755,7 @@ class ChainScreen(QWidget):
         st = R.rig_state(d.get("chains") or {})
         radios = [f"{R._pname(n)}" + (f" (SN {self.serial_of(n['part'])})" if self.serial_of(n["part"]) else "")
                   for n in self.rig["nodes"] if n["part"]["type"] == "sdr"]
-        checks = R.checks(self.rig)
+        checks = R.checks(self.rig, self.removed_radios)
         rows = [("Rig", self.rig_name or "none open"), ("Radios", ", ".join(radios) or "none"),
                 ("Paths", str(len(paths))), ("Open checks", str(len(checks)) + (": " + "; ".join(c["text"] for c in checks[:5])
                                                                                 if checks else ""))]
@@ -9009,7 +9012,7 @@ class ChainScreen(QWidget):
             return
         names = list(d["chains"])
         st = R.rig_state(d["chains"])
-        warn = R.checks(self.rig)
+        warn = R.checks(self.rig, self.removed_radios)
         if warn:
             listed = "\n".join(f"  •  {c['text']}" for c in warn[:8]) + (
                 f"\n  …and {len(warn) - 8} more" if len(warn) > 8 else "")
@@ -9097,12 +9100,12 @@ class ChainScreen(QWidget):
                              + ". Parts already dropped into rigs keep their own copy.")
                 a.triggered.connect(lambda: self.convert_lib_old(entry["id"]))
             m.addSeparator()
-            a = m.addAction("Remove from list")
+            a = m.addAction("Remove…")
             a.triggered.connect(lambda: self._lib_remove(entry["id"]))
         removed = [e for e in self.library if e.get("removed")]
         if removed:
             sub = Menu(m)
-            sub.setTitle("Put back a removed part")
+            sub.setTitle("Archived: restore a part")
             for e in removed:
                 a = sub.addAction(e["part"].get("name") or e["part"]["type"])
                 a.triggered.connect(lambda _=False, i=e["id"]: self._lib_put_back(i))
@@ -9160,6 +9163,8 @@ class ChainScreen(QWidget):
         lay.addWidget(note)
         row = QHBoxLayout()
         ok, cancel = QPushButton("Save"), QPushButton("Cancel")
+        ok.setDefault(True)                  # relay 026: Enter saves
+        cancel.setAutoDefault(False)
         ok.clicked.connect(dlg.accept)
         cancel.clicked.connect(dlg.reject)
         row.addStretch(1)
@@ -9193,9 +9198,10 @@ class ChainScreen(QWidget):
         e = next((x for x in self.library if x["id"] == lid), None)
         if e is None:
             return
-        b = QMessageBox.question(self, "Remove from My parts",
-                                 f"Take “{e['part'].get('name') or e['part']['type']}” off the My parts list?\n\n"
-                                 "Rigs that used it keep their parts. Right-click the MY PARTS heading to put it back.")
+        b = QMessageBox.question(self, "Remove part",
+                                 f"Remove “{e['part'].get('name') or e['part']['type']}” from My parts?\n\n"
+                                 "Rigs that used it keep their parts. You can restore it from Archived (right-click "
+                                 "the MY PARTS heading).")
         if b == QMessageBox.StandardButton.Yes:
             self._lib_change(lid, lambda x: x.__setitem__("removed", True))
 

@@ -496,10 +496,8 @@ class Window(QMainWindow):
                 return
             ST.remember(folder, name)
             w = Window(Service(base), start="Live Scan", station_folder=str(folder))
-            w.resize(self.size())
-            w.move(self.pos())
+            take_place(w, self)
             _OPEN.append(w)
-            w.show()
             self.switched_to = w
             self.close()
         call(lambda: ST.ensure_service(folder), got)
@@ -517,12 +515,8 @@ class Window(QMainWindow):
         apply_theme(d.chosen)
         TP.remember(d.chosen)
         w = Window(self.svc, start=SCREENS[self.stack.currentIndex()], station_folder=self.station_folder)
-        w.resize(self.size())
-        w.move(self.pos())
-        if self.isMaximized():
-            w.showMaximized()
+        take_place(w, self)
         _OPEN.append(w)
-        w.show()
         self.rebuilt_as = w
         self.close()
 
@@ -539,6 +533,7 @@ class Window(QMainWindow):
 
     def closeEvent(self, ev):
         if self.chain.can_close():
+            remember_place(self)
             self.live.shutdown()
             ev.accept()
         else:
@@ -546,6 +541,45 @@ class Window(QMainWindow):
 
 
 _OPEN: list = []                    # windows opened by a station switch or a theme change, kept alive
+
+# Relay 026: the window never changes its own size, place or maximised state. A station switch and a theme change
+# build a new window; it used to copy only size() (the inside) and pos() (the frame's corner) and was shown normal, so
+# a maximised window came back un-maximised, a few per cent smaller and moved. Qt's saveGeometry() holds the frame,
+# the normal geometry under a maximised window, the maximised and full-screen state and the screen, all at once.
+PLACE_PREF = "window/geometry"
+
+
+def take_place(new: QMainWindow, old: QMainWindow) -> None:
+    """Show `new` exactly where `old` is, in the same state, and remember that place."""
+    show_in_place(new, old.saveGeometry())
+    remember_place(old)
+
+
+def show_in_place(w: QMainWindow, geometry) -> bool:
+    """Show the window at a saved geometry (a QByteArray from saveGeometry). False, and shown at its own default
+    size, when there is none or Qt cannot use it (for example its screen is gone: Qt then keeps it on a screen)."""
+    ok = bool(geometry) and w.restoreGeometry(geometry)
+    if ok and w.windowState() & Qt.WindowState.WindowFullScreen:
+        w.showFullScreen()
+    elif ok and w.windowState() & Qt.WindowState.WindowMaximized:
+        w.showMaximized()
+    else:
+        w.show()
+    return ok
+
+
+def remember_place(w: QMainWindow) -> None:
+    """Keep the window's place for the next start (same monitor: the screen is part of the saved geometry)."""
+    try:
+        from marsad_desktop.chain_screen import prefs
+        prefs().setValue(PLACE_PREF, w.saveGeometry())
+    except Exception:                       # never let remembering stop a close
+        pass
+
+
+def saved_place():
+    from marsad_desktop.chain_screen import prefs
+    return prefs().value(PLACE_PREF)
 
 
 def apply_theme(name: str) -> str:
@@ -601,7 +635,7 @@ def main(argv=None) -> int:
     if svc is None:
         return 0
     w = Window(svc, start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"), station_folder=folder)
-    w.show()
+    show_in_place(w, saved_place())              # relay 026: where it was last time, maximised if it was
     return app.exec()
 
 

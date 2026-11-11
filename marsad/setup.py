@@ -321,7 +321,7 @@ DUP_HELP = ("Two radios report the same serial (many are sold as 00000001), so m
 
 
 def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mhz=None, gaps_mhz=None,
-              label: str = "", maker: str = "", product: str = "") -> dict:
+              label: str = "", maker: str = "", product: str = "", fresh: bool = False) -> dict:
     """Add Radio: a receiver in station.json, in the format the engine reads, matched by serial (rule 8)."""
     nick = (nickname or "").strip()
     serial = str(serial or "").strip()
@@ -338,6 +338,10 @@ def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mh
     for other, s in serials.items():
         if str(s) == serial:
             raise ValueError(f"Serial {serial} is already this station's {other}.")
+    gone = None if fresh else archived_by_serial(station, serial)
+    if gone:                                     # relay 026: Restore is offered first
+        raise ValueError(f"Serial {serial} was this station's {gone['radio']} until it was removed. Restore it "
+                         "(Removed radios) to bring back its measurements and history.")
     key = tuner_key(tuner) or (tuner or "").lower()
     if key not in TUNER_GAINS:
         raise ValueError(f"Unknown tuner {tuner!r}: choose E4000 or R820T/R860.")
@@ -705,6 +709,212 @@ def update_radio(station: Station, nick: str, serial=None, tuner=None, range_mhz
     return {"radio": nick, "entry": e}
 
 
+# ---------------------------------------------------------------- relay 026: rename, redo, remove and restore
+
+ARCHIVE_FILE = "station_archive.json"           # removed setup items, with their history; restorable
+NICK_RE = r"[A-Za-z0-9][A-Za-z0-9_-]{0,23}"
+
+
+def load_archive(root) -> dict:
+    p = Path(root) / ARCHIVE_FILE
+    try:
+        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, ValueError):
+        raise ValueError(f"{ARCHIVE_FILE} is unreadable, so nothing is removed or restored until it is fixed.")
+    d.setdefault("schema", 1)
+    d.setdefault("radios", [])
+    return d
+
+
+def _save_archive(root, doc: dict) -> None:
+    p = Path(root) / ARCHIVE_FILE
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _write_station(station: Station, raw: dict) -> None:
+    p = station.file
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def archived_radios(station: Station) -> list:
+    """Radios removed from this station and not restored since, newest first."""
+    try:
+        doc = load_archive(station.root)
+    except ValueError:
+        return []
+    out = [{"id": a["id"], "radio": a["radio"], "serial": a.get("serial"), "removed": a.get("removed"),
+            "tuner": (a.get("receiver") or {}).get("tuner"),
+            "product": ((a.get("receiver") or {}).get("usb") or {}).get("product") or "",
+            "results": sum(len(v) for v in ((a.get("setup") or {}).get("results") or {}).values())}
+           for a in doc["radios"] if not a.get("restored")]
+    return sorted(out, key=lambda a: str(a.get("removed") or ""), reverse=True)
+
+
+def archived_by_serial(station: Station, serial: str) -> dict | None:
+    return next((a for a in archived_radios(station) if str(a.get("serial")) == str(serial)), None)
+
+
+def nickname_uses(station: Station, nick: str) -> list:
+    """Where a radio's nickname is used outside the setup files, in words. A name used there cannot be changed here:
+    runs carry it in their record and their fingerprint, and rigs, presets and saved scans point at it by name."""
+    pat = re.compile(r'"(?:rx|receiver)"\s*:\s*"' + re.escape(nick) + '"')
+    out = []
+    runs = 0
+    sdir = station.root / "surveys"
+    if sdir.is_dir():
+        for f in sdir.glob("*.json"):
+            try:
+                if pat.search(f.read_text(encoding="utf-8", errors="replace")):
+                    runs += 1
+            except OSError:
+                continue
+    if runs:
+        out.append(f"{runs} run{'s' if runs != 1 else ''} (its name is in each run's record and fingerprint)")
+    for name, word in (("chain.json", "the rigs"), ("chain_layout.json", "the rig drawings"),
+                       ("saved_scans.json", "saved scans")):
+        p = station.root / name
+        try:
+            if p.exists() and pat.search(p.read_text(encoding="utf-8", errors="replace")):
+                out.append(word)
+        except OSError:
+            continue
+    raw = _raw(station)
+    if any(isinstance(v, dict) and v.get("receiver") == nick for v in (raw.get("presets") or {}).values()):
+        out.append("presets")
+    if nick in ((raw.get("recorder") or {}).get("roles") or {}).values():
+        out.append("the radio roles")
+    return out
+
+
+def rename_radio(station: Station, old: str, new: str) -> None:
+    """Change a radio's nickname while nothing outside the setup files uses it yet (nickname_uses is empty)."""
+    new = (new or "").strip()
+    if new == old:
+        return
+    if not re.fullmatch(NICK_RE, new):
+        raise ValueError("A nickname is 1 to 24 letters, digits, - or _, starting with a letter or digit.")
+    raw = _raw(station)
+    recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
+    if old not in recs:
+        raise ValueError(f"This station has no radio called {old}.")
+    if new in recs:
+        raise ValueError(f"This station already has a radio called {new}.")
+    uses = nickname_uses(station, old)
+    if uses:
+        raise ValueError(f"The nickname {old} is already used by " + ", ".join(uses) + ", so it stays: changing it "
+                         "would cut those links and stop later runs comparing with earlier ones.")
+    raw["receivers"] = {(new if k == old else k): v for k, v in recs.items()}
+    rec = raw.setdefault("recorder", {})
+    serials = rec.get("serials") if isinstance(rec.get("serials"), dict) else {}
+    rec["serials"] = {(new if k == old else k): v for k, v in serials.items()}
+    if raw.get("default_receiver") == old:
+        raw["default_receiver"] = new
+    doc = load(station)
+    if old in doc["radios"]:
+        doc["radios"] = {(new if k == old else k): v for k, v in doc["radios"].items()}
+        doc["radios"][new].setdefault("renamed", []).append({"from": old, "to": new, "at": now()})
+    for j in doc["jobs"]:
+        if j.get("radio") == old:
+            j["radio"] = new
+    _write_station(station, raw)
+    _save(station.root, doc)
+
+
+def redo_radio(station: Station, nick: str) -> None:
+    """"Redo this radio's setup": its checklist starts again from step 1. Every earlier result stays in its history
+    (rule 4); only results from after this moment count, so the steps read "to redo" until they are run again."""
+    if nick not in station.receivers:
+        raise ValueError(f"This station has no radio called {nick}.")
+    doc = load(station)
+    r = doc["radios"].setdefault(nick, {"results": {}})
+    r["redo_since"] = now()
+    r.setdefault("redos", []).append(r["redo_since"])
+    _save(station.root, doc)
+
+
+def remove_radio(station: Station, nick: str) -> dict:
+    """Remove a radio (rule 4 as amended 2026-11-11): its receiver entry leaves the station's active list in
+    station.json after a copy of it, its serial, its roles and its setup history are written to station_archive.json.
+    Recorded data (runs, captures, reports, the catalogue) is not touched. The caller refuses while it is running."""
+    raw = _raw(station)
+    recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
+    if nick not in recs:
+        raise ValueError(f"This station has no radio called {nick}.")
+    rec = raw.setdefault("recorder", {})
+    serials = rec.get("serials") if isinstance(rec.get("serials"), dict) else {}
+    roles = rec.get("roles") if isinstance(rec.get("roles"), dict) else {}
+    doc = load(station)
+    arch = load_archive(station.root)
+    stamp = now()
+    item = {"id": f"radio-{nick}-{stamp.replace(':', '').replace('-', '')}", "kind": "radio", "radio": nick,
+            "serial": serials.get(nick), "removed": stamp, "receiver": recs[nick],
+            "roles": {k: v for k, v in roles.items() if v == nick},
+            "was_default": raw.get("default_receiver") == nick,
+            "setup": doc["radios"].get(nick) or {}}
+    arch["radios"].append(item)
+    _save_archive(station.root, arch)                     # the copy first, then the removal
+    raw["receivers"] = {k: v for k, v in recs.items() if k != nick}
+    rec["serials"] = {k: v for k, v in serials.items() if k != nick}
+    if roles:
+        rec["roles"] = {k: v for k, v in roles.items() if v != nick}
+    if raw.get("default_receiver") == nick:
+        if raw["receivers"]:
+            raw["default_receiver"] = next(iter(raw["receivers"]))
+        else:
+            raw.pop("default_receiver", None)
+    _write_station(station, raw)
+    doc["radios"].pop(nick, None)
+    _save(station.root, doc)
+    return {"archived": item["id"], "radio": nick}
+
+
+def restore_radio(station: Station, archive_id: str, nickname: str = "") -> dict:
+    """Put a removed radio back as it was, with its setup history. Refused if its nickname or serial is taken now
+    (then give it another nickname). The archive keeps the entry, marked restored."""
+    arch = load_archive(station.root)
+    item = next((a for a in arch["radios"] if a.get("id") == archive_id and not a.get("restored")), None)
+    if item is None:
+        raise ValueError("That removed radio is not in this station's archive (or it was restored already).")
+    nick = (nickname or "").strip() or item["radio"]
+    if not re.fullmatch(NICK_RE, nick):
+        raise ValueError("A nickname is 1 to 24 letters, digits, - or _, starting with a letter or digit.")
+    raw = _raw(station)
+    recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
+    rec = raw.setdefault("recorder", {})
+    serials = rec.get("serials") if isinstance(rec.get("serials"), dict) else {}
+    if nick in recs:
+        raise ValueError(f"This station already has a radio called {nick}: restore it under another nickname.")
+    for other, s_ in serials.items():
+        if item.get("serial") and str(s_) == str(item["serial"]):
+            raise ValueError(f"Serial {item['serial']} is already this station's {other}.")
+    recs[nick] = item["receiver"]
+    raw["receivers"] = recs
+    if item.get("serial"):
+        serials[nick] = item["serial"]
+    rec["serials"] = serials
+    if nick == item["radio"] and item.get("roles"):
+        roles = rec.get("roles") if isinstance(rec.get("roles"), dict) else {}
+        for k, v in item["roles"].items():
+            roles.setdefault(k, v)
+        rec["roles"] = roles
+    if not raw.get("default_receiver") or raw.get("default_receiver") not in recs or item.get("was_default"):
+        raw["default_receiver"] = nick
+    _write_station(station, raw)
+    doc = load(station)
+    if nick not in doc["radios"]:
+        doc["radios"][nick] = item.get("setup") or {"serial": item.get("serial"), "results": {}}
+    doc["radios"][nick].setdefault("restored", []).append({"at": now(), "from": archive_id})
+    _save(station.root, doc)
+    item["restored"] = now()
+    item["restored_as"] = nick
+    _save_archive(station.root, arch)
+    return {"radio": nick}
+
+
 def accept_typical(station: Station, nick: str, chain_text: str = "") -> None:
     """The owner keeps the range as it is, an estimate (the tuner's typical figures, or entered by hand), instead of
     measuring it. Relay 024: the guide can go on, but no estimate unlocks scanning; and a range already measured,
@@ -732,8 +942,20 @@ def confirm_rig(station: Station, nick: str, chain_text: str) -> None:
 # ---------------------------------------------------------------- the checklist
 
 def latest(r: dict, step: str, full: bool = True) -> dict | None:
-    rs = [x for x in (r.get("results") or {}).get(step) or [] if not (full and x.get("short"))]
+    """The newest result that counts. Relay 026: after "Redo this radio's setup" only results from then on count;
+    the earlier ones stay in the history (redone_before)."""
+    since = r.get("redo_since")
+    rs = [x for x in (r.get("results") or {}).get(step) or [] if not (full and x.get("short"))
+          and not (since and str(x.get("at") or "") < since)]
     return rs[-1] if rs else None
+
+
+def redone_before(r: dict, step: str) -> int:
+    """How many results of this step were made before the last redo (kept, no longer counted)."""
+    since = r.get("redo_since")
+    if not since:
+        return 0
+    return sum(1 for x in (r.get("results") or {}).get(step) or [] if str(x.get("at") or "") < since)
 
 
 def _sub_state(station: Station, nick: str, r: dict, m: str, running: set, now_basis: dict) -> tuple:
@@ -764,13 +986,16 @@ def _sub_state(station: Station, nick: str, r: dict, m: str, running: set, now_b
         return "done", last.get("note") or ""
     if last:
         return "needs attention", last.get("note") or ""
+    if redone_before(r, m):
+        return "to redo", ("Done before; kept in its history. This radio's setup is being redone, so run it again "
+                           f"(redo started {str(r.get('redo_since'))[:16].replace('T', ' ')}).")
     return "not started", ""
 
 
 def _agg(states: list) -> str:
     if all(s == "done" for s in states):
         return "done"
-    for s in ("in progress", "needs attention", "needs re-checking", "estimate kept"):
+    for s in ("in progress", "needs attention", "needs re-checking", "estimate kept", "to redo"):
         if s in states:
             return s
     return "in progress" if "done" in states else "not started"
@@ -802,9 +1027,11 @@ def checklist(station: Station, nick: str, chain_text: str, running: set) -> dic
         chain_text if chain_text else "The rig used for runs has no path to this radio. Draw it on the Chain screen and "
                                       "use it for runs.")
     conf = r.get("rig_confirmed") or {}
-    ok_conf = bool(chain_text) and conf.get("text") == chain_text
-    add("confirm", "done" if ok_conf else "needs re-checking" if conf else "not started",
+    redo = bool(conf) and bool(r.get("redo_since")) and str(conf.get("at") or "") < r["redo_since"]
+    ok_conf = bool(chain_text) and conf.get("text") == chain_text and not redo
+    add("confirm", "done" if ok_conf else "to redo" if redo else "needs re-checking" if conf else "not started",
         f"confirmed {conf.get('at', '')[:16].replace('T', ' ')}" if ok_conf else
+        "Confirmed before the redo; kept in its history. Check the rig again, then confirm." if redo else
         "The drawing changed since it was confirmed: confirm it again." if conf else
         "Check the rig matches the drawing, then confirm.")
     sub = []

@@ -33,9 +33,9 @@ from marsad_desktop.scan_start import call
 from marsad.setup import STEP_ORDER, STEP_TITLES, STEPS as STEPS_TEXT                         # noqa: E402
 
 STATE_COLOUR = {"done": "open", "in progress": "survey_light", "needs attention": "alert_text",
-                "needs re-checking": "anomaly", "estimate kept": "anomaly", "not started": "muted"}
+                "needs re-checking": "anomaly", "estimate kept": "anomaly", "to redo": "anomaly", "not started": "muted"}
 STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "needs re-checking": "↻", "estimate kept": "≈",
-              "not started": "○"}
+              "to redo": "↺", "not started": "○"}
 PASSED = ("done", "estimate kept")      # relay 024: an estimate lets the guide go on; it never unlocks scanning
 
 
@@ -52,6 +52,7 @@ def _label(text, muted=False, size=None, bold=False, wrap=True):
 
 def _button(text, primary=False):
     b = QPushButton(text)
+    b.setAutoDefault(False)          # relay 026: Enter is the dialog's main action only (setDefault), never a stray one
     if primary:
         b.setObjectName("Primary")
     return b
@@ -401,7 +402,12 @@ class AddRadioDialog(QDialog):
     """Add Radio. Relay 024: only what is known is shown as a value, and every value says where it came from:
     read from the radio (serial, product and maker strings, the detected tuner), fixed by the tuner type (the
     driver's gain table), an estimate (the tuner's typical range, greyed), or not measured yet (blind spots, retune
-    time, warm-up, floor: never a value). Nothing here comes from another station."""
+    time, warm-up, floor: never a value). Nothing here comes from another station.
+
+    Relay 026: Detect fills in everything it found and selects the tuner, with no typing first. Several radios are
+    listed by serial and product; after one is added the others are offered one at a time ("Add it" / "Skip"). A
+    radio already in this station offers Edit; one removed earlier offers Restore. Cancel closes at any moment: a
+    radio already added stays added, and the window says so."""
 
     def __init__(self, svc, status: dict, parent=None):
         super().__init__(parent)
@@ -409,8 +415,12 @@ class AddRadioDialog(QDialog):
         self.S = S
         self.svc = svc
         self.status = status
-        self.detected: dict = {}
-        self.added = None
+        self.detected: dict = {}                # serial -> what the radio said (rtl_eeprom), in the order found
+        self.added = None                       # the last radio added (or restored)
+        self.added_all: list = []               # every radio added or restored in this window
+        self.skipped: set = set()
+        self.want_edit = None                   # a radio already in this station, to open in Edit
+        self.offer = None                       # the detected radio offered next, after one was added
         self.tuner_from = None                  # "detected" once rtl_eeprom named it; "chosen" when picked by hand
         self.setWindowTitle("Add Radio")
         self.setObjectName("AddRadioDialog")
@@ -418,14 +428,16 @@ class AddRadioDialog(QDialog):
         v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
         v.setSpacing(T.SPACE)
         v.addWidget(_label("Add Radio", size=13, bold=True))
-        v.addWidget(_label("The RTL-SDRs Windows can see, by serial (nothing is opened to list them). Pick one, then "
-                           "Detect its tuner to read the rest from the radio itself.", muted=True))
+        self.lead = _label("The RTL-SDRs Windows can see, by serial (nothing is opened to list them). Detect reads "
+                           "each one's serial, product, maker and tuner from the radio itself and fills them in.",
+                           muted=True)
+        v.addWidget(self.lead)
         self.list = QListWidget()
-        self.list.setMaximumHeight(110)
+        self.list.setObjectName("RadioList")
+        self.list.setMaximumHeight(120)
         v.addWidget(self.list)
         det = QHBoxLayout()
-        self.b_detect = _button("Detect its tuner…")
-        self.b_detect.setAutoDefault(False)
+        self.b_detect = _button("Detect the radios…")
         self.b_detect.setToolTip("Asks each plugged-in radio its serial, maker, product and tuner with the engine's own "
                                  "probe (rtl_eeprom). It opens each radio for a moment, so nothing else may be using "
                                  "one.")
@@ -434,14 +446,33 @@ class AddRadioDialog(QDialog):
         self.det_note = _label("", muted=True)
         det.addWidget(self.det_note, 1)
         v.addLayout(det)
+        # relay 026: after a radio is added, the next detected one is offered here, never in a box that traps
+        self.next_box = QFrame()
+        self.next_box.setObjectName("NextRadio")
+        self.next_box.setProperty("panel", True)
+        nb = QHBoxLayout(self.next_box)
+        nb.setContentsMargins(T.SPACE, T.SPACE // 2, T.SPACE, T.SPACE // 2)
+        self.next_text = _label("", wrap=True)
+        nb.addWidget(self.next_text, 1)
+        self.b_other = _button("Add it", primary=True)
+        self.b_other.clicked.connect(self.take_other)
+        self.b_skip = _button("Skip")
+        self.b_skip.clicked.connect(self.skip_other)
+        nb.addWidget(self.b_skip)
+        nb.addWidget(self.b_other)
+        self.next_box.hide()
+        v.addWidget(self.next_box)
         g = QGridLayout()
         g.setColumnStretch(1, 1)
         g.setHorizontalSpacing(T.SPACE * 2)
         self.serial = QLineEdit()
         self.serial.setObjectName("RadioSerial")
+        self.serial.setPlaceholderText("filled in by Detect, or type it")
         self.nick = QLineEdit()
+        self.nick.setObjectName("RadioNick")
         self.nick.setPlaceholderText("a short name, e.g. radio1")
         self.tuner = QComboBox()
+        self.tuner.setObjectName("RadioTuner")
         self.tuner.addItem("Elonics E4000 (zero-IF)", "e4000")
         self.tuner.addItem("Rafael Micro R820T / R860 (low-IF)", "r820t")
         self.product = QLineEdit()
@@ -478,66 +509,158 @@ class AddRadioDialog(QDialog):
         self.typical.setObjectName("TypicalNote")
         v.addWidget(self.typical)
         self.why = _label("", muted=True)
+        self.why.setObjectName("AddRadioWhy")
         v.addWidget(self.why)
         row = QHBoxLayout()
         row.addStretch(1)
-        c = _button("Cancel")
-        c.setAutoDefault(False)
-        c.clicked.connect(self.reject)
+        self.b_cancel = _button("Cancel")
+        self.b_cancel.clicked.connect(self.reject)
         self.ok = _button("Add this radio", primary=True)
-        self.ok.setDefault(True)
+        self.ok.setDefault(True)                # Enter: the main action, when it is enabled
         self.ok.clicked.connect(self.save)
-        row.addWidget(c)
+        row.addWidget(self.b_cancel)
         row.addWidget(self.ok)
         v.addLayout(row)
         self.tuner.activated.connect(self._tuner_chosen)
         self.tuner.currentIndexChanged.connect(self._typical)
         self.list.currentItemChanged.connect(self._picked)
-        self.serial.textChanged.connect(self._typical)
+        self.serial.textChanged.connect(self._serial_typed)
         self._fill()
         self._typical()
         self.resize(760, self.sizeHint().height())
 
-    def _fill(self):
+    # ---- what the list shows
+    def _rows(self) -> list:
+        """One row per radio: what Detect found (serial order as found), else Windows' list. Each row says whether the
+        radio is new, already this station's, or removed earlier."""
+        mine = {str(r.get("serial")): r.get("radio") for r in (self.status.get("visible") or []) if r.get("radio")}
+        for r in self.status.get("radios") or []:
+            s = str(((r.get("facts") or {}).get("serial") or {}).get("value") or _serial_of(r) or "")
+            if s:
+                mine.setdefault(s, r["radio"])
+        for nick, s in self._added_serials().items():
+            mine[s] = nick
+        gone = {str(a.get("serial")): a for a in self.status.get("archived") or []}
+        out = []
+        if self.detected:
+            for s, f in self.detected.items():
+                out.append({"serial": s, "product": f.get("product") or "", "tuner": f.get("tuner") or "",
+                            "radio": f.get("radio") or mine.get(s), "archived": f.get("archived") or gone.get(s),
+                            "detected": True})
+        else:
+            for r in self.status.get("visible") or []:
+                s = str(r["serial"])
+                out.append({"serial": s, "product": r.get("name") or "", "tuner": "",
+                            "radio": r.get("radio") or mine.get(s), "archived": gone.get(s), "detected": False})
+        for o in out:
+            if o["serial"] in {a.get("serial") for a in self.added_all if a.get("restored")}:
+                o["archived"] = None
+        return out
+
+    def _added_serials(self) -> dict:
+        return {a["radio"]: a["serial"] for a in self.added_all if a.get("serial")}
+
+    def _fill(self, select: str | None = None):
+        self.list.blockSignals(True)
         self.list.clear()
-        vis = self.status.get("visible")
-        if vis is None:
-            it = QListWidgetItem("Windows would not list the radios here: type the serial below, or use Detect.")
+        rows = self._rows()
+        if not rows:
+            vis = self.status.get("visible")
+            it = QListWidgetItem("Windows would not list the radios here: use Detect, or type the serial below."
+                                 if vis is None and not self.detected else "No RTL-SDR is plugged in.")
             it.setFlags(Qt.ItemFlag.NoItemFlags)
             self.list.addItem(it)
-            return
-        if not vis:
-            it = QListWidgetItem("No RTL-SDR is plugged in.")
-            it.setFlags(Qt.ItemFlag.NoItemFlags)
+        for o in rows:
+            bits = [f"serial {o['serial']}", o["product"] or "RTL-SDR"]
+            if o["tuner"]:
+                bits.append(o["tuner"])
+            if o["radio"]:
+                bits.append(f"already added as {o['radio']}: Edit")
+            elif o["archived"]:
+                bits.append(f"removed earlier as {o['archived']['radio']}: Restore")
+            elif o["serial"] in self.skipped:
+                bits.append("skipped")
+            it = QListWidgetItem("   ·   ".join(bits))
+            it.setData(Qt.ItemDataRole.UserRole, o)
             self.list.addItem(it)
-        for r in vis:
-            it = QListWidgetItem(f"serial {r['serial']}   ·   {r.get('name') or 'RTL-SDR'}"
-                                 + (f"   ·   already this station's {r['radio']}" if r.get("radio") else ""))
-            it.setData(Qt.ItemDataRole.UserRole, r)
-            if r.get("radio"):
-                it.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.list.addItem(it)
+        self.list.blockSignals(False)
+        want = select or self.serial.text().strip()
+        row = next((i for i, o in enumerate(rows) if o["serial"] == want), None)
+        if row is None:
+            # nothing chosen yet: the first new radio, else the first one listed
+            row = next((i for i, o in enumerate(rows) if not o["radio"] and not o["archived"]
+                        and o["serial"] not in self.skipped), 0 if rows else None)
+        if row is not None:
+            self.list.setCurrentRow(row)
+            self._picked(self.list.item(row))
+
+    def _row_for(self, serial: str) -> dict | None:
+        """The listed radio with this serial; for a typed serial that is not listed, still whether it was removed
+        earlier (Restore first) or is already this station's."""
+        o = next((o for o in self._rows() if o["serial"] == serial), None)
+        if o is None and serial:
+            gone = next((a for a in self.status.get("archived") or [] if str(a.get("serial")) == serial), None)
+            mine = next((r["radio"] for r in self.status.get("radios") or []
+                         if _serial_of(r) == serial), None) or {v: k for k, v in self._added_serials().items()}.get(serial)
+            if gone or mine:
+                o = {"serial": serial, "product": "", "tuner": "", "radio": mine, "archived": None if mine else gone,
+                     "detected": False}
+        return o
 
     def _picked(self, cur, _prev=None):
-        r = cur.data(Qt.ItemDataRole.UserRole) if cur else None
-        if not r:
+        o = cur.data(Qt.ItemDataRole.UserRole) if cur else None
+        if not o:
             return
-        self.serial.setText(str(r["serial"]))
+        if self.serial.text().strip() != o["serial"]:
+            self.serial.blockSignals(True)
+            self.serial.setText(o["serial"])
+            self.serial.blockSignals(False)
+            if not (o.get("archived") and not o.get("radio")):
+                self.nick.clear()
+        self._apply_detected()
+
+    def _serial_typed(self, *_):
         self._apply_detected()
 
     def _apply_detected(self):
-        """What the radio itself said (rtl_eeprom), for the serial picked."""
-        f = self.detected.get(self.serial.text().strip())
+        """Everything the radio itself said (rtl_eeprom) for the serial in the box, filled in: product, maker (or
+        that it reports none) and the tuner, selected in the list."""
+        s = self.serial.text().strip()
+        f = self.detected.get(s)
         if f:
             self.product.setText(f.get("product") or "")
             if (f.get("manufacturer") or "").strip():
                 self.maker.setText(f["manufacturer"].strip())
                 self.maker.setReadOnly(True)
             else:
+                self.maker.clear()
                 self.maker.setReadOnly(False)
+                self.maker.setPlaceholderText("this radio doesn't report one: type it if you know it")
             if f.get("tuner_key"):
+                self.tuner.blockSignals(True)
                 self.tuner.setCurrentIndex(self.tuner.findData(f["tuner_key"]))
+                self.tuner.blockSignals(False)
                 self.tuner_from = "detected"
+        else:
+            if self.tuner_from == "detected":
+                self.tuner_from = None
+            self.maker.setReadOnly(False)
+        o = self._row_for(s) or {}
+        if o.get("radio"):
+            self.ok.setText(f"Edit {o['radio']}…")
+            self.why.setText(f"Serial {s} is already this station's {o['radio']}. Edit changes its nickname, tuner, "
+                             "maker or product.")
+        elif o.get("archived"):
+            a = o["archived"]
+            if not self.nick.text().strip():
+                self.nick.setText(a["radio"])
+            self.ok.setText(f"Restore {a['radio']}")
+            self.why.setText(f"Serial {s} was this station's {a['radio']} until it was removed "
+                             f"({str(a.get('removed') or '')[:16].replace('T', ' ')}). Restore brings it back with "
+                             "its measurements and history.")
+        else:
+            self.ok.setText("Add this radio")
+            self.why.setText("")
         self._typical()
 
     def _tuner_chosen(self, *_):
@@ -551,7 +674,7 @@ class AddRadioDialog(QDialog):
         f = self.detected.get(self.serial.text().strip())
         vis = {str(r.get("serial")): r for r in (self.status.get("visible") or [])}.get(self.serial.text().strip())
         self.src["serial"].setText("read from the radio" if f else ("from Windows' device list" if vis else
-                                                                    "typed"))
+                                                                    "typed" if self.serial.text().strip() else ""))
         self.src["nick"].setText("yours to choose")
         if f:
             self.src["product"].setText("read from the radio")
@@ -588,8 +711,9 @@ class AddRadioDialog(QDialog):
                              f"{label}, not measured on this unit) until Measure the radio replaces it; no estimate "
                              "unlocks scanning.")
 
+    # ---- Detect
     def detect(self):
-        if QMessageBox.question(self, "Detect the tuner?", "This opens each plugged-in radio for a moment to ask its "
+        if QMessageBox.question(self, "Detect the radios?", "This opens each plugged-in radio for a moment to ask its "
                                 "serial, maker, product and tuner (rtl_eeprom). It is refused while any radio program "
                                 "is running.\n\nGo ahead?") != QMessageBox.StandardButton.Yes:
             return
@@ -604,16 +728,30 @@ class AddRadioDialog(QDialog):
             self.detected = {str(f.get("serial")): f for f in d.get("found") or []}
             words = [f"index {f['device']}: serial {f.get('serial')}, {f.get('tuner') or 'tuner not said'}"
                      for f in d.get("found") or []]
-            self.det_note.setText(("; ".join(words) or (d.get("error") or "no radio answered"))
+            new = [s for s, f in self.detected.items() if not f.get("radio")]
+            lead = (f"{len(self.detected)} radios found: pick one to add first; the others are offered after it. "
+                    if len(new) > 1 else "")
+            self.det_note.setText(lead + ("; ".join(words) or (d.get("error") or "no radio answered"))
                                   + (f"\n{d['duplicate_help']}" if d.get("duplicates") else ""))
-            self._apply_detected()
+            keep = self.serial.text().strip()
+            self._fill(select=keep if keep in self.detected and not self.detected[keep].get("radio") else None)
         call(lambda: self.svc.setup_post("detect", {}), got)
 
+    # ---- the main action: add, restore or edit
     def save(self):
-        body = {"serial": self.serial.text().strip(), "nickname": self.nick.text().strip(),
-                "tuner": self.tuner.currentData(), "maker": self.maker.text().strip(),
-                "product": self.product.text().strip()}
+        s = self.serial.text().strip()
+        o = self._row_for(s) or {}
+        if o.get("radio"):
+            self.want_edit = o["radio"]
+            self.accept()
+            return
         self.ok.setEnabled(False)
+        if o.get("archived"):
+            body, route = {"id": o["archived"]["id"], "nickname": self.nick.text().strip()}, "radio_restore"
+        else:
+            body = {"serial": s, "nickname": self.nick.text().strip(), "tuner": self.tuner.currentData(),
+                    "maker": self.maker.text().strip(), "product": self.product.text().strip()}
+            route = "radio"
 
         def got(d, err):
             self.ok.setEnabled(True)
@@ -621,15 +759,79 @@ class AddRadioDialog(QDialog):
                 self.why.setText(err)
                 return
             self.added = d
+            self.added_all.append({"radio": d.get("radio"), "serial": s, "restored": route == "radio_restore"})
+            if d.get("status"):
+                self.status = d["status"]
+            for f in self.detected.values():
+                if str(f.get("serial")) == s:
+                    f["radio"] = d.get("radio")
+                    f["archived"] = None
+            self._offer_next()
+        call(lambda: self.svc.setup_post(route, body), got)
+
+    def _others(self) -> list:
+        return [o for o in self._rows() if o["detected"] and not o["radio"] and o["serial"] not in self.skipped]
+
+    def _offer_next(self):
+        """After one radio is added: the next detected one, one at a time, with Skip. None left: done."""
+        left = self._others()
+        if not left:
+            self.offer = None
             self.accept()
-        call(lambda: self.svc.setup_post("radio", body), got)
+            return
+        o = self.offer = left[0]
+        done = ", ".join(a["radio"] for a in self.added_all)
+        what = ("Restore it" if o["archived"] else "Add it")
+        self.b_other.setText(what)
+        self.next_text.setText(f"✓ {done} added. "
+                               + ("Add the other detected radio too? " if len(left) == 1 else
+                                  f"Add the other {len(left)} detected radios too? Next: ")
+                               + f"serial {o['serial']} · {o['product'] or 'RTL-SDR'}"
+                               + (f" · {o['tuner']}" if o['tuner'] else "")
+                               + (f" (removed earlier as {o['archived']['radio']})" if o["archived"] else ""))
+        self.next_box.show()
+        self.b_cancel.setText("Close")
+        self._fill(select=self.serial.text().strip())
+        self._set_form(False)
+        self.why.setText("")                    # the offer above says it all; no "already added: Edit" below it
+        self.ok.setText("Add this radio")
+
+    def _set_form(self, on: bool):
+        for w in (self.serial, self.nick, self.tuner, self.maker, self.ok, self.list, self.b_detect):
+            w.setEnabled(on)
+
+    def take_other(self):
+        o = self.offer
+        if not o:
+            return
+        self.next_box.hide()
+        self._set_form(True)
+        self.nick.clear()
+        self._fill(select=o["serial"])
+        self.nick.setFocus()
+
+    def skip_other(self):
+        if self.offer:
+            self.skipped.add(self.offer["serial"])
+        self.next_box.hide()
+        self._set_form(True)
+        self._offer_next()
+
+    def reject(self):
+        """Close / Cancel at any moment. Radios already added stay added: said here, never silently."""
+        if self.added_all and not self.next_box.isVisible():
+            names = ", ".join(a["radio"] for a in self.added_all)
+            self.why.setText(f"{names} stay added; nothing else was saved.")
+        super().reject()
 
 
 # ---------------------------------------------------------------- Set up this station (relay 022: a guide)
 
 class EditRadioDialog(QDialog):
-    """Relay 022: step 1 reopened. Correct the radio's serial, tuner, range, blind spots, maker or product. The later
-    steps that rest on what changes then read "needs re-checking"."""
+    """Relay 022: step 1 reopened. Relay 026: Edit a radio's nickname, tuner, maker and product; the serial is shown
+    read-only (it is how the radio is found, rule 8) with Re-detect, which reads the radio again and refreshes the rest.
+    The range and blind spots can still be corrected by hand (relay 022). The steps that rest on what changes then
+    read "needs re-checking"."""
 
     def __init__(self, svc, radio: dict, parent=None):
         super().__init__(parent)
@@ -637,18 +839,35 @@ class EditRadioDialog(QDialog):
         self.nick = radio["radio"]
         self.result = None
         e = radio.get("entry") or {}
-        self.setWindowTitle(f"Change {self.nick}")
+        self.setWindowTitle(f"Edit {self.nick}")
         self.setObjectName("EditRadioDialog")
         v = QVBoxLayout(self)
         v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
         v.setSpacing(T.SPACE)
-        v.addWidget(_label(f"Change {self.nick}", size=13, bold=True))
+        v.addWidget(_label(f"Edit {self.nick}", size=13, bold=True))
         v.addWidget(_label("Steps that rest on what you change (the measurements run on the radio's frequencies, the "
                            "path checks through the rig) will read \"needs re-checking\" until they are run again. "
                            "Nothing already recorded is removed.", muted=True))
         g = QGridLayout()
+        g.setColumnStretch(1, 1)
         self.serial = QLineEdit(str(((radio.get("facts") or {}).get("serial") or {}).get("value") or
                                     _serial_of(radio) or ""))
+        self.serial.setObjectName("EditSerial")
+        self.serial.setReadOnly(True)
+        self.serial.setToolTip("The serial can't be edited: it is how marsad finds this radio. Re-detect reads it, and "
+                               "the rest, from the radio again.")
+        self.b_redetect = QToolButton()
+        self.b_redetect.setObjectName("Tool")
+        self.b_redetect.setText("Re-detect…")
+        self.b_redetect.setToolTip("Opens the plugged-in radios for a moment (rtl_eeprom) and refreshes the product, "
+                                   "maker and tuner of this serial from the radio.")
+        self.b_redetect.clicked.connect(self.redetect)
+        ser = QHBoxLayout()
+        ser.addWidget(self.serial, 1)
+        ser.addWidget(self.b_redetect)
+        self.nickname = QLineEdit(self.nick)
+        self.nickname.setObjectName("EditNick")
+        self.nick_note = _label("checking whether the nickname can still change…", muted=True)
         self.tuner = QComboBox()
         self.tuner.addItem("Elonics E4000 (zero-IF)", "e4000")
         self.tuner.addItem("Rafael Micro R820T / R860 (low-IF)", "r820t")
@@ -658,24 +877,76 @@ class EditRadioDialog(QDialog):
         self.gaps = QLineEdit(", ".join(f"{a:g}-{b:g}" for a, b in e.get("gaps_mhz") or []))
         usb = e.get("usb") or {}
         self.maker, self.product = QLineEdit(usb.get("maker") or ""), QLineEdit(usb.get("product") or "")
-        for i, (k, w) in enumerate([("Serial", self.serial), ("Tuner", self.tuner), ("Range low, MHz", self.lo),
-                                    ("Range high, MHz", self.hi), ("Blind spots (PLL gap), MHz", self.gaps),
-                                    ("Maker", self.maker), ("Product", self.product)]):
-            g.addWidget(_label(k, wrap=False), i, 0)
-            g.addWidget(w, i, 1)
+        r = 0
+        for k, w in [("Serial", ser), ("Nickname", self.nickname), ("", self.nick_note), ("Tuner", self.tuner),
+                     ("Maker", self.maker), ("Product", self.product), ("Range low, MHz", self.lo),
+                     ("Range high, MHz", self.hi), ("Blind spots (PLL gap), MHz", self.gaps)]:
+            g.addWidget(_label(k, wrap=False), r, 0)
+            if isinstance(w, QHBoxLayout):
+                g.addLayout(w, r, 1)
+            else:
+                g.addWidget(w, r, 1)
+            r += 1
         v.addLayout(g)
+        self.det_note = _label("", muted=True)
+        v.addWidget(self.det_note)
         self.why = _label("", muted=True)
+        self.why.setObjectName("EditRadioWhy")
         v.addWidget(self.why)
         row = QHBoxLayout()
         row.addStretch(1)
         c = _button("Cancel")
         c.clicked.connect(self.reject)
         self.ok = _button("Save changes", primary=True)
+        self.ok.setDefault(True)
         self.ok.clicked.connect(self.save)
         row.addWidget(c)
         row.addWidget(self.ok)
         v.addLayout(row)
-        self.resize(560, self.sizeHint().height())
+        self.resize(600, self.sizeHint().height())
+        self.nickname.setEnabled(False)
+        call(lambda: self.svc.setup_post("radio_uses", {"radio": self.nick}), self._uses)
+
+    def _uses(self, d, err):
+        uses = (d or {}).get("uses") or []
+        if err:
+            self.nick_note.setText(f"The nickname stays as it is: the service could not say where it is used ({err}).")
+        elif uses:
+            self.nick_note.setText(f"The nickname stays {self.nick}: it is already used by " + ", ".join(uses) + ". "
+                                   "Changing it would cut those links and stop later runs comparing with earlier ones.")
+        else:
+            self.nickname.setEnabled(True)
+            self.nick_note.setText("Nothing uses this nickname yet (no run, rig, preset or saved scan), so it can still "
+                                   "change.")
+
+    def redetect(self):
+        if QMessageBox.question(self, "Re-detect?", "This opens each plugged-in radio for a moment to read its serial, "
+                                "maker, product and tuner again (rtl_eeprom). It is refused while any radio program "
+                                "is running.\n\nGo ahead?") != QMessageBox.StandardButton.Yes:
+            return
+        self.b_redetect.setEnabled(False)
+        self.det_note.setText("asking each radio…")
+
+        def got(d, err):
+            self.b_redetect.setEnabled(True)
+            if err:
+                self.det_note.setText(f"Not detected: {err}")
+                return
+            f = next((x for x in (d or {}).get("found") or [] if str(x.get("serial")) == self.serial.text().strip()),
+                     None)
+            if f is None:
+                self.det_note.setText(f"No plugged-in radio reports serial {self.serial.text().strip()}: nothing was "
+                                      "changed. Plug it in, or if it is a different radio, remove this one and add "
+                                      "that one.")
+                return
+            self.product.setText(f.get("product") or "")
+            self.maker.setText((f.get("manufacturer") or "").strip())
+            if f.get("tuner_key"):
+                self.tuner.setCurrentIndex(self.tuner.findData(f["tuner_key"]))
+            self.det_note.setText(f"Read from the radio: {f.get('product') or 'no product name'}, "
+                                  f"{(f.get('manufacturer') or '').strip() or 'no maker name'}, "
+                                  f"{f.get('tuner') or 'tuner not said'}. Save changes keeps them.")
+        call(lambda: self.svc.setup_post("detect", {}), got)
 
     def save(self):
         try:
@@ -690,9 +961,70 @@ class EditRadioDialog(QDialog):
         if lo is None or hi is None:
             self.why.setText("The range needs a low and a high frequency in MHz.")
             return
-        body = {"radio": self.nick, "serial": self.serial.text().strip(), "tuner": self.tuner.currentData(),
+        body = {"radio": self.nick, "tuner": self.tuner.currentData(),
                 "range_mhz": [lo, hi], "gaps_mhz": gaps, "maker": self.maker.text().strip(),
                 "product": self.product.text().strip()}
+        if self.nickname.isEnabled() and self.nickname.text().strip() != self.nick:
+            body["nickname"] = self.nickname.text().strip()
+        self.ok.setEnabled(False)
+
+        def got(d, err):
+            self.ok.setEnabled(True)
+            if err:
+                self.why.setText(err + " Nothing was changed.")
+                return
+            self.result = d
+            self.accept()
+        call(lambda: self.svc.setup_post("radio_update", body), got)
+
+
+class RemovedRadiosDialog(QDialog):
+    """Relay 026: Archived radios, each with Restore. Removed radios keep their measurements and history."""
+
+    def __init__(self, svc, archived: list, parent=None):
+        super().__init__(parent)
+        self.svc = svc
+        self.result = None
+        self.setWindowTitle("Removed radios")
+        self.setObjectName("RemovedRadiosDialog")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
+        v.setSpacing(T.SPACE)
+        v.addWidget(_label("Archived: removed radios", size=13, bold=True))
+        v.addWidget(_label("Each one kept its measurements and setup history, and every run that used it is "
+                           "untouched. Restore puts it back on this station's list.", muted=True))
+        self.list = QListWidget()
+        self.list.setObjectName("ArchivedRadios")
+        for a in archived:
+            it = QListWidgetItem(f"{a['radio']}   ·   serial {a.get('serial') or '?'}   ·   "
+                                 f"{a.get('product') or a.get('tuner') or 'RTL-SDR'}   ·   removed "
+                                 f"{str(a.get('removed') or '')[:16].replace('T', ' ')}   ·   "
+                                 f"{a.get('results') or 0} results kept")
+            it.setData(Qt.ItemDataRole.UserRole, a)
+            self.list.addItem(it)
+        if archived:
+            self.list.setCurrentRow(0)
+        v.addWidget(self.list)
+        self.why = _label("", muted=True)
+        v.addWidget(self.why)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        c = _button("Close")
+        c.clicked.connect(self.reject)
+        self.ok = _button("Restore", primary=True)
+        self.ok.setDefault(True)
+        self.ok.setEnabled(bool(archived))
+        self.ok.clicked.connect(self.restore)
+        row.addWidget(c)
+        row.addWidget(self.ok)
+        v.addLayout(row)
+        self.resize(640, 320)
+
+    def restore(self):
+        it = self.list.currentItem()
+        a = it.data(Qt.ItemDataRole.UserRole) if it else None
+        if not a:
+            return
         self.ok.setEnabled(False)
 
         def got(d, err):
@@ -702,7 +1034,7 @@ class EditRadioDialog(QDialog):
                 return
             self.result = d
             self.accept()
-        call(lambda: self.svc.setup_post("radio_update", body), got)
+        call(lambda: self.svc.setup_post("radio_restore", {"id": a["id"]}), got)
 
 
 PROFILE = (("range_mhz", "tuning range"), ("gaps_mhz", "blind spots"), ("retune_ms_per_hop", "retune time"),
@@ -745,7 +1077,7 @@ def _serial_of(radio: dict) -> str:
 # The guide's pages, in order: (checklist step, page key). Measure and Path checks have one page per part.
 PAGES = [("add", "add"), ("measure", "range"), ("measure", "warmup"), ("measure", "retune"), ("measure", "floor"),
          ("draw", "draw"), ("confirm", "confirm"), ("paths", "adsb"), ("paths", "baseline")]
-TOUCHED = ("done", "needs re-checking", "in progress", "needs attention", "estimate kept")
+TOUCHED = ("done", "needs re-checking", "in progress", "needs attention", "estimate kept", "to redo")
 
 
 def _clock(sec) -> str:
@@ -964,6 +1296,11 @@ class SetupDialog(QDialog):
         self.b_add = _button("Add a radio…")
         self.b_add.clicked.connect(self.add_radio)
         top.addWidget(self.b_add)
+        self.b_removed = _button("Removed radios…")               # relay 026: the Archived section, with Restore
+        self.b_removed.setObjectName("RemovedRadios")
+        self.b_removed.clicked.connect(self.removed_radios)
+        self.b_removed.hide()
+        top.addWidget(self.b_removed)
         top.addStretch(1)
         self.summary = _label("", wrap=False)
         top.addWidget(self.summary)
@@ -995,6 +1332,7 @@ class SetupDialog(QDialog):
         self.b_back.setObjectName("SetupBack")
         self.b_back.clicked.connect(self.back)
         self.b_next = _button("Next →", primary=True)
+        self.b_next.setDefault(True)                # relay 026: Enter means Next, when it is enabled
         self.b_next.clicked.connect(self.next)
         close = _button("Close")
         close.clicked.connect(self.accept)
@@ -1041,6 +1379,9 @@ class SetupDialog(QDialog):
             self.intro.setText("This station was set up before the setup checklist existed, so nothing is locked here. "
                                "The steps can still be run for any radio.")
         names = [r["radio"] for r in d.get("radios") or []]
+        n_arch = len(d.get("archived") or [])
+        self.b_removed.setVisible(bool(n_arch))
+        self.b_removed.setText(f"Removed radios ({n_arch})…")
         cur = self.radio if self.radio in names else (names[0] if names else None)
         self.picker.blockSignals(True)
         if [self.picker.itemData(i) for i in range(self.picker.count())] != names:
@@ -1242,6 +1583,9 @@ class SetupDialog(QDialog):
                     "the guide.")
         elif state == "needs re-checking":
             text = "Still needed: run it again (what changed is said above)."
+        elif state == "to redo":
+            text = ("Still needed: run it again. This radio's setup is being redone; the earlier result is kept in its "
+                    "history.")
         elif state == "needs attention":
             text = ("Still needed: a run that succeeds. The last one did not: what went wrong and what to do are "
                     "shown above." if (self._sub(self.page).get("run") or {}).get("state") == "ended" else
@@ -1315,13 +1659,21 @@ class SetupDialog(QDialog):
                      "range " + "–".join(f"{x:g}" for x in e.get("range_mhz") or []) + " MHz"
                      + (", blind spots " + ", ".join(f"{a:g}–{b:g}" for a, b in e.get("gaps_mhz") or [])
                         if e.get("gaps_mhz") else "")]
+            busy = self._radio_running(r)
             box = self._page_box("add", f"Step 1. {STEP_TITLES['add']}: {self.radio}", state, "; ".join(lines),
-                                 [("Change this radio…", self.edit_radio, not self._radio_running(r)),
+                                 [("Edit this radio…", self.edit_radio, not busy),
+                                  ("Redo this radio's setup…", self.redo_radio, not busy),
+                                  ("Remove…", self.remove_radio, not busy),
                                   ("Add another radio…", self.add_radio, True)])
             box.layout().addWidget(_label(profile_words(r), muted=True))
-            box.layout().addWidget(_label("Changing the radio marks the steps that rest on it \"needs re-checking\": "
-                                          "the measurements if its tuner, serial or frequencies change, the path "
-                                          "checks if its tuner or serial does.", muted=True))
+            box.layout().addWidget(_label("Editing the radio marks the steps that rest on it \"needs re-checking\": "
+                                          "the measurements if its tuner or frequencies change, the path checks if its "
+                                          "tuner does. Redo starts its checklist again from step 1, keeping every "
+                                          "earlier result in its history. Remove takes it off this station's list; its "
+                                          "measurements and every run that used it are kept, and Restore brings it "
+                                          "back." + ("\nA setup step is running on this radio: Edit, Redo and Remove "
+                                                     "wait until it ends or is cancelled." if busy else ""),
+                                          muted=True))
             self.steps.addWidget(box)
             return
         if key == "draw":
@@ -1425,26 +1777,78 @@ class SetupDialog(QDialog):
     # ---- actions
     def add_radio(self):
         d = AddRadioDialog(self.svc, self.d, self)
-        if d.exec() and d.added:
-            self.radio = (d.added or {}).get("radio")
+        d.exec()
+        if d.added:                               # relay 026: added or restored, even if the window was then closed
+            self.radio = (d.added_all[0] if d.added_all else d.added).get("radio")
             self.page = None
             self._key = None
             if d.added.get("status"):
                 self.show_status(d.added["status"])
             else:
                 self.refresh()
+        if d.want_edit:                           # a radio already in this station: Edit it
+            self.radio = d.want_edit
+            self.page = "add"
+            self._key = None
+            self.refresh()
+            QTimer.singleShot(0, self.edit_radio)
 
     def edit_radio(self):
-        r = self._radio()
+        r = next((x for x in self.d.get("radios") or [] if x["radio"] == self.radio), None)
         if r is None:
             return
         d = EditRadioDialog(self.svc, r, self)
         if d.exec() and d.result:
             self._key = None
+            self.radio = d.result.get("radio") or self.radio
             if d.result.get("status"):
                 self.show_status(d.result["status"])
             else:
                 self.refresh()
+
+    def redo_radio(self):
+        if QMessageBox.question(self, "Redo this radio's setup?", f"Start {self.radio}'s checklist again from step 1?"
+                                "\n\nEvery earlier measurement and check is kept in its history, with its date; the "
+                                "steps read \"to redo\" until they are run again, and scanning on this radio is "
+                                "locked until they are.") != QMessageBox.StandardButton.Yes:
+            return
+
+        def got(d, err):
+            if err:
+                QMessageBox.information(self, "Not redone", err)
+                return
+            self.page = None
+            self._key = None
+            self.show_status(d)
+            self.go("add")
+        call(lambda: self.svc.setup_post("radio_redo", {"radio": self.radio}), got)
+
+    def remove_radio(self):
+        nick = self.radio
+        if QMessageBox.question(self, "Remove radio", f"Remove radio '{nick}'?\n\nIts measurements and every run that "
+                                "used it are kept. You can restore it from Archived (Removed radios…). Rigs with a path "
+                                "to it keep that path, flagged in Checks.") != QMessageBox.StandardButton.Yes:
+            return
+
+        def got(d, err):
+            if err:
+                QMessageBox.information(self, "Not removed", err)
+                return
+            self.radio = None
+            self.page = None
+            self._key = None
+            self.foot.setText(f"{nick} was removed; it is kept under Removed radios, with its history.")
+            self.show_status(d.get("status") or {})
+        call(lambda: self.svc.setup_post("radio_remove", {"radio": nick}), got)
+
+    def removed_radios(self):
+        d = RemovedRadiosDialog(self.svc, self.d.get("archived") or [], self)
+        if d.exec() and d.result:
+            self.radio = d.result.get("radio")
+            self.page = None
+            self._key = None
+            self.foot.setText(f"{self.radio} is back, with its measurements and history.")
+            self.show_status(d.result.get("status") or {})
 
     def _open_chain(self):
         self.open_chain.emit()
@@ -1508,6 +1912,7 @@ class SetupDialog(QDialog):
         row = QHBoxLayout()
         clear = _button("Clear the location")
         save = _button("Save", primary=True)
+        save.setDefault(True)                # relay 026: Enter saves
         cancel = _button("Cancel")
         row.addWidget(clear)
         row.addStretch(1)

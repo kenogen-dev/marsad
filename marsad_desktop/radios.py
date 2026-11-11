@@ -711,6 +711,15 @@ class RadiosDialog(QDialog):
         outer.addWidget(scroll, 1)
         self.foot = _label("", muted=True)
         outer.addWidget(self.foot)
+        from PySide6.QtWidgets import QPushButton
+        close_row = QHBoxLayout()            # relay 026: a Close button, as every window has; Esc does the same
+        close_row.addStretch(1)
+        self.b_close = QPushButton("Close")
+        self.b_close.setObjectName("RadiosClose")
+        self.b_close.setDefault(True)
+        self.b_close.clicked.connect(self.accept)
+        close_row.addWidget(self.b_close)
+        outer.addLayout(close_row)
         if initial:                          # the strip's last answer: the panel shows complete at once
             self.show_status(initial)
         if state is not None:                # relay 020: one source of truth; the state asks, every view listens

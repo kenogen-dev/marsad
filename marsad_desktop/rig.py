@@ -1265,9 +1265,10 @@ def _pname(node: dict) -> str:
     return str(node["part"].get("name") or "").strip() or PART_TYPES.get(node["part"]["type"], {}).get("label", "a part")
 
 
-def checks(rig: dict) -> list[dict]:
+def checks(rig: dict, removed: dict | None = None) -> list[dict]:
     """The Checks strip (relay 005): problems as the owner builds, each with the boxes it
-    is about, so a click can select them. They warn and never block.
+    is about, so a click can select them. They warn and never block. `removed` (relay 026): radios removed
+    from the station, {nickname: serial}; a path to one keeps it, flagged "radio removed".
     [{"kind": "wiring" | "radio" | "power" | "loose", "text": ..., "ids": [...]}]"""
     out = []
     nodes = {n["id"]: n for n in rig["nodes"]}
@@ -1313,6 +1314,10 @@ def checks(rig: dict) -> list[dict]:
     for rx, ids in by_rx.items():
         if len(ids) > 1:
             out.append({"kind": "radio", "ids": ids, "text": f"{len(ids)} radios in this rig are all {rx}"})
+        if removed and rx in removed:            # relay 026: the path stays; the radio left the station's list
+            out.append({"kind": "radio", "ids": ids,
+                        "text": f"radio removed: {rx} was removed from this station. Restore it (Set up this "
+                                "station, Removed radios) or take it out of this path"})
     for nid in sorted(loose, key=lambda i: (nodes[i]["y"], nodes[i]["x"])):
         out.append({"kind": "loose", "ids": [nid], "text": f"{_pname(nodes[nid])} is on its own, connected to nothing"})
     fed = {w["to"] for w in power_wires(rig)}
@@ -1912,9 +1917,9 @@ def check_level(c: dict) -> str:
     return "note"
 
 
-def checks_by_level(rig: dict) -> list[dict]:
+def checks_by_level(rig: dict, removed: dict | None = None) -> list[dict]:
     """rig.checks with each one's level, problems first."""
-    out = [dict(c, level=check_level(c)) for c in checks(rig)]
+    out = [dict(c, level=check_level(c)) for c in checks(rig, removed)]
     return sorted(out, key=lambda c: CHECK_LEVELS.index(c["level"]))
 
 
