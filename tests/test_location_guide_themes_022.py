@@ -173,7 +173,9 @@ def test_running_it_again_clears_it(tmp_path):
     st = ready_station(tmp_path)
     S.update_radio(st, "e", range_mhz=[52, 1766])
     st = Station.load(st.root)
-    S.accept_typical(st, "e", "ant > e")                       # keep the range as it now is
+    # measured again (relay 024: keeping an estimate would leave the step "estimate kept", never done)
+    done(st, "e", "range", range_mhz=[52.0, 1766.0], gaps_mhz=[])
+    st = Station.load(st.root)
     for step in ("warmup", "floor"):
         done(st, "e", step)
     done(st, "e", "baseline", "ant > e")

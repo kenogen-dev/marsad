@@ -160,7 +160,7 @@ def station_facts(setup: str, d: dict, rig: dict | None) -> list[str]:
         if rng:
             out.append(f"{word(r['name'])} tunes {_mhz(rng[0])}–{_mhz(rng[1])} MHz"
                        + (" (blind " + ", ".join(f"{_mhz(a)}–{_mhz(b)}" for a, b in gaps) + ")" if gaps else "")
-                       + " (station.json).")
+                       + f" ({r.get('range_word') or 'station.json'}).")
     both = (d or {}).get("both_cover_mhz") or []
     if setup in TWO and len(rs) >= 2:
         out.append("Both can tune " + (", ".join(f"{_mhz(a)}–{_mhz(b)}" for a, b in both) or "nothing in common")

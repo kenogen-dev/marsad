@@ -68,7 +68,8 @@ def test_add_radio_writes_a_receiver_the_engine_reads(tmp_path):
     assert st.receivers["bench-a"]["tuner"] == "r820t" and st.receivers["bench-a"]["range_mhz"] == [24, 1766]
     assert st.data["recorder"]["serials"]["bench-a"] == "90000001" and st.default_receiver == "bench-a"
     doc = S.load(st)
-    assert doc["radios"]["bench-a"]["facts"]["range_mhz"]["source"].startswith("typical")
+    # relay 024: the range is labelled an estimate, typical for the tuner, not measured on this unit
+    assert doc["radios"]["bench-a"]["facts"]["range_mhz"]["source"].startswith("estimate: typical for")
     with pytest.raises(ValueError, match="already this station"):
         S.add_radio(st, "90000001", "bench-b", "r820t")
     with pytest.raises(ValueError, match="already has a radio"):
@@ -92,8 +93,9 @@ def test_every_step_is_an_existing_command_or_says_none_exists(tmp_path):
     S.add_radio(st, "90000001", "e", "e4000")
     S.add_radio(st, "90000002", "r", "r820t")
     st = Station.load(st.root)
-    assert S.step_command(st, "e", "range", False, 0)["args"] == ["-t", "-d", "0"]
-    assert "no command" in S.step_command(st, "r", "range", False, 1)["missing"]
+    # relay 024: the tuner sweep measures the range of any tuner (it finds the radio by serial itself)
+    assert S.step_command(st, "e", "range", False, 0)["args"] == ["tuner-sweep", "--receiver", "e"]
+    assert S.step_command(st, "r", "range", True, 1)["args"] == ["tuner-sweep", "--receiver", "r", "--short"]
     rt = S.step_command(st, "r", "retune", True, 1)["args"]
     assert rt[0] == "calibrate-retune" and "--save" in rt and rt[rt.index("--gain") + 1] == "29.7"
     w = S.step_command(st, "e", "warmup", False, 0)["args"]
@@ -134,6 +136,10 @@ def test_the_checklist_locks_scans_until_every_step_is_done(tmp_path):
     why = S.lock_reason(st, "r")
     assert "step 2, Measure the radio" in why
     S.accept_typical(st, "r")
+    assert "step 2" in S.lock_reason(st, "r", "")             # relay 024: an estimate never unlocks scanning
+    S.record(st, "r", {"at": S.now(), "step": "range", "ok": True, "short": False, "range_mhz": [24.0, 1766.0],
+                       "gaps_mhz": [], "by": "tuner sweep"})
+    st = Station.load(st.root)
     for step, extra in (("retune", {"retune_ms_per_hop": 47}), ("warmup", {"warmup_min": 20}),
                         ("floor", {"floor_db": -36})):
         S.record(st, "r", dict({"at": S.now(), "step": step, "ok": True, "short": False}, **extra))

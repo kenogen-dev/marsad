@@ -14,6 +14,7 @@
     marsad web start|stop|status|restart   keep the web app up on 8731, with no window
     marsad response --open A --load B --antenna C   return loss / SWR per bin
     marsad calibrate-retune      measure this machine's retune cost per hop
+    marsad tuner-sweep --receiver NAME   where this radio's tuner locks: its range and blind spots
     marsad characterise <iq>     what a recording holds, and how to capture it next time
     marsad watch fixed|survey|list   the triggered recorder and its captures catalogue
     marsad init                  write a station.json to edit
@@ -49,6 +50,7 @@ COMMANDS = {
     "web": "start, stop, check or restart the web app on 8731 (no window)",
     "response": "antenna return loss and SWR from three bridge runs (open, load, antenna)",
     "calibrate-retune": "measure rtl_power's retune cost per hop on this computer",
+    "tuner-sweep": "measure where a radio's tuner locks: its range and blind spots",
     "characterise": "measure an IQ recording (bandwidth, pulses, chirp, period) and write a recipe",
     "watch": "the triggered recorder: fixed watch, survey + recorder, the captures catalogue",
     "backup": "copy the station to a verified zip on another drive, and restore one",
@@ -194,6 +196,9 @@ def main(argv=None) -> int:
     if cmd == "calibrate-retune":
         from . import calibrate
         return calibrate.main(args, station, prog)
+    if cmd == "tuner-sweep":
+        from . import tuner_sweep
+        return tuner_sweep.main(args, station, prog)
     if cmd == "characterise":
         from . import characterise
         return characterise.main(args, station, prog)

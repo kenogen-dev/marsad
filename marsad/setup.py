@@ -56,11 +56,14 @@ BASIS_WORDS = {"add": "the radio (its tuner or serial)", "range": "the frequenci
 # What each measurement does, what to connect, how long, and what to expect (the window shows these before a run).
 STEPS = {
     "range": {"title": "Tuning range and blind spots (PLL gap)",
-              "what": "Asks the tuner which frequencies it can lock to, with rtl_test's own PLL test. The E4000 has a "
-                      "gap in the L band whose edges vary from unit to unit and move as it warms; this finds yours.",
-              "connect": "Nothing needs to be connected.", "duration": "about 30 s",
-              "expect": "An E4000 locks from about 52 MHz to about 2.2 GHz, with a gap of roughly 1.1 to 1.25 GHz. "
-                        "Run it cold (before other steps) for the widest figures."},
+              "what": "The tuner sweep (`marsad tuner-sweep`): tunes the radio across frequencies one at a time and "
+                      "records where its synthesiser locks, then narrows each edge and each blind spot to 0.5 MHz. "
+                      "This unit's own figures replace the tuner's typical ones.",
+              "connect": "Nothing needs to be connected: lock is internal to the tuner. An antenna or a load may stay "
+                         "on.",
+              "duration": "about 1 to 2 minutes (short test about 20 s: a coarse pass, 100 MHz apart)",
+              "expect": "Edges near the tuner's typical figures. Run it cold (before other steps) for the widest "
+                        "figures: the edges move as the radio warms."},
     "retune": {"title": "Retune time per hop",
                "what": "Times how long rtl_power spends retuning between hops on this computer, which sets how much "
                        "of a sweep is spent listening. Saved into station.json (one figure for the station: the "
@@ -94,6 +97,23 @@ STEPS = {
                  "connect": "The rig as drawn, antenna on.", "duration": "10 min (short test 2 min)",
                  "expect": "Signals above a floor a little higher than the terminated one."},
 }
+
+
+# Relay 024: the words that depend on the radio's tuner. Every step's text is chosen for the radio's own tuner.
+TUNER_TEXT = {
+    "e4000": {"range": {"expect": "Expect about 52 to 2200 MHz, with a blind spot (the PLL gap) somewhere near 1100 to "
+                                  "1250 MHz; the gap's edges vary from unit to unit. Run it cold (before other steps) for "
+                                  "the widest figures: the whole range slides down as the radio warms."}},
+    "r820t": {"range": {"expect": "Expect about 24 to 1766 MHz, normally with no blind spots. Below about 24 MHz this "
+                                  "driver switches to HF direct sampling, so the low edge found there is that switch, "
+                                  "not a lock limit."}},
+}
+
+
+def step_text(step: str, tuner: str | None) -> dict:
+    """One step's what / connect / how long / what to expect, for this radio's tuner (relay 024)."""
+    key = "r820t" if (tuner or "").lower() in ("r820t", "r860", "r828d") else (tuner or "").lower()
+    return dict(STEPS[step], **(TUNER_TEXT.get(key, {}).get(step) or {}))
 
 
 def now() -> str:
@@ -325,7 +345,9 @@ def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mh
     rng = [float(v) for v in (range_mhz or typ["range_mhz"])]
     if len(rng) != 2 or not rng[0] < rng[1]:
         raise ValueError("The range is two frequencies in MHz, low then high.")
-    gaps = [[float(a), float(b)] for a, b in (gaps_mhz if gaps_mhz is not None else typ["gaps_mhz"])]
+    # relay 024: blind spots are not measured yet; none is stored until the tuner sweep finds them (or the owner
+    # types them). The range is the tuner's typical one, kept as an estimate.
+    gaps = [[float(a), float(b)] for a, b in (gaps_mhz or [])]
     entry = {"label": label or typ["label"], "tuner": key, "range_mhz": rng, "gaps_mhz": gaps, "device": 0}
     if maker or product:
         entry["usb"] = {"maker": maker, "product": product}
@@ -338,13 +360,16 @@ def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mh
         raw["default_receiver"] = nick
     station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     doc = load(station)
+    estimate = range_mhz is None or rng == [float(v) for v in typ["range_mhz"]]
     doc["radios"][nick] = {"serial": serial, "added": now(), "tuner": key,
-                           "facts": {"range_mhz": {"value": rng, "source": "typical for this tuner, not yet measured"
-                                                   if range_mhz is None or rng == [float(v) for v in typ["range_mhz"]]
-                                                   else "entered by the owner"},
-                                     "gaps_mhz": {"value": gaps, "source": "typical for this tuner, not yet measured"
-                                                  if gaps_mhz is None or gaps == typ["gaps_mhz"]
-                                                  else "entered by the owner"}},
+                           "read": {"maker": maker, "product": product},
+                           "facts": {"range_mhz": {"value": rng, "kind": "estimate" if estimate else "entered",
+                                                   "source": f"estimate: typical for {TUNER_LABEL.get(key, key)}, not "
+                                                             "measured on this unit" if estimate else
+                                                             "entered by the owner"},
+                                     "gaps_mhz": {"value": gaps, "kind": "not measured" if gaps_mhz is None else
+                                                  "entered", "source": "not measured yet" if gaps_mhz is None else
+                                                  "entered by the owner"}},
                            "results": {}}
     _save(station.root, doc)
     return {"radio": nick, "entry": entry}
@@ -377,12 +402,8 @@ def step_command(station: Station, nick: str, step: str, short: bool, device: in
     lo, hi = tile(rx)
     freq = f"{lo:g}M:{hi:g}M:50k"
     stamp_tag = f"setup-{step}-{nick}" + ("-short" if short else "")
-    if step == "range":
-        if tuner != "e4000":
-            return {"missing": f"There is no command here that measures an {TUNER_LABEL.get(tuner, tuner)}'s range: "
-                               "rtl_test -t tests only the E4000's PLL. Keep the tuner's typical range (it stays "
-                               "marked \"typical, not measured\"), or type measured figures if you have them."}
-        return {"kind": "tool", "tool": "rtl_test", "args": ["-t", "-d", str(device)]}
+    if step == "range":                                    # relay 024: the tuner sweep, for any tuner
+        return {"kind": "marsad", "args": ["tuner-sweep", "--receiver", nick] + (["--short"] if short else [])}
     if step == "retune":
         return {"kind": "marsad", "args": ["calibrate-retune", "--device", str(device), "--gain", f"{g:g}", "--save",
                                            "--seconds", "20" if short else "90"]}
@@ -411,6 +432,8 @@ def step_command(station: Station, nick: str, step: str, short: bool, device: in
 _RANGE = re.compile(r"E4K range:\s*(-?\d+)\s*to\s*(\d+)\s*MHz", re.I)
 _GAP = re.compile(r"E4K L-band gap:\s*(\d+)\s*to\s*(\d+)\s*MHz", re.I)
 _RETUNE = re.compile(r"retune per hop\s+([\d.]+)\s*ms")
+_SWEEP_RANGE = re.compile(r"tuner-sweep: range\s+([\d.]+)\s+to\s+([\d.]+)\s*MHz")
+_SWEEP_GAP = re.compile(r"tuner-sweep: gap\s+([\d.]+)\s+to\s+([\d.]+)\s*MHz")
 _SIDECAR_ADSB = re.compile(r"sidecar:\s*(\S+\.json)\s*$", re.M)
 
 
@@ -452,6 +475,25 @@ def result_of(station: Station, job: dict, status: dict) -> dict:
            "log": job.get("log"), "exit_code": code, "ok": False}
     if job.get("basis") is not None:
         res["basis"] = job["basis"]             # relay 022: what it rested on when it was started
+    if step == "range" and "tuner-sweep:" in full:         # relay 024
+        m = _SWEEP_RANGE.search(full)
+        if not m:
+            bad = re.search(r"tuner-sweep: FAILED: (.*)", full)
+            res["note"] = "the tuner sweep found no range: " + (bad.group(1) if bad else (status.get("reason")
+                                                                                      or f"exit {code}"))
+            return res
+        lo, hi = float(m.group(1)), float(m.group(2))
+        gaps = [[float(a), float(b)] for a, b in _SWEEP_GAP.findall(full)]
+        res.update(range_mhz=[lo, hi], gaps_mhz=gaps, by="tuner sweep", method="tuner-sweep")
+        edge_open = "true low edge is lower" in full or "true high edge is higher" in full
+        res["ok"] = 1 <= lo < hi <= 3000 and not edge_open
+        res["note"] = (f"locks {lo:g} to {hi:g} MHz" + ("".join(f", blind spot {a:g} to {b:g} MHz" for a, b in gaps)
+                                                         if gaps else ", no blind spots")
+                       + ("; below the low edge the driver switches to HF direct sampling"
+                          if "direct sampling" in full else "")
+                       + ("" if not edge_open else ": an edge lay outside the sweep; run it again")
+                       + (" (short test: a coarse pass, edges within about 100 MHz)" if job.get("short") else ""))
+        return res
     if step == "range":
         m, g = _RANGE.search(full), _GAP.search(full)
         if not m:
@@ -544,16 +586,17 @@ def record(station: Station, nick: str, res: dict) -> None:
     doc = load(station)
     r = doc["radios"].setdefault(nick, {"results": {}})
     r.setdefault("results", {}).setdefault(res["step"], []).append(res)
-    if res["step"] == "range" and res.get("ok") and not res.get("short"):
+    if res["step"] == "range" and res.get("ok") and not res.get("short") and not res.get("accepted_typical"):
         raw = _raw(station)
         e = (raw.get("receivers") or {}).get(nick)
         if e is not None:
             e["range_mhz"], e["gaps_mhz"] = res["range_mhz"], res["gaps_mhz"]
             station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-            r.setdefault("facts", {})["range_mhz"] = {"value": res["range_mhz"], "source": f"measured {res['at'][:10]} "
-                                                      "by Tuning range and blind spots"}
-            r["facts"]["gaps_mhz"] = {"value": res["gaps_mhz"], "source": f"measured {res['at'][:10]} by Tuning range "
-                                      "and blind spots"}
+            how = res.get("by") or "Tuning range and blind spots"
+            r.setdefault("facts", {})["range_mhz"] = {"value": res["range_mhz"], "kind": "measured",
+                                                      "source": f"measured on {res['at'][:10]} by {how}"}
+            r["facts"]["gaps_mhz"] = {"value": res["gaps_mhz"], "kind": "measured",
+                                      "source": f"measured on {res['at'][:10]} by {how}"}
     if res["step"] == "warmup" and res.get("ok"):
         r.setdefault("facts", {})["warmup_min"] = {"value": res.get("warmup_min"),
                                                    "source": f"measured {res['at'][:10]} by Warm-up drift"}
@@ -633,13 +676,20 @@ def update_radio(station: Station, nick: str, serial=None, tuner=None, range_mhz
 
 
 def accept_typical(station: Station, nick: str, chain_text: str = "") -> None:
-    """For a tuner with no range-measuring command: the owner keeps the typical figures, still marked typical."""
+    """The owner keeps the range as it is, an estimate (the tuner's typical figures, or entered by hand), instead of
+    measuring it. Relay 024: the guide can go on, but no estimate unlocks scanning; and a range already measured,
+    unchanged since, has no estimate left to keep."""
     rx = station.receivers.get(nick) or {}
+    last = latest(load(station)["radios"].get(nick) or {}, "range")
+    if last and last.get("ok") and not last.get("accepted_typical") and             [float(v) for v in last.get("range_mhz") or []] == [float(v) for v in rx.get("range_mhz") or []]:
+        raise ValueError("This radio's range is already measured (by the tuner sweep), so there is no estimate to "
+                         "keep. Run the sweep again to measure it anew.")
     record(station, nick, {"at": now(), "step": "range", "short": False, "ok": True, "accepted_typical": True,
                            "basis": basis(station, nick, chain_text),
                            "by": "the owner (no measuring command for this tuner)",
                            "range_mhz": rx.get("range_mhz"), "gaps_mhz": rx.get("gaps_mhz"),
-                           "note": "typical figures kept, not measured (no command measures this tuner's range)"})
+                           "note": "the estimate kept: typical figures, not measured on this unit. Scanning stays "
+                                   "locked until the tuner sweep measures them."})
 
 
 def confirm_rig(station: Station, nick: str, chain_text: str) -> None:
@@ -669,6 +719,9 @@ def _sub_state(station: Station, nick: str, r: dict, m: str, running: set, now_b
             words = " and ".join(BASIS_WORDS[d] for d in moved)
             return "needs re-checking", (words[0].upper() + words[1:] + f" changed since this was done ({when}): run "
                                          f"it again. Was: {last.get('note') or 'done'}")
+        if m == "range" and last.get("accepted_typical"):
+            return "estimate kept", ("An estimate, not measured on this unit. Scanning stays locked until the tuner "
+                                     "sweep measures it: run it.")
         if m == "range":
             rx = station.receivers.get(nick) or {}
             same = ([float(v) for v in last.get("range_mhz") or []] == [float(v) for v in rx.get("range_mhz") or []]
@@ -687,7 +740,7 @@ def _sub_state(station: Station, nick: str, r: dict, m: str, running: set, now_b
 def _agg(states: list) -> str:
     if all(s == "done" for s in states):
         return "done"
-    for s in ("in progress", "needs attention", "needs re-checking"):
+    for s in ("in progress", "needs attention", "needs re-checking", "estimate kept"):
         if s in states:
             return s
     return "in progress" if "done" in states else "not started"

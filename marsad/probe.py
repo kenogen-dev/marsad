@@ -282,7 +282,7 @@ TUNER_WORDS = {"e4000": "E4000", "r820t": "R82", "r828d": "R82", "r860": "R860"}
 
 def parse_eeprom(text: str) -> dict:
     """The useful fields of one `rtl_eeprom -d N` report, or an `error`."""
-    out = {"product": "", "serial": "", "tuner": "", "count": 0, "error": None}
+    out = {"product": "", "serial": "", "tuner": "", "manufacturer": "", "count": 0, "error": None}
     m = re.search(r"Found (\d+) device", text)
     if m:
         out["count"] = int(m.group(1))
@@ -295,6 +295,8 @@ def parse_eeprom(text: str) -> dict:
     for line in text.splitlines():
         if line.startswith("Product:"):
             out["product"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Manufacturer:"):                 # relay 024: shown as read from the radio
+            out["manufacturer"] = line.split(":", 1)[1].strip()
         elif line.startswith("Serial number:"):
             out["serial"] = line.split(":", 1)[1].strip()
         elif line.startswith("Found") and "tuner" in line:
@@ -347,7 +349,7 @@ def detect_receivers(station: Station, max_index: int = 4) -> dict:
                 return {"found": [], "error": info["error"]}
             continue
         found.append({"device": d, "product": info["product"], "serial": info["serial"],
-                      "tuner": info["tuner"],
+                      "tuner": info["tuner"], "manufacturer": info.get("manufacturer", ""),
                       "receiver": match_receiver(station, info["product"], info["tuner"])})
     return {"found": found, "error": None if found else "no RTL-SDR devices found"}
 

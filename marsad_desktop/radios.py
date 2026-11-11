@@ -439,6 +439,11 @@ class CoverageMap(QWidget):
             for a, b in gaps:
                 p.setBrush(QBrush(T.color("alert", 0.8), Qt.BrushStyle.BDiagPattern))
                 p.drawRect(QRectF(fx(float(a)), y + 3, max(2.0, fx(float(b)) - fx(float(a))), self.ROW - 6))
+            if r is not None and r.get("range_word"):          # relay 024: measured, or an estimate
+                p.setPen(T.color("text") if r.get("range_kind") == "measured" else T.color("muted"))
+                p.drawText(QRectF(left, y, right - left - 6, self.ROW), Qt.AlignmentFlag.AlignVCenter
+                           | Qt.AlignmentFlag.AlignRight, "range " + r["range_word"])
+                p.setPen(Qt.PenStyle.NoPen)
             y += self.ROW + 6
         if self.span:
             a, b = self.span

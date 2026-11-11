@@ -33,8 +33,10 @@ from marsad_desktop.scan_start import call
 from marsad.setup import STEP_ORDER, STEP_TITLES, STEPS as STEPS_TEXT                         # noqa: E402
 
 STATE_COLOUR = {"done": "open", "in progress": "survey_light", "needs attention": "alert_text",
-                "needs re-checking": "anomaly", "not started": "muted"}
-STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "needs re-checking": "↻", "not started": "○"}
+                "needs re-checking": "anomaly", "estimate kept": "anomaly", "not started": "muted"}
+STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "needs re-checking": "↻", "estimate kept": "≈",
+              "not started": "○"}
+PASSED = ("done", "estimate kept")      # relay 024: an estimate lets the guide go on; it never unlocks scanning
 
 
 def _label(text, muted=False, size=None, bold=False, wrap=True):
@@ -396,6 +398,11 @@ class FirstRunDialog(QDialog):
 # ---------------------------------------------------------------- Add Radio
 
 class AddRadioDialog(QDialog):
+    """Add Radio. Relay 024: only what is known is shown as a value, and every value says where it came from:
+    read from the radio (serial, product and maker strings, the detected tuner), fixed by the tuner type (the
+    driver's gain table), an estimate (the tuner's typical range, greyed), or not measured yet (blind spots, retune
+    time, warm-up, floor: never a value). Nothing here comes from another station."""
+
     def __init__(self, svc, status: dict, parent=None):
         super().__init__(parent)
         from marsad import setup as S
@@ -404,42 +411,69 @@ class AddRadioDialog(QDialog):
         self.status = status
         self.detected: dict = {}
         self.added = None
+        self.tuner_from = None                  # "detected" once rtl_eeprom named it; "chosen" when picked by hand
         self.setWindowTitle("Add Radio")
         self.setObjectName("AddRadioDialog")
         v = QVBoxLayout(self)
         v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
         v.setSpacing(T.SPACE)
         v.addWidget(_label("Add Radio", size=13, bold=True))
-        v.addWidget(_label("The RTL-SDRs Windows can see, by serial (nothing is opened to list them). Pick one.",
-                           muted=True))
+        v.addWidget(_label("The RTL-SDRs Windows can see, by serial (nothing is opened to list them). Pick one, then "
+                           "Detect its tuner to read the rest from the radio itself.", muted=True))
         self.list = QListWidget()
-        self.list.setMaximumHeight(130)
+        self.list.setMaximumHeight(110)
         v.addWidget(self.list)
         det = QHBoxLayout()
         self.b_detect = _button("Detect its tuner…")
-        self.b_detect.setToolTip("Asks each plugged-in radio its serial and tuner with the engine's own probe "
-                                 "(rtl_eeprom). It opens each radio for a moment, so nothing else may be using one.")
+        self.b_detect.setAutoDefault(False)
+        self.b_detect.setToolTip("Asks each plugged-in radio its serial, maker, product and tuner with the engine's own "
+                                 "probe (rtl_eeprom). It opens each radio for a moment, so nothing else may be using "
+                                 "one.")
         self.b_detect.clicked.connect(self.detect)
         det.addWidget(self.b_detect)
         self.det_note = _label("", muted=True)
         det.addWidget(self.det_note, 1)
         v.addLayout(det)
         g = QGridLayout()
+        g.setColumnStretch(1, 1)
+        g.setHorizontalSpacing(T.SPACE * 2)
         self.serial = QLineEdit()
+        self.serial.setObjectName("RadioSerial")
         self.nick = QLineEdit()
         self.nick.setPlaceholderText("a short name, e.g. radio1")
         self.tuner = QComboBox()
         self.tuner.addItem("Elonics E4000 (zero-IF)", "e4000")
         self.tuner.addItem("Rafael Micro R820T / R860 (low-IF)", "r820t")
-        self.lo, self.hi, self.gaps = QLineEdit(), QLineEdit(), QLineEdit()
-        self.maker, self.product = QLineEdit(), QLineEdit()
-        rows = [("Serial", self.serial), ("Nickname", self.nick), ("Tuner", self.tuner),
-                ("Range low, MHz", self.lo), ("Range high, MHz", self.hi),
-                ("Blind spots (PLL gap), MHz", self.gaps), ("Maker", self.maker), ("Product", self.product)]
-        for i, (k, w) in enumerate(rows):
+        self.product = QLineEdit()
+        self.product.setReadOnly(True)
+        self.maker = QLineEdit()
+        self.maker.setPlaceholderText("optional: type the maker if you know it")
+        self.src = {}
+        rows = [("Serial", self.serial, "serial"), ("Nickname", self.nick, "nick"), ("Product", self.product, "product"),
+                ("Maker", self.maker, "maker"), ("Tuner", self.tuner, "tuner")]
+        for i, (k, w, key) in enumerate(rows):
             g.addWidget(_label(k, wrap=False), i, 0)
             g.addWidget(w, i, 1)
+            self.src[key] = _label("", muted=True, wrap=False)
+            g.addWidget(self.src[key], i, 2)
         v.addLayout(g)
+        v.addWidget(_label("Known before any measurement", bold=True))
+        self.known = QGridLayout()
+        self.known.setColumnStretch(1, 1)
+        self.known.setHorizontalSpacing(T.SPACE * 2)
+        self.k_rows = {}
+        for i, (key, word) in enumerate((("gains", "Gain steps"), ("range", "Tuning range"),
+                                         ("gaps", "Blind spots (PLL gap)"), ("retune", "Retune time"),
+                                         ("warmup", "Warm-up"), ("floor", "Its own floor"))):
+            name = _label(word, wrap=False)
+            val = _label("", wrap=True)
+            val.setObjectName(f"Known_{key}")
+            how = _label("", muted=True, wrap=True)
+            self.known.addWidget(name, i, 0)
+            self.known.addWidget(val, i, 1)
+            self.known.addWidget(how, i, 2)
+            self.k_rows[key] = (val, how)
+        v.addLayout(self.known)
         self.typical = _label("", muted=True)
         self.typical.setObjectName("TypicalNote")
         v.addWidget(self.typical)
@@ -448,17 +482,21 @@ class AddRadioDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         c = _button("Cancel")
+        c.setAutoDefault(False)
         c.clicked.connect(self.reject)
         self.ok = _button("Add this radio", primary=True)
+        self.ok.setDefault(True)
         self.ok.clicked.connect(self.save)
         row.addWidget(c)
         row.addWidget(self.ok)
         v.addLayout(row)
+        self.tuner.activated.connect(self._tuner_chosen)
         self.tuner.currentIndexChanged.connect(self._typical)
         self.list.currentItemChanged.connect(self._picked)
+        self.serial.textChanged.connect(self._typical)
         self._fill()
         self._typical()
-        self.resize(640, self.sizeHint().height())
+        self.resize(760, self.sizeHint().height())
 
     def _fill(self):
         self.list.clear()
@@ -485,25 +523,75 @@ class AddRadioDialog(QDialog):
         if not r:
             return
         self.serial.setText(str(r["serial"]))
-        if not self.product.text():
-            self.product.setText(r.get("name") or "")
-        f = self.detected.get(str(r["serial"]))
-        if f and f.get("tuner_key"):
-            self.tuner.setCurrentIndex(self.tuner.findData(f["tuner_key"]))
+        self._apply_detected()
+
+    def _apply_detected(self):
+        """What the radio itself said (rtl_eeprom), for the serial picked."""
+        f = self.detected.get(self.serial.text().strip())
+        if f:
+            self.product.setText(f.get("product") or "")
+            if (f.get("manufacturer") or "").strip():
+                self.maker.setText(f["manufacturer"].strip())
+                self.maker.setReadOnly(True)
+            else:
+                self.maker.setReadOnly(False)
+            if f.get("tuner_key"):
+                self.tuner.setCurrentIndex(self.tuner.findData(f["tuner_key"]))
+                self.tuner_from = "detected"
+        self._typical()
+
+    def _tuner_chosen(self, *_):
+        f = self.detected.get(self.serial.text().strip()) or {}
+        self.tuner_from = "detected" if f.get("tuner_key") == self.tuner.currentData() else "chosen"
+        self._typical()
 
     def _typical(self, *_):
+        """Every value with where it came from (relay 024)."""
         t = self.S.typical(self.tuner.currentData())
-        self.lo.setText(f"{t['range_mhz'][0]:g}")
-        self.hi.setText(f"{t['range_mhz'][1]:g}")
-        self.gaps.setText(", ".join(f"{a:g}-{b:g}" for a, b in t["gaps_mhz"]))
-        self.typical.setText(f"Range, blind spots and gain steps ({', '.join(f'{g:g}' for g in t['gains'])} dB) are "
-                             f"the {t['tuner_label']}'s typical figures, not yet measured. Measure the radio replaces "
-                             "them with this unit's own.")
+        f = self.detected.get(self.serial.text().strip())
+        vis = {str(r.get("serial")): r for r in (self.status.get("visible") or [])}.get(self.serial.text().strip())
+        self.src["serial"].setText("read from the radio" if f else ("from Windows' device list" if vis else
+                                                                    "typed"))
+        self.src["nick"].setText("yours to choose")
+        if f:
+            self.src["product"].setText("read from the radio")
+        elif vis and not self.product.text():
+            self.product.setText(vis.get("name") or "")
+            self.src["product"].setText("from Windows' device list")
+        elif not self.product.text():
+            self.src["product"].setText("not read yet: Detect reads it")
+        if f and not (f.get("manufacturer") or "").strip():
+            self.src["maker"].setText("this radio doesn't report a maker name")
+        elif f:
+            self.src["maker"].setText("read from the radio")
+        else:
+            self.src["maker"].setText("not read yet: Detect reads it" if not self.maker.text() else "typed")
+        self.src["tuner"].setText({"detected": "detected: read from the radio",
+                                   "chosen": "chosen by you"}.get(self.tuner_from or "", "not detected yet: Detect "
+                                                                                          "reads it"))
+        label = t["tuner_label"]
+        val, how = self.k_rows["gains"]
+        val.setText(", ".join(f"{g:g}" for g in t["gains"]) + " dB")
+        how.setText(f"from the {label}'s driver table (exact for any {label})")
+        val, how = self.k_rows["range"]
+        val.setText(f"about {t['range_mhz'][0]:g} to {t['range_mhz'][1]:g} MHz")
+        val.setProperty("muted", True)
+        val.setStyleSheet(f"color: {T.C['muted']};")
+        how.setText(f"estimate: typical for {label}, not measured on this unit. The tuner sweep measures it.")
+        for key, step in (("gaps", "the tuner sweep"), ("retune", "Retune time per hop"), ("warmup", "Warm-up drift"),
+                          ("floor", "Its own floor")):
+            val, how = self.k_rows[key]
+            val.setText("not measured yet")
+            val.setStyleSheet(f"color: {T.C['muted']};")
+            how.setText(f"measured by {step} in Set up this station")
+        self.typical.setText(f"Nothing here comes from another station. The range is an estimate (typical for "
+                             f"{label}, not measured on this unit) until Measure the radio replaces it; no estimate "
+                             "unlocks scanning.")
 
     def detect(self):
         if QMessageBox.question(self, "Detect the tuner?", "This opens each plugged-in radio for a moment to ask its "
-                                "serial and tuner (rtl_eeprom). It is refused while any radio program is running.\n\n"
-                                "Go ahead?") != QMessageBox.StandardButton.Yes:
+                                "serial, maker, product and tuner (rtl_eeprom). It is refused while any radio program "
+                                "is running.\n\nGo ahead?") != QMessageBox.StandardButton.Yes:
             return
         self.b_detect.setEnabled(False)
         self.det_note.setText("asking each radio…")
@@ -518,30 +606,13 @@ class AddRadioDialog(QDialog):
                      for f in d.get("found") or []]
             self.det_note.setText(("; ".join(words) or (d.get("error") or "no radio answered"))
                                   + (f"\n{d['duplicate_help']}" if d.get("duplicates") else ""))
-            cur = self.list.currentItem()
-            if cur:
-                self._picked(cur)
+            self._apply_detected()
         call(lambda: self.svc.setup_post("detect", {}), got)
 
     def save(self):
-        try:
-            gaps = []
-            for part in [p for p in self.gaps.text().replace(" ", "").split(",") if p]:
-                a, b = part.split("-")
-                gaps.append([float(a), float(b)])
-            lo, hi = _float(self.lo.text()), _float(self.hi.text())
-            if lo is None or hi is None:
-                raise ValueError("The range needs a low and a high frequency in MHz.")
-        except ValueError as exc:
-            self.why.setText(str(exc) if "range" in str(exc) else "Blind spots are written like 1105-1268, comma "
-                                                                   "separated.")
-            return
-        t = self.S.typical(self.tuner.currentData())
         body = {"serial": self.serial.text().strip(), "nickname": self.nick.text().strip(),
                 "tuner": self.tuner.currentData(), "maker": self.maker.text().strip(),
                 "product": self.product.text().strip()}
-        if [lo, hi] != [float(x) for x in t["range_mhz"]] or gaps != t["gaps_mhz"]:
-            body.update(range_mhz=[lo, hi], gaps_mhz=gaps)       # corrected by the owner; else marked typical
         self.ok.setEnabled(False)
 
         def got(d, err):
@@ -634,6 +705,38 @@ class EditRadioDialog(QDialog):
         call(lambda: self.svc.setup_post("radio_update", body), got)
 
 
+PROFILE = (("range_mhz", "tuning range"), ("gaps_mhz", "blind spots"), ("retune_ms_per_hop", "retune time"),
+           ("warmup_min", "warm-up"), ("floor_db", "its own floor"))
+
+
+def profile_words(radio: dict) -> str:
+    """Relay 024: the radio's profile in words, each figure with what it is (measured, an estimate, entered), and
+    every figure not measured yet said so, never left out."""
+    facts = radio.get("facts") or {}
+    read = radio.get("read") or {}
+    bits = []
+    for key, word in PROFILE:
+        f = facts.get(key)
+        if not f or f.get("kind") == "not measured" or (key == "gaps_mhz" and f.get("source") == "not measured yet"):
+            bits.append(f"{word}: not measured yet")
+            continue
+        v = f.get("value")
+        if key == "range_mhz":
+            v = f"{v[0]:g}–{v[1]:g} MHz"
+        elif key == "gaps_mhz":
+            v = ", ".join(f"{a:g}–{b:g} MHz" for a, b in v) or "none"
+        elif key == "retune_ms_per_hop":
+            v = f"{v} ms per hop"
+        elif key == "warmup_min":
+            v = f"{v} min"
+        elif key == "floor_db":
+            v = f"{v} dB (relative)"
+        bits.append(f"{word}: {v} ({f.get('source')})")
+    if "maker" in read and not read.get("maker"):
+        bits.append("maker: this radio doesn't report a maker name")
+    return "This radio's profile: " + "; ".join(bits) + "."
+
+
 def _serial_of(radio: dict) -> str:
     detail = next((s.get("detail") or "" for s in radio.get("steps") or [] if s.get("step") == "add"), "")
     return detail.replace("serial ", "", 1) if detail.startswith("serial ") else ""
@@ -642,7 +745,7 @@ def _serial_of(radio: dict) -> str:
 # The guide's pages, in order: (checklist step, page key). Measure and Path checks have one page per part.
 PAGES = [("add", "add"), ("measure", "range"), ("measure", "warmup"), ("measure", "retune"), ("measure", "floor"),
          ("draw", "draw"), ("confirm", "confirm"), ("paths", "adsb"), ("paths", "baseline")]
-TOUCHED = ("done", "needs re-checking", "in progress", "needs attention")
+TOUCHED = ("done", "needs re-checking", "in progress", "needs attention", "estimate kept")
 
 
 class SetupDialog(QDialog):
@@ -809,19 +912,19 @@ class SetupDialog(QDialog):
         keys = [k for _, k in PAGES]
         if self.page_state(key)[0] in TOUCHED:
             return True
-        return all(self.page_state(k)[0] == "done" for k in keys[:keys.index(key)])
+        return all(self.page_state(k)[0] in PASSED for k in keys[:keys.index(key)])
 
     def blocker(self, key: str) -> str | None:
         """The first unfinished page before this one, in words, or None."""
         keys = [k for _, k in PAGES]
         for k in keys[:keys.index(key)]:
-            if self.page_state(k)[0] != "done":
+            if self.page_state(k)[0] not in PASSED:
                 return self._page_title(k)
         return None
 
     def frontier(self) -> str:
         """The first page not done (the last page when all are)."""
-        return next((k for _, k in PAGES if self.page_state(k)[0] != "done"), PAGES[-1][1])
+        return next((k for _, k in PAGES if self.page_state(k)[0] not in PASSED), PAGES[-1][1])
 
     def _page_title(self, key: str) -> str:
         step = next(s for s, k in PAGES if k == key)
@@ -864,7 +967,7 @@ class SetupDialog(QDialog):
     def next(self):
         keys = [k for _, k in PAGES]
         i = keys.index(self.page or keys[0])
-        if i + 1 < len(keys) and self.page_state(self.page)[0] == "done":
+        if i + 1 < len(keys) and self.page_state(self.page)[0] in PASSED:
             self.go(keys[i + 1])
 
     def _clicked(self, it):
@@ -948,12 +1051,15 @@ class SetupDialog(QDialog):
         self.b_back.setEnabled(i > 0)
         state, detail = self.page_state(self.page) if self._radio() is not None else ("not started", "")
         last = i + 1 >= len(keys)
-        self.b_next.setEnabled(state == "done" and not last)
+        self.b_next.setEnabled(state in PASSED and not last)
         r = self._radio()
         if r is not None and r.get("ready"):
             text = "Every step is done: scanning is unlocked for this radio."
         elif state == "done":
             text = "Done. Next goes on to " + (self._page_title(keys[i + 1]) if not last else "the end") + "."
+        elif state == "estimate kept":
+            text = ("The estimate is kept, so you can go on. Scanning stays locked until the tuner sweep measures the "
+                    "range: come back and run it.")
         elif state == "in progress":
             text = ("Still needed: this run to finish. It keeps running in the background if you go Back or close "
                     "the guide.")
@@ -966,7 +1072,7 @@ class SetupDialog(QDialog):
                 "add": "add the radio.",
                 "draw": "draw the rig on the Chain screen and use it for runs.",
                 "confirm": "check the rig against the drawing, then confirm it.",
-                "range": "run the full measurement, or keep the typical range (a short test does not count).",
+                "range": "run the tuner sweep (a short test does not count).",
             }.get(self.page, "run the full measurement (a short test does not count).")
             b = self.blocker(self.page)
             if b:
@@ -1033,10 +1139,7 @@ class SetupDialog(QDialog):
             box = self._page_box("add", f"Step 1. {STEP_TITLES['add']}: {self.radio}", state, "; ".join(lines),
                                  [("Change this radio…", self.edit_radio, not self._radio_running(r)),
                                   ("Add another radio…", self.add_radio, True)])
-            if facts:
-                box.layout().addWidget(_label("This radio's profile: " + "; ".join(
-                    f"{k.replace('_', ' ')} {v.get('value')} ({v.get('source')})" for k, v in facts.items()),
-                    muted=True))
+            box.layout().addWidget(_label(profile_words(r), muted=True))
             box.layout().addWidget(_label("Changing the radio marks the steps that rest on it \"needs re-checking\": "
                                           "the measurements if its tuner, serial or frequencies change, the path "
                                           "checks if its tuner or serial does.", muted=True))
@@ -1053,17 +1156,14 @@ class SetupDialog(QDialog):
                 "confirm", f"Step 4. {STEP_TITLES['confirm']}", state, detail,
                 [("It's built as drawn…", self.confirm_rig, self.page_state("draw")[0] == "done")]))
             return
-        s = STEPS_TEXT.get(key) or {}
+        s = (r.get("texts") or {}).get(key) or STEPS_TEXT.get(key) or {}     # relay 024: for this radio's tuner
         n = STEP_ORDER.index(next(st for st, k in PAGES if k == key)) + 1
-        acts = []
-        if key == "range" and (r.get("entry") or {}).get("tuner") != "e4000":
-            acts.append(("Keep the typical range…", self.accept_typical, not running and not locked))
-        else:
-            acts.append(("Short test", lambda *_, k=key: self.run_step(k, True), not running and not locked))
-            acts.append(("Run…", lambda *_, k=key: self.run_step(k, False), not running and not locked))
-            if key == "range":
-                acts.append(("Keep the range as it is…", self.accept_typical,
-                             not running and not locked and state == "needs re-checking"))
+        acts = [("Run short test" if key == "range" else "Short test", lambda *_, k=key: self.run_step(k, True),
+                 not running and not locked),
+                ("Run full measurement…" if key == "range" else "Run…", lambda *_, k=key: self.run_step(k, False),
+                 not running and not locked)]
+        if key == "range" and state != "done":
+            acts.append(("Keep the estimate instead…", self.accept_typical, not running and not locked))
         box = self._page_box(key, f"Step {n}. {s.get('title', key)}", state, detail, acts, actions_last=True)
         g = QGridLayout()
         g.setColumnStretch(1, 1)
@@ -1115,9 +1215,10 @@ class SetupDialog(QDialog):
         self.accept()
 
     def accept_typical(self):
-        if QMessageBox.question(self, "Keep the range?", "Keep the radio's range and blind spots as they are now? "
-                                "They stay marked as typical or as entered, not measured.") != \
-                QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Keep the estimate?", "Keep the radio's range as it is now, an estimate (the "
+                                "tuner's typical figures, or what you entered), instead of measuring it?\n\nThe guide "
+                                "can go on, but scanning stays locked until the tuner sweep measures the range: no "
+                                "estimate unlocks scanning.") != QMessageBox.StandardButton.Yes:
             return
         call(lambda: self.svc.setup_post("accept_typical", {"radio": self.radio}),
              lambda d, err: self.show_status(d) if not err else self.foot.setText(err))
@@ -1133,7 +1234,8 @@ class SetupDialog(QDialog):
              lambda d, err: self.show_status(d) if not err else self.foot.setText(err))
 
     def run_step(self, step: str, short: bool):
-        s = (self.d.get("steps") or {}).get(step) or {}
+        r = self._radio() or {}
+        s = (r.get("texts") or {}).get(step) or (self.d.get("steps") or {}).get(step) or {}
         text = (f"{s.get('what', '')}\n\nWhat to connect: {s.get('connect', '')}\nHow long: {s.get('duration', '')}"
                 f"\nWhat to expect: {s.get('expect', '')}\n\n"
                 + ("This is the short test: a quick run of the same command, to see it works before the full one."

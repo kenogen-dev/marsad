@@ -1340,11 +1340,20 @@ def default_sources(station: Station, rx: str | None = None) -> dict:
     gaps = (station.receivers.get(rx) or {}).get("gaps_mhz") or []
     out["gap"] = item(", ".join(f"{jsnum(a)}–{jsnum(b)} MHz" for a, b in gaps) or "none",
                       "station" if "gaps_mhz" in rraw else "builtin", rraw.get("_gaps_mhz"),
-                      "`rtl_test -t` (E4000 tuners report where the PLL will not lock); it moves as the radio warms")
+                      "`marsad tuner-sweep --receiver <name>` (the setup guide's first measurement): where the "
+                      "tuner's PLL will not lock; it moves as the radio warms")
     rng = (station.receivers.get(rx) or {}).get("range_mhz")
     out["range"] = item(f"{jsnum(rng[0])}–{jsnum(rng[1])} MHz" if rng else "not set",
                         "station" if "range_mhz" in rraw else "builtin", rraw.get("_range_mhz"),
-                        "`rtl_test -t` for E4000 tuners; otherwise the tuner's datasheet")
+                        "`marsad tuner-sweep --receiver <name>` (the setup guide's first measurement), for any tuner")
+    rk = range_kind(station, rx) if rx else None                    # relay 024: measured or an estimate, said
+    if rk and rk["kind"] != "recorded":
+        words = {"measured": "measured on this unit by the tuner sweep", "entered": "entered by hand",
+                 "estimate": "estimate: typical for the tuner, not measured on this unit"}[rk["kind"]
+                                                                                       if rk["kind"] in ("measured", "entered") else "estimate"]
+        for k in ("range", "gap"):
+            out[k]["text"] = words if k == "range" or rk["kind"] == "measured" else "not measured yet"
+            out[k]["generic"] = rk["kind"] != "measured"
     df = station.detection_floors
     out["detection_floor"] = item(", ".join(f"{k} {jsnum(v)} dB" for k, v in df.items()) or "not set",
                                   "station" if "detection_floor_db" in raw else "builtin",
@@ -1980,6 +1989,8 @@ def _setup_status(station: Station) -> dict:
         c = S.checklist(station, nick, chain_for(station, nick)["text"], running)
         c["typical"] = S.typical(station.tuner_of(nick) or "")
         c["entry"] = station.receivers[nick]
+        c["texts"] = {k: S.step_text(k, station.tuner_of(nick)) for k in S.STEPS}       # relay 024: for its tuner
+        c["read"] = (S.load(station)["radios"].get(nick) or {}).get("read") or {}
         radios.append(c)
     usb = usb_radios()
     mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
@@ -2936,6 +2947,17 @@ def _intersect(xs: list, ys: list) -> list:
     return out
 
 
+def range_kind(station: Station, rx: str) -> dict:
+    """Relay 024: whether a radio's range is measured or an estimate, wherever it is drawn. From the station's setup
+    record; a station made before the setup existed says "as in station.json", which is all that can be said."""
+    from . import setup as S
+    if not S.tracked(station):
+        return {"kind": "recorded", "word": "as in station.json"}
+    f = ((S.load(station)["radios"].get(rx) or {}).get("facts") or {}).get("range_mhz") or {}
+    kind = f.get("kind") or ("measured" if str(f.get("source", "")).startswith("measured") else "estimate")
+    return {"kind": kind, "word": {"measured": "measured", "entered": "entered by hand"}.get(kind, "estimate")}
+
+
 def coverage_of(station: Station, rx: str, lo: float, hi: float) -> float | None:
     """Share of [lo, hi] MHz this receiver can tune (its range less its PLL gaps)."""
     r = station.receivers.get(rx) or {}
@@ -3038,7 +3060,8 @@ def radios_status(station: Station) -> dict:
         elif not enabled:
             doing = {"state": "disabled", "text": "disabled in this window: not offered for scans or recording"
                      + ("" if present is not False else " (also not plugged in)")}
-        facts = [f"{jsnum(rng[0])}–{jsnum(rng[1])} MHz"]
+        kind = range_kind(station, name)                       # relay 024: measured, estimate, or as recorded
+        facts = [f"{jsnum(rng[0])}–{jsnum(rng[1])} MHz ({kind['word']})"]
         for a, b in r.get("gaps_mhz") or []:
             facts.append(f"blind {jsnum(a)}–{jsnum(b)} MHz (PLL gap)")
         if float(rng[1]) > RTL_POWER_MAX_MHZ:
@@ -3053,6 +3076,7 @@ def radios_status(station: Station) -> dict:
             "usb": (details or {}).get(serial or "") if present else None,
             "doing": doing, "role": role,
             "range_mhz": rng, "gaps_mhz": r.get("gaps_mhz") or [], "tunable_mhz": tunable,
+            "range_kind": kind["kind"], "range_word": kind["word"],
             "gains": gains, "gain_text": (f"{len(gains)} steps, {jsnum(gains[0])}–{jsnum(gains[-1])} dB" if gains else ""),
             "facts": facts, "notes": _radio_notes(station, name, tuner),
             "chain": chain_for(station, name),
