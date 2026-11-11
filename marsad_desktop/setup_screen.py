@@ -65,17 +65,21 @@ def _float(text):
 # ---------------------------------------------------------------- New Station
 
 class LocationBox(QFrame):
-    """Optional, private. Typed once (or found by Windows, relay 022); never shown again."""
+    """Optional, private. Typed once (or found by Windows, relay 022); never shown again.
+
+    Relay 023: the two fields are always open and checked as they are typed. Both empty means no location; both
+    valid means a location; anything else is said in a short line and never blocks the form (New Station then saves
+    without a location)."""
+
+    changed = Signal()
 
     def __init__(self, note_set: str | None = None):
         super().__init__()
         self.setObjectName("LocationBox")
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
-        self.on = QCheckBox("Add location for outdoor weather and sun height")
-        v.addWidget(self.on)
-        v.addWidget(_label("Private: kept only on this PC, in this station's own station.local.json, used internally, "
-                           "never shown or exported. You can skip it.", muted=True))
+        v.addWidget(_label("Location (optional, private): for outdoor weather and the sun's height. Kept only on this "
+                           "PC, in this station's own station.local.json, never shown or exported.", muted=True))
         row = QHBoxLayout()
         self.lat = QLineEdit()
         self.lat.setObjectName("LocLat")
@@ -84,10 +88,12 @@ class LocationBox(QFrame):
         self.lon.setObjectName("LocLon")
         self.lon.setPlaceholderText("longitude, decimal degrees, west negative")
         for w in (self.lat, self.lon):
+            w.textChanged.connect(self._check)
             row.addWidget(w)
         # relay 022: Windows' own location service fills both fields for the owner to confirm; nothing is saved here
         self.b_find = _button("Find my location")
         self.b_find.setObjectName("FindLocation")
+        self.b_find.setAutoDefault(False)
         self.b_find.setToolTip("Asks Windows' own location service on this PC (GPS or nearby Wi-Fi, as Windows "
                                "decides). Marsad sends nothing anywhere and uses no internet address lookup. The two "
                                "fields are filled for you to check; nothing is kept until you save.")
@@ -104,15 +110,13 @@ class LocationBox(QFrame):
         self.found = _label("", muted=True)
         self.found.setObjectName("LocFound")
         v.addWidget(self.found)
+        self.check = _label("", muted=True)
+        self.check.setObjectName("LocCheck")
+        v.addWidget(self.check)
         if note_set is not None:
             v.addWidget(_label(note_set, muted=True))
         self._raw = None                        # what Windows reported, in memory only, until saved or closed
-        self.on.toggled.connect(self._enable)
-        self._enable(False)
-
-    def _enable(self, on):
-        self.lat.setEnabled(on)
-        self.lon.setEnabled(on)
+        self._filling = False
 
     def find(self):
         from marsad_desktop import locate as L
@@ -128,7 +132,6 @@ class LocationBox(QFrame):
                 self.found.setText(d.get("text") or "No position. Type the values by hand.")
                 return
             self._raw = (d["lat"], d["lon"])
-            self.on.setChecked(True)
             self._fill()
             src = {"WiFi": "nearby Wi-Fi", "Satellite": "GPS", "Cellular": "the mobile network",
                    "IPAddress": "the network address"}.get(d.get("source") or "", d.get("source") or "Windows")
@@ -141,34 +144,72 @@ class LocationBox(QFrame):
         if self._raw is None:
             return
         on = self.round.isChecked()
+        self._filling = True
         self.lat.setText(f"{L.rounded(self._raw[0], on):g}" if on else repr(self._raw[0]))
         self.lon.setText(f"{L.rounded(self._raw[1], on):g}" if on else repr(self._raw[1]))
+        self._filling = False
+        self._check()
 
     def _reround(self, on):
         """The privacy option: Windows' figures shown rounded or in full. Typed figures are rounded when saved."""
         if self._raw is not None:
             self._fill()
 
-    def value(self):
-        """None (skipped), or {"lat", "lon"}, rounded to about 1 km when that is ticked; raises ValueError in words."""
-        from marsad_desktop import locate as L
-        if not self.on.isChecked():
+    def problem(self) -> str | None:
+        """None when the two fields make a location or are both empty; else what is wrong, in a few words."""
+        a, b = self.lat.text().strip(), self.lon.text().strip()
+        if not a and not b:
             return None
-        lat, lon = _float(self.lat.text()), _float(self.lon.text())
+        lat, lon = _float(a), _float(b)
+        if not a or not b:
+            return "Type both latitude and longitude, or leave both empty."
         if lat is None or lon is None:
-            raise ValueError("Type both latitude and longitude in decimal degrees, or untick the location.")
+            return "Latitude and longitude are decimal degrees, like 51.48 and -0.01."
+        if not (-90 <= lat <= 90):
+            return "Latitude runs from -90 to 90."
+        if not (-180 <= lon <= 180):
+            return "Longitude runs from -180 to 180."
+        return None
+
+    def _check(self, *_):
+        if not self._filling and self._raw is not None and self.sender() in (self.lat, self.lon):
+            self._raw = None                     # typed over Windows' figures: the typed ones count
+        p = self.problem()
+        empty = not self.lat.text().strip() and not self.lon.text().strip()
+        self.check.setText("" if empty and p is None else (p or "Location looks right."))
+        self.check.setProperty("bad", bool(p))
+        self.changed.emit()
+
+    def value(self):
+        """None (both empty), or {"lat", "lon"}, rounded to about 1 km when that is ticked; raises ValueError in words
+        when the two fields do not make a location."""
+        from marsad_desktop import locate as L
+        p = self.problem()
+        if p:
+            raise ValueError(p)
+        a, b = self.lat.text().strip(), self.lon.text().strip()
+        if not a and not b:
+            return None
         on = self.round.isChecked()
-        return {"lat": L.rounded(lat, on), "lon": L.rounded(lon, on)}
+        return {"lat": L.rounded(float(a), on), "lon": L.rounded(float(b), on)}
 
     def clear(self):
+        self._filling = True
         self.lat.clear()
         self.lon.clear()
+        self._filling = False
         self._raw = None
         self.found.setText("")
+        self.check.setText("")
 
 
 class NewStationDialog(QDialog):
-    """File > New Station…: a clean station from the engine's own `marsad init`, nothing copied from another."""
+    """Station > New Station…: a clean station from the engine's own `marsad init`, nothing copied from another.
+
+    Relay 023: the folder is shown at once (Documents\\Marsad\\Stations\\<name>, following the name as it is typed,
+    the next free one when that name is taken); Browse… opens Windows' folder picker; Create is open as soon as the
+    name is given and the folder is acceptable; the location never blocks it (a half-typed one is left out, and the
+    form says so); Enter creates, Esc cancels. The folder is made only when the station is created."""
 
     def __init__(self, parent=None, documents: Path | None = None):
         super().__init__(parent)
@@ -179,6 +220,7 @@ class NewStationDialog(QDialog):
         self.setObjectName("NewStationDialog")
         self.folder_chosen: Path | None = None
         self.created: dict | None = None
+        self.saved_without_location = False
         v = QVBoxLayout(self)
         v.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
         v.setSpacing(T.SPACE)
@@ -188,20 +230,29 @@ class NewStationDialog(QDialog):
         g = QGridLayout()
         g.addWidget(_label("Station name", wrap=False), 0, 0)
         self.name = QLineEdit()
+        self.name.setObjectName("StationName")
         self.name.setPlaceholderText("required")
         g.addWidget(self.name, 0, 1)
         g.addWidget(_label("Description", wrap=False), 1, 0)
         self.desc = QLineEdit()
         self.desc.setPlaceholderText("optional")
         g.addWidget(self.desc, 1, 1)
-        g.addWidget(_label("Where to keep it", wrap=False), 2, 0)
+        g.addWidget(_label("Where to keep it", wrap=False), 2, 0, Qt.AlignmentFlag.AlignTop)
         fr = QHBoxLayout()
         self.folder = _label("", wrap=True)
+        self.folder.setObjectName("StationFolder")
         fr.addWidget(self.folder, 1)
-        ch = _button("Change…")
-        ch.clicked.connect(self._pick)
-        fr.addWidget(ch)
+        self.b_browse = _button("Browse…")
+        self.b_browse.setObjectName("BrowseFolder")
+        self.b_browse.setAutoDefault(False)            # Enter means Create, never the folder picker
+        self.b_browse.setToolTip("Choose another place with Windows' folder picker: a new or empty folder, outside "
+                                 "every station. The folder is made when the station is created.")
+        self.b_browse.clicked.connect(self._pick)
+        fr.addWidget(self.b_browse)
         g.addLayout(fr, 2, 1)
+        self.folder_note = _label("", muted=True)
+        self.folder_note.setObjectName("FolderNote")
+        g.addWidget(self.folder_note, 3, 1)
         v.addLayout(g)
         self.loc = LocationBox()
         v.addWidget(self.loc)
@@ -211,40 +262,78 @@ class NewStationDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = _button("Cancel")
-        cancel.clicked.connect(self.reject)
+        cancel.setAutoDefault(False)
+        cancel.clicked.connect(self.reject)                 # Esc does the same (a dialog's own key)
         self.ok = _button("Create station", primary=True)
+        self.ok.setDefault(True)                            # Enter anywhere in the form, when it is enabled
         self.ok.clicked.connect(self.create)
         row.addWidget(cancel)
         row.addWidget(self.ok)
         v.addLayout(row)
         self.name.textChanged.connect(self._update)
-        self.resize(620, self.sizeHint().height())
+        self.loc.changed.connect(self._update)
+        self.resize(660, self.sizeHint().height())
         self._update()
 
     def target(self) -> Path:
-        return self.folder_chosen or self.S.default_folder(self.name.text().strip() or "station", self.documents)
+        if self.folder_chosen:
+            return self.folder_chosen
+        return self.S.free_default_folder(self.name.text().strip() or "station", self.documents)
 
     def _pick(self):
+        start = self.folder_chosen or self.S.default_folder("x", self.documents).parent
         d = QFileDialog.getExistingDirectory(self, "Where to keep the station (a new or empty folder)",
-                                             str(self.target().parent))
+                                             str(start if start.exists() else Path.home()))
         if d:
             self.folder_chosen = Path(d)
             self._update()
 
     def _update(self, *_):
+        name = self.name.text().strip()
         t = self.target()
-        self.folder.setText(str(t) + ("" if self.folder_chosen else "   (default)"))
-        problem = None if not self.name.text().strip() else self.S.folder_problem(t)
-        self.why.setText(problem or ("" if self.name.text().strip() else "Give the station a name."))
-        self.ok.setEnabled(bool(self.name.text().strip()) and not problem)
+        self.folder.setText(str(t))
+        notes = []
+        if self.folder_chosen:
+            notes.append("chosen with Browse…")
+        else:
+            safe, changed = self.S.safe_name(name or "station")
+            if not name:
+                notes.append("the default, named after the station")
+            if changed:
+                notes.append("characters Windows does not allow in a folder name were replaced")
+            if name and t.name != safe:
+                notes.append(f"\"{safe}\" is already used there, so the next free name")
+        text = "; ".join(notes)
+        self.folder_note.setText((text[:1].upper() + text[1:] + ". " if text else "")
+                                 + "It is made when the station is created.")
+        problem = self.S.folder_problem(t) if name else None
+        loc_problem = self.loc.problem()
+        if not name:
+            self.why.setText("Give the station a name.")
+        elif problem:
+            self.why.setText(problem)
+        elif loc_problem:
+            self.why.setText("The station will be created without a location (location not set): "
+                             + loc_problem[0].lower() + loc_problem[1:])
+        else:
+            self.why.setText("")
+        self.ok.setEnabled(bool(name) and not problem)
 
     def create(self):
+        if not self.ok.isEnabled():
+            return
         try:
             loc = self.loc.value()
+        except ValueError:
+            loc = None                                      # never blocks: saved without, and said so
+            self.saved_without_location = True
+        try:
             self.created = self.S.create_station(self.target(), self.name.text(), self.desc.text(), loc)
         except (ValueError, OSError) as exc:
             self.why.setText(str(exc))
             return
+        if self.created is not None:
+            self.created["location_set"] = loc is not None
         self.loc.clear()                    # typed once, never kept in the window
         self.accept()
 
@@ -1107,7 +1196,7 @@ class SetupDialog(QDialog):
                 why.setText(str(exc))
                 return
             if loc is None:
-                why.setText("Tick the box and type a location (or find it), or use Clear.")
+                why.setText("Type a location or find it, or use Clear.")
                 return
             do(loc)
         save.clicked.connect(on_save)

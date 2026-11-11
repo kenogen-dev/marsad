@@ -157,6 +157,8 @@ class Poller(QObject):
                 with self.lock:
                     vf, blank = self.view_file, self.blank
                 p = self.svc.progress(vf)
+                # relay 023: a station with no recordings at all is asked every 2 s, not 4 times a second
+                self.empty = vf is None and not (p or {}).get("file") and not (p or {}).get("live")
                 if blank:                                # relay 018: only "is something running?" while blank
                     self.got.emit("blank", p)
                     raise _Blank
@@ -216,7 +218,7 @@ class Poller(QObject):
                     self.got.emit("other", o)
                 except ServiceError:
                     pass
-            self._wake.wait(0.25)
+            self._wake.wait(2.0 if getattr(self, "empty", False) else 0.25)
             self._wake.clear()
 
 
@@ -1256,6 +1258,35 @@ class LiveScreen(QWidget):
         self.blank_msg.setStyleSheet(f"QLabel#BlankMessage {{ color: {T.C['muted']}; background: {T.C['panel']};"
                                      f" border: 1px dashed {T.C['line_strong']}; border-radius: {T.RADIUS}px;"
                                      f" padding: {T.SPACE * 2}px {T.SPACE * 3}px; font-size: 10.5pt; }}")
+        # relay 023: a station with no scans at all says so calmly, with the next step, and never waits on anything
+        self.no_scans = False
+        self.empty_box = QFrame(self.glw)
+        self.empty_box.setObjectName("EmptyState")
+        ev = QVBoxLayout(self.empty_box)
+        ev.setContentsMargins(T.SPACE * 3, T.SPACE * 2, T.SPACE * 3, T.SPACE * 2)
+        ev.setSpacing(T.SPACE)
+        self.empty_title = QLabel("No scans on this station yet.")
+        self.empty_title.setFont(T.ui_font(11.5, QFont.Weight.DemiBold))
+        self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_text = QLabel("")
+        self.empty_text.setProperty("muted", True)
+        self.empty_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_text.setWordWrap(True)
+        self.empty_btn = QPushButton("Start a scan")
+        self.empty_btn.setObjectName("EmptyNext")
+        self.empty_btn.clicked.connect(self._empty_next)
+        ev.addWidget(self.empty_title)
+        ev.addWidget(self.empty_text)
+        bh = QHBoxLayout()
+        bh.addStretch(1)
+        bh.addWidget(self.empty_btn)
+        bh.addStretch(1)
+        ev.addLayout(bh)
+        self.empty_box.setStyleSheet(f"QFrame#EmptyState {{ background: {T.C['panel']}; border: 1px dashed "
+                                     f"{T.C['line_strong']}; border-radius: {T.RADIUS}px; }} QFrame#EmptyState QLabel "
+                                     "{ background: transparent; }")
+        self.empty_box.setFixedWidth(460)
+        self.empty_box.hide()
         self.glw.installEventFilter(self)
         self._show_mode()
         self._show_blank()
@@ -1454,7 +1485,8 @@ class LiveScreen(QWidget):
         """No scan loaded: empty spectrum and waterfall, no title, a quiet centre message. The radio cards and the
         recorder panel go on showing their state; the banner names anything running."""
         on = self.blank
-        self.blank_msg.setVisible(on)
+        self.blank_msg.setVisible(on and not self.no_scans)
+        self._show_empty()
         self.facts.setVisible(not on)                # no empty rows in the header while blank
         self.fp.setVisible(not on)
         if on:
@@ -1474,15 +1506,51 @@ class LiveScreen(QWidget):
         self._update_banner()
 
     def _place_blank(self):
-        m = self.blank_msg
-        m.adjustSize()
-        m.move(max(8, (self.glw.width() - m.width()) // 2), max(8, (self.glw.height() - m.height()) // 3))
-        m.raise_()
+        for m in (self.blank_msg, self.empty_box):
+            m.adjustSize()
+            m.move(max(8, (self.glw.width() - m.width()) // 2), max(8, (self.glw.height() - m.height()) // 3))
+            m.raise_()
 
     def eventFilter(self, obj, ev):
-        if obj is self.glw and ev.type() == ev.Type.Resize and self.blank_msg.isVisible():
+        if obj is self.glw and ev.type() == ev.Type.Resize and (self.blank_msg.isVisible()
+                                                                 or self.empty_box.isVisible()):
             self._place_blank()
         return super().eventFilter(obj, ev)
+
+    # -- relay 023: no scans on this station yet
+    def _set_no_scans(self, none: bool):
+        if none == self.no_scans:
+            return
+        self.no_scans = none
+        if none and not self.blank and self.view_file is None:
+            self.opening = False                    # following, with nothing to follow: not "opening" anything
+        self.blank_msg.setVisible(self.blank and not none)
+        self._show_empty()
+
+    def _show_empty(self):
+        """The empty state: shown while the station has no recordings at all, whether blank or following."""
+        on = self.no_scans and self.view_file is None
+        if on:
+            st = getattr(self, "setup_status", None) or {}
+            radios = st.get("radios") or []
+            locked = bool(st.get("tracked")) and not any(r.get("ready") for r in radios)
+            if locked:
+                self.empty_text.setText("Finish setting up a radio to start scanning. The first scan is followed here "
+                                        "as soon as it starts.")
+                self.empty_btn.setText("Set up this station\u2026")
+            else:
+                self.empty_text.setText("Start a scan, and it is followed here as soon as it starts.")
+                self.empty_btn.setText("Start a scan\u2026")
+            self.empty_btn.setProperty("locked", locked)
+        self.empty_box.setVisible(on)
+        if on:
+            self._place_blank()
+
+    def _empty_next(self):
+        if self.empty_btn.property("locked"):
+            self.setup_requested.emit()
+        elif self.btn_start.isEnabled():
+            self.open_start()
 
     def _update_banner(self):
         """The banner while blank: a scan or recorder running is named, with how long it has run and one click to
@@ -1517,6 +1585,7 @@ class LiveScreen(QWidget):
     def _got(self, what: str, d):
         if what == "blank":
             self.blank_prog = d or {}
+            self._set_no_scans(not self.blank_prog.get("file") and not self.blank_prog.get("live"))
             if self.blank and self.prefs.value("start/live_follow", False, type=bool) \
                     and L.scan_running(self.blank_prog):
                 self.open_survey(None)          # Settings: open on the running scan automatically
@@ -1565,6 +1634,8 @@ class LiveScreen(QWidget):
     def _progress(self, p: dict):
         if not (p or {}).get("file") and self.view_file and self.file:
             return          # an answer from before the survey was opened, arriving after it: keep what is shown
+        if self.view_file is None:
+            self._set_no_scans(not (p or {}).get("file") and not (p or {}).get("live"))
         self.prog, self.prog_at = p or {}, time.monotonic()
         f = self.prog.get("file")
         exp = getattr(self, "_expect_file", None)
@@ -2139,13 +2210,18 @@ class LiveScreen(QWidget):
 
     def _tick(self):
         if self.blank:
-            self.bar.set({"kind": "waiting", "fraction": None, "text": "no scan open"})
+            self.bar.set({"kind": "waiting", "fraction": None,
+                          "text": "no scans on this station yet" if self.no_scans else "no scan open"})
             if any(v.get("view") in ("silent", "running", "starting") for v in self.rec_views):
                 self.rec_views = self.recwatch.update([{k: v for k, v in r.items() if k not in ("view", "silent_s")}
                                                        for r in self.rec_views])
                 if any(v["view"] == "silent" for v in self.rec_views):
                     self.rec_panel.show_recorders(self.rec_views)
                     self.radios.set_recorders(self.rec_views)
+            return
+        if self.no_scans and self.view_file is None:
+            self.bar.set({"kind": "waiting", "fraction": None,
+                          "text": "no scans on this station yet: the first one is followed when it starts"})
             return
         if self.opening:
             self.bar.set({"kind": "busy", "fraction": None,
@@ -2278,6 +2354,9 @@ class LiveScreen(QWidget):
             self.tag.setText(name)
             self.facts.setText("Opening… a big survey can take most of a minute to read (relay C will make it faster)")
         self._show_mode()
+        self._show_empty()                          # relay 023: following with nothing to follow says so
+        if self.no_scans and not name:
+            self.opening = False
         self.poller.reset(name)
 
     # -- relay 018: the menu bar's Live Scan menus
@@ -2563,6 +2642,7 @@ class LiveScreen(QWidget):
         if not (d or {}).get("tracked"):
             self.setup_bar.hide()
             self._lock_starts(None)
+            self._show_empty()
             return
         ready = [r["radio"] for r in radios if r.get("ready")]
         waiting = [r for r in radios if not r.get("ready")]
@@ -2577,6 +2657,7 @@ class LiveScreen(QWidget):
         self.setup_text.setText(why)
         self.setup_bar.setVisible(bool(why))
         self._lock_starts(None if ready else (why or None))
+        self._show_empty()                          # relay 023: its next step follows the setup
 
     def _lock_starts(self, why: str | None):
         """Start a scan and Start recorder are disabled while no radio may start, saying exactly why."""

@@ -102,11 +102,30 @@ def now() -> str:
 
 # ---------------------------------------------------------------- stations
 
+def safe_name(name: str) -> tuple:
+    """A station name as a folder name: characters Windows refuses (and trailing dots or spaces) replaced. Returns
+    (folder name, whether anything was replaced)."""
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", name).strip(" .-") or "station"
+    return safe, safe != (name or "").strip()
+
+
 def default_folder(name: str, documents: Path | None = None) -> Path:
     """Documents\\Marsad\\Stations\\<name>."""
     docs = documents or Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents"
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", name).strip(" .-") or "station"
-    return docs / "Marsad" / "Stations" / safe
+    return docs / "Marsad" / "Stations" / safe_name(name)[0]
+
+
+def free_default_folder(name: str, documents: Path | None = None) -> Path:
+    """Relay 023: the default folder, or the next free one ("<name> 2", "<name> 3", ...) when that name is already
+    used there, so a name alone is enough to create a station. Nothing is made here."""
+    first = default_folder(name, documents)
+    if folder_problem(first) is None:
+        return first
+    for n in range(2, 100):
+        cand = first.with_name(f"{first.name} {n}")
+        if folder_problem(cand) is None:
+            return cand
+    return first
 
 
 def folder_problem(folder: Path) -> str | None:
