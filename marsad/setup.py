@@ -393,9 +393,17 @@ def gain_for(tuner: str) -> float:
     return min(ladder, key=lambda g: abs(g - 29.0))
 
 
-def step_command(station: Station, nick: str, step: str, short: bool, device: int, rig_chain: str = "") -> dict:
+def step_command(station: Station, nick: str, step: str, short: bool, device: int, rig_chain: str = "",
+                 stop_file: str | None = None) -> dict:
     """The existing command for one step, as engine arguments (kind "marsad") or a tool's (kind "tool"), or why
-    there is none."""
+    there is none. `stop_file` (relay 025): for the steps that stop cleanly on one (STOP_FILE_STEPS), Cancel writes it."""
+    cmd = _step_command(station, nick, step, short, device, rig_chain)
+    if stop_file and step in STOP_FILE_STEPS and cmd.get("kind") == "marsad":
+        cmd["args"] = cmd["args"] + ["--stop-file", str(stop_file)]
+    return cmd
+
+
+def _step_command(station: Station, nick: str, step: str, short: bool, device: int, rig_chain: str = "") -> dict:
     rx = station.receivers.get(nick) or {}
     tuner = rx.get("tuner") or ""
     g = gain_for(tuner)
@@ -463,6 +471,22 @@ def _drift(station: Station, recording: str) -> dict:
 
 
 def result_of(station: Station, job: dict, status: dict) -> dict:
+    """What a finished step found, from its own output, with its end result in plain words (relay 025): `outcome`
+    "done", "attention" or "failed", and `what`, `why` and `advice` for anything but done."""
+    res = _result_of(station, job, status)
+    if job.get("id"):
+        res["job"] = job["id"]
+    log = Path(job.get("log") or "")
+    try:
+        full = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+    except OSError:
+        full = ""
+    full = full or "\n".join(status.get("lines") or [])
+    res.update(explain(station, job, res, full, status))
+    return res
+
+
+def _result_of(station: Station, job: dict, status: dict) -> dict:
     """What a finished step found, from its own output. ok False says why in plain words (never quietly accepted)."""
     step, text = job["step"], "\n".join(status.get("lines") or [])
     log = Path(job.get("log") or "")
@@ -478,7 +502,7 @@ def result_of(station: Station, job: dict, status: dict) -> dict:
     if step == "range" and "tuner-sweep:" in full:         # relay 024
         m = _SWEEP_RANGE.search(full)
         if not m:
-            bad = re.search(r"tuner-sweep: FAILED: (.*)", full)
+            bad = re.search(r"tuner-sweep: (?:FAILED|REFUSED): (.*)", full)
             res["note"] = "the tuner sweep found no range: " + (bad.group(1) if bad else (status.get("reason")
                                                                                       or f"exit {code}"))
             return res
@@ -486,12 +510,18 @@ def result_of(station: Station, job: dict, status: dict) -> dict:
         gaps = [[float(a), float(b)] for a, b in _SWEEP_GAP.findall(full)]
         res.update(range_mhz=[lo, hi], gaps_mhz=gaps, by="tuner sweep", method="tuner-sweep")
         edge_open = "true low edge is lower" in full or "true high edge is higher" in full
-        res["ok"] = 1 <= lo < hi <= 3000 and not edge_open
+        low_direct = "where the driver switches to HF direct sampling" in full
+        res["low_edge_kind"] = "direct sampling switch" if low_direct else "lock limit"
+        odd = "UNEXPECTED: the driver reported HF direct sampling" in full
+        far = _far_from_typical(station, job.get("radio"), lo, hi)       # relay 025: the 12-to-24 MHz kind of answer
+        res["ok"] = 1 <= lo < hi <= 3000 and not edge_open and not odd and not far
         res["note"] = (f"locks {lo:g} to {hi:g} MHz" + ("".join(f", blind spot {a:g} to {b:g} MHz" for a, b in gaps)
                                                          if gaps else ", no blind spots")
-                       + ("; below the low edge the driver switches to HF direct sampling"
-                          if "direct sampling" in full else "")
-                       + ("" if not edge_open else ": an edge lay outside the sweep; run it again")
+                       + (f"; low edge {lo:g} MHz: where the driver switches to HF direct sampling"
+                          if low_direct else "")
+                       + ("" if not edge_open else ": an edge lay outside the sweep")
+                       + ("" if not odd else ": the driver reported direct sampling inside the range")
+                       + ("" if not far else f": {far}")
                        + (" (short test: a coarse pass, edges within about 100 MHz)" if job.get("short") else ""))
         return res
     if step == "range":
@@ -800,3 +830,257 @@ def lock_reason(station: Station, nick: str, chain_text: str = "", running: set 
     m = c["missing"]
     return (f"The {nick} is not set up yet: step {m['number']}, {m['title']} ({m['detail']}). "
             "Open Set up this station to finish it.")
+
+
+# ---------------------------------------------------------------- relay 025: progress, Cancel, plain end results
+#
+# Every measurement and path check shows how far it has got, what it is doing now, the time gone and left, a Cancel,
+# the last lines of its log, and at the end one result in plain words: done, needs attention (what went wrong, why it
+# probably happened, what to do) or failed. Progress is read from each command's own output: the tuner sweep prints a
+# line per tuning, `marsad run` prints its own clock; calibrate-retune and adsb-check print nothing while they work, so
+# theirs is a time-based estimate and says so. Cancel stops only that run (rule 1): the sweep and `marsad run` stop
+# cleanly on a stop file; the others are ended with their process tree. A cancelled run keeps no result.
+
+STOP_FILE_STEPS = {"range", "warmup", "floor", "baseline"}
+OUTCOME_MARK = {"done": "✓", "attention": "⚠", "failed": "✗"}
+
+_SWEEP_PROGRESS = re.compile(r"tuner-sweep: progress (\d+) of (\d+): (.*)")
+_RUN_PROGRESS = re.compile(r"(\d+(?::\d\d){1,2}) elapsed, (\d+(?::\d\d){1,2}) left \(\s*(\d+)%\)")
+_ACTIVITY = {"warmup": "recording into the 50 ohm load from cold", "floor": "recording the radio's own floor into "
+             "the 50 ohm load", "baseline": "recording the first baseline through the rig",
+             "retune": "timing how long each retune takes (rtl_power)", "adsb": "listening at 1090 MHz for aircraft"}
+
+
+def _far_from_typical(station: Station, nick, lo: float, hi: float) -> str | None:
+    """Words when a measured range is far outside what any unit of this tuner does (relay 025: an R820T reported as
+    "12 to 24 MHz"). A real unit's edges move by tens of MHz, never by most of its range."""
+    if not nick:
+        return None
+    t = typical(station.tuner_of(nick) or "")
+    tlo, thi = (t.get("range_mhz") or [None, None])[:2]
+    if not tlo or not thi:
+        return None
+    if hi < thi * 0.6 or lo > tlo * 3 + 20 or hi - lo < (thi - tlo) * 0.5:
+        return f"far from what this tuner normally does (about {tlo:g} to {thi:g} MHz)"
+    return None
+
+
+def _secs(text: str) -> float:
+    s = 0
+    for p in (int(x) for x in text.split(":")):
+        s = s * 60 + p
+    return float(s)
+
+
+def _started_ts(job: dict) -> float | None:
+    try:
+        return dt.datetime.fromisoformat(str(job.get("started"))).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _arg(job: dict, name: str):
+    a = [str(x) for x in job.get("argv") or []]
+    return a[a.index(name) + 1] if name in a and a.index(name) + 1 < len(a) else None
+
+
+def progress_of(job: dict, status: dict, now_ts: float | None = None) -> dict:
+    """How a running step is doing: {"pct", "activity", "elapsed_s", "remaining_s", "basis"}. `basis` says where the
+    figures come from: "the run's own clock", "the pace so far" (the sweep), or "estimated from the time" (commands
+    that cannot report progress; pct then stops short of 100 until they end)."""
+    import time as _t
+    now_ts = now_ts if now_ts is not None else _t.time()
+    t0 = _started_ts(job)
+    el = max(0.0, now_ts - t0) if t0 else None
+    lines = [ln for ln in status.get("lines") or [] if ln.strip()]
+    step = job.get("step")
+    out = {"pct": None, "activity": "starting: opening the radio", "elapsed_s": el, "remaining_s": None,
+           "basis": None}
+    if step == "range":
+        for ln in reversed(lines):
+            m = _SWEEP_PROGRESS.search(ln)
+            if m:
+                d, tot = int(m.group(1)), max(1, int(m.group(2)))
+                out.update(pct=min(99.0, 100.0 * d / tot), activity=m.group(3).strip(), basis="the pace so far")
+                if d > 0 and el:
+                    out["remaining_s"] = el / d * max(0, tot - d)
+                break
+        if any(ln.startswith("tuner-sweep: range") for ln in lines):
+            out.update(pct=99.0, activity="finishing: writing the result", remaining_s=0)
+        return out
+    if step in ("warmup", "floor", "baseline"):
+        for ln in reversed(lines):
+            m = _RUN_PROGRESS.search(ln)
+            if m:
+                pct = float(m.group(3))
+                out.update(pct=min(99.0, pct), activity=_ACTIVITY[step], elapsed_s=_secs(m.group(1)),
+                           remaining_s=_secs(m.group(2)), basis="the run's own clock")
+                if pct >= 100:
+                    out.update(activity="analysing the recording", remaining_s=None)
+                break
+        else:
+            dur = _arg(job, "custom")
+            if dur and el is not None:
+                total = float(dur[:-1]) * (60 if dur.endswith("m") else 3600 if dur.endswith("h") else 1)
+                out.update(pct=min(95.0, 100.0 * el / (total + 30)), remaining_s=max(0.0, total + 30 - el),
+                           basis="estimated from the time", activity="starting the recording (rtl_power)")
+        return out
+    secs = _arg(job, "--seconds")
+    if secs and el is not None:
+        total = float(secs) + 10.0                     # the radio opening and the result being read
+        out.update(pct=min(95.0, 100.0 * el / total), remaining_s=max(0.0, total - el), basis="estimated from the time",
+                   activity=_ACTIVITY.get(step, "working"))
+    return out
+
+
+def explain(station: Station, job: dict, res: dict, full: str, status: dict) -> dict:
+    """The end result of a finished run in plain words: outcome "done", "attention" (it ran, but what it found cannot
+    be used: what went wrong, why it probably did, what to do) or "failed" (it could not run: the error and the log)."""
+    step, low = res["step"], (full or "").lower()
+    log_tail = [ln for ln in (full or "").splitlines() if ln.strip()][-6:]
+    send = "If it happens again, open the full log and send it to Claude Code"
+
+    def failed(what, why, advice):
+        return {"outcome": "failed", "what": what, "why": why, "advice": advice, "error_lines": log_tail}
+
+    def attention(what, why, advice):
+        return {"outcome": "attention", "what": what, "why": why, "advice": advice}
+
+    if "traceback (most recent call last)" in low:
+        return failed("Marsad itself stopped with an error before the measurement finished.",
+                      "A fault in Marsad, not in the radio or the rig.",
+                      ["Open the full log", "Send the log to Claude Code"])
+    refused = re.search(r"tuner-sweep: REFUSED: (.*)", full or "")
+    busy = refused or any(w in low for w in ("usb_claim_interface", "another program has the radio open",
+                                              "holds the radio"))
+    if busy and not res.get("ok"):
+        return failed("The radio was in use, so nothing was measured.",
+                      (refused.group(1).strip() if refused else "Another program had the radio open.")
+                      + " Only one program can use a radio at a time.",
+                      ["Close other SDR programs (SDR++, a scan, a recorder) or wait for them to finish",
+                       "Run it again"])
+    if any(w in low for w in ("i2c wr failed", "i2c rd failed", "stopped answering over usb",
+                              "rtlsdr_write_reg failed")) and not res.get("ok"):
+        return failed("The radio stopped answering over USB part-way through.",
+                      "A loose or long USB lead, a hub, or the USB isolator dropping the radio.",
+                      ["Check the USB lead is pushed fully home",
+                       "If the radio goes through the USB isolator, power-cycle the isolator", "Run it again"])
+    if any(w in low for w in ("no supported devices", "no matching devices", "was not found",
+                              "did not answer")) and not res.get("ok"):
+        return failed("The radio could not be opened.",
+                      "It is unplugged, Windows lost it, or it has not been found again after being moved.",
+                      ["Check the radio is plugged in",
+                       "If it goes through the USB isolator, power-cycle the isolator", "Run it again"])
+    code = res.get("exit_code")
+    if not res.get("ok") and code not in (0, None) and not any(
+            k in res for k in ("range_mhz", "retune_ms_per_hop", "verdict", "recording")):
+        return failed(f"The measurement ended with an error (exit {code}) before it had a result.",
+                      (status.get("reason") or "The last lines of its log say what it was doing.").strip(),
+                      ["Open the full log", "Run it again", send])
+    if res.get("ok"):
+        return {"outcome": "done", "what": res.get("note") or "done", "why": "", "advice": []}
+    note = res.get("note") or ""
+    if step == "range":
+        lo, hi = (res.get("range_mhz") or [0, 0])[:2]
+        t = typical(station.tuner_of(job.get("radio") or "") or "")
+        tl, th = (t.get("range_mhz") or [0, 0])[:2]
+        if "far from what this tuner normally does" in note:
+            return attention(f"The sweep says the tuner locks only from {lo:g} to {hi:g} MHz. This kind of tuner "
+                             f"({t.get('tuner_label') or 'its type'}) locks from about {tl:g} to {th:g} MHz.",
+                             "Most likely the lock reading went wrong, not the radio: a radio's range does not "
+                             "shrink by that much.",
+                             ["Run it again", send + ": its log holds the driver's own words for every frequency"])
+        if "direct sampling inside the range" in note:
+            return attention("The driver said it was in HF direct sampling at frequencies the tuner should cover.",
+                             "The driver's words did not match what this kind of radio normally says, so the sweep "
+                             "could not trust its own reading.", ["Open the full log", send])
+        if "outside the sweep" in note:
+            return attention("The tuner still locked at the furthest frequency the sweep can reach, so an edge was "
+                             "not found.",
+                             "No RTL-SDR tuner locks that far: the driver is probably not reporting lock failures in "
+                             "words this sweep recognises.", ["Open the full log", send])
+        if "found no range" in note:
+            return attention("The sweep found no frequency where the tuner locks.",
+                             "Either the radio is not an RTL-SDR the sweep knows, or the driver answered in words it "
+                             "does not recognise.", ["Open the full log", "Run it again", send])
+    if step == "warmup":
+        if res.get("short") and res.get("warmup_min") is not None:
+            return {"outcome": "done", "what": note, "why": "", "advice": []}
+        return attention("The floor had not settled by the end of the run, so no warm-up time could be set.",
+                         "The radio was probably not cold at the start, or something in the room changed during it.",
+                         ["Unplug the radio (or leave it idle) for an hour", "Run the full measurement again from cold",
+                          "Keep the room steady while it runs"])
+    if step == "retune":
+        return attention(f"The retune time came out as {note}.",
+                         "The PC was busy during the timing, or the radio dropped samples.",
+                         ["Close heavy programs", "Run it again"])
+    if step == "adsb":
+        return attention(f"The receive proof did not pass: {note.split('. ')[0]}.",
+                         "The antenna path is not receiving, or few aircraft were overhead.",
+                         ["Check the antenna is on and connected through the rig as drawn",
+                          "Check nothing else is using the radio",
+                          "Try again at a busier time before changing anything"])
+    if "no recording" in note:
+        return failed("The run wrote no recording.", (status.get("reason") or "It ended before recording.").strip(),
+                      ["Open the full log", "Run it again"])
+    if step == "floor":
+        return attention("No settled floor could be read from the run.", "The radio was probably still warming up.",
+                         ["Warm the radio for as long as the warm-up step says", "Run it again"])
+    if step == "baseline":
+        return attention("The baseline recorded too few sweeps to count.", "The run stopped early.",
+                         ["Run it again and let it finish"])
+    return attention(note or "The measurement did not give a usable result.", "The full log says what it did.",
+                     ["Open the full log", "Run it again"])
+
+
+def latest_job(doc: dict, nick: str, step: str) -> dict | None:
+    js = [j for j in doc.get("jobs") or [] if j.get("radio") == nick and j.get("step") == step]
+    return js[-1] if js else None
+
+
+def run_view(station: Station, nick: str, step: str, status_fn, now_ts: float | None = None) -> dict | None:
+    """What the guide shows for this step's newest run: progress while it runs; its end result after."""
+    doc = load(station)
+    job = latest_job(doc, nick, step)
+    if job is None:
+        return None
+    base = {"job": job.get("id"), "log": job.get("log"), "short": bool(job.get("short")),
+            "started": job.get("started")}
+    if not job.get("done"):
+        st = status_fn(job["log"])
+        lines = [ln for ln in st.get("lines") or [] if ln.strip()][-8:]
+        return dict(base, state="cancelling" if job.get("cancel_requested") else "running", lines=lines,
+                    progress=progress_of(job, st, now_ts))
+    if job.get("cancelled"):
+        return dict(base, state="ended", outcome="cancelled", what="Cancelled by you: nothing was kept.", why="",
+                    advice=["Run it again when you are ready"])
+    r = doc["radios"].get(nick) or {}
+    res = next((x for x in reversed((r.get("results") or {}).get(step) or [])
+                if x.get("job") == job.get("id") or (x.get("log") and x.get("log") == job.get("log"))), None)
+    if res is None:
+        return dict(base, state="ended", outcome="failed", what="This run left no result.", why="",
+                    advice=["Open the full log", "Run it again"])
+    if "outcome" not in res:                                   # kept before relay 025
+        res = dict(res, outcome="done" if res.get("ok") else "attention", what=res.get("note") or "",
+                   advice=[] if res.get("ok") else ["Run it again"])
+    return dict(base, state="ended", outcome=res["outcome"], what=res.get("what") or res.get("note") or "",
+                why=res.get("why") or "", advice=res.get("advice") or [], note=res.get("note") or "",
+                at=res.get("at"), error_lines=res.get("error_lines") or [])
+
+
+def request_cancel(station: Station, nick: str, step: str) -> dict:
+    """Mark this step's running job for cancelling and write its stop file when it has one. Returns the job; the
+    service ends a job with no stop file, or one that has not stopped in time, by its own process tree (rule 1)."""
+    doc = load(station)
+    job = next((j for j in reversed(doc.get("jobs") or []) if j.get("radio") == nick and j.get("step") == step
+                and not j.get("done")), None)
+    if job is None:
+        raise ValueError("Nothing is running on this step.")
+    job["cancel_requested"] = job.get("cancel_requested") or now()
+    if job.get("stop_file"):
+        try:
+            Path(job["stop_file"]).write_text("cancel\n", encoding="utf-8")
+        except OSError:
+            pass
+    _save(station.root, doc)
+    return job

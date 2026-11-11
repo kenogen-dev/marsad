@@ -23,7 +23,9 @@ from marsad.config import Station
     # the R820T's harmless announcement while the sample rate is set (tuned to 0 Hz first), then a real tune
     ("Enabled direct sampling mode, input 2\nSampling at 1024000 S/s.\nDisabled direct sampling mode\n"
      "Tuned to 100000000 Hz.\n", TS.LOCK),
-    ("Enabled direct sampling mode, input 2\nSampling at 1024000 S/s.\nTuned to 100000000 Hz.\n", TS.LOCK),
+    # relay 025: never switched back out of direct sampling, so still in it (the real driver always prints the switch
+    # back out on a tuner frequency; see tests/test_tuner_sweep_025.py)
+    ("Enabled direct sampling mode, input 2\nSampling at 1024000 S/s.\nTuned to 10000000 Hz.\n", TS.DIRECT),
     ("Sampling at 1024000 S/s.\nEnabled direct sampling mode, input 2\nTuned to 10000000 Hz.\n", TS.DIRECT),
     ("No supported devices found.\n", TS.ERROR),
     ("usb_claim_interface error -6\nFailed to open rtlsdr device #0.\n", TS.ERROR),
@@ -50,7 +52,7 @@ def e4000_model(hz):
 def test_an_r820t_sweep_finds_its_edges_and_no_gap():
     res = TS.sweep(r820t_model, 12, 2208, 20, 0.5)
     assert abs(res["low"] - 24.0) <= 0.5 and abs(res["high"] - 1766.3) <= 0.5 and res["gaps"] == []
-    assert res["direct_below"] is not None and res["direct_below"] < 24
+    assert res["direct_below"] == res["low"] and res["low_kind"] == "direct"   # relay 025: the low edge is the switch
     lines = TS.report_lines(res, 20, 0.5)
     assert any("no gaps" in x for x in lines) and any("direct sampling" in x for x in lines)
     assert res["tunes"] < 140                               # a coarse pass and two narrowed edges, not a fine scan
@@ -75,7 +77,7 @@ def test_an_e4000_sweep_agrees_with_the_existing_e4000_gap_test(tmp_path):
 
 def test_the_short_test_is_a_coarse_pass_only():
     res = TS.sweep(r820t_model, 12, 2208, 100, None)
-    assert res["tunes"] == 23 and abs(res["high"] - 1766.3) <= 100
+    assert res["tunes"] <= 24 and abs(res["high"] - 1766.3) <= 100     # relay 025: an edge's "not locked" asked twice
     assert any("coarse pass only" in x for x in TS.report_lines(res, 100, None))
 
 

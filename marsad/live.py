@@ -1961,14 +1961,28 @@ def setup_collect(station: Station) -> None:
             continue
         st = launch_status(station, job["log"])
         if st["exit_code"] is None:
-            continue
-        res = S.result_of(station, job, st)
-        S.record(station, job["radio"], res)
+            asked = job.get("cancel_requested")         # relay 025: a cancel that has not taken in time
+            try:
+                late = asked and time.time() - dt.datetime.fromisoformat(asked).timestamp() > CANCEL_GRACE_S
+            except ValueError:
+                late = True
+            if late:
+                _end_setup_job(station, job)
+                st = launch_status(station, job["log"])
+            if st["exit_code"] is None:
+                continue
+        cancelled = bool(job.get("cancel_requested"))
+        if not cancelled:                               # a cancelled run keeps no result
+            res = S.result_of(station, job, st)
+            S.record(station, job["radio"], res)
         changed = True
         fresh = S.load(station)
         for j in fresh["jobs"]:
             if j.get("id") == job["id"]:
                 j["done"] = True
+                j["ended"] = S.now()
+                if cancelled:
+                    j["cancelled"] = True
         S._save(station.root, fresh)
     if changed:
         _reload_station(station)
@@ -1991,6 +2005,9 @@ def _setup_status(station: Station) -> dict:
         c["entry"] = station.receivers[nick]
         c["texts"] = {k: S.step_text(k, station.tuner_of(nick)) for k in S.STEPS}       # relay 024: for its tuner
         c["read"] = (S.load(station)["radios"].get(nick) or {}).get("read") or {}
+        for s in c["steps"]:                            # relay 025: each step's newest run, running or ended
+            for sub in s.get("sub") or []:
+                sub["run"] = S.run_view(station, nick, sub["step"], lambda log: launch_status(station, log))
         radios.append(c)
     usb = usb_radios()
     mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
@@ -2063,7 +2080,10 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
         rad = find_radio(station, nick)
         if not rad.get("found"):
             raise ValueError(rad["text"] + " Nothing was started.")
-        cmd = S.step_command(station, nick, step, short, int(rad["device"]), chain_for(station, nick)["text"])
+        jid = f"{int(time.time() * 1000)}"
+        stop_file = station.root / LAUNCH_LOG_DIR / f"setup_{jid}.stop"            # relay 025: Cancel writes it
+        cmd = S.step_command(station, nick, step, short, int(rad["device"]), chain_for(station, nick)["text"],
+                             stop_file=str(stop_file))
         if cmd.get("missing"):
             raise ValueError(cmd["missing"])
         if cmd["kind"] == "tool":
@@ -2075,13 +2095,51 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
             argv = marsad_argv(station, cmd["args"])
         got = launch_outside(station, argv, f"setup_{step}_{nick}" + ("_short" if short else ""))
         doc = S.load(station)
-        job = {"id": f"{int(time.time() * 1000)}", "radio": nick, "step": step, "short": short, "log": got["log"],
+        job = {"id": jid, "radio": nick, "step": step, "short": short, "log": got["log"],
                "started": S.now(), "argv": [str(a) for a in argv],
-               "basis": S.basis(station, nick, chain_for(station, nick)["text"])}      # relay 022
+               "basis": S.basis(station, nick, chain_for(station, nick)["text"]),      # relay 022
+               "pid": got.get("pid"),                                                 # relay 025: for Cancel
+               "stop_file": str(stop_file) if "--stop-file" in (cmd.get("args") or []) else None}
         doc["jobs"].append(job)
         S._save(station.root, doc)
         return {"job": job, "line": " ".join(cmd.get("args") or []), "status": setup_status(station)}
+    if path == "/setup/cancel":                  # relay 025: stops only this run (rule 1)
+        step = str(form.get("step") or "")
+        job = S.request_cancel(station, nick, step)
+        if not job.get("stop_file"):
+            _end_setup_job(station, job)
+        return setup_status(station)
     raise ValueError(f"unknown route {path}")
+
+
+# Relay 025: a cancelled setup run that has a stop file gets this long to stop by itself (the sweep stops between
+# tunings, `marsad run` asks rtl_power to finish and then analyses); after that it is ended with its process tree.
+CANCEL_GRACE_S = 25
+
+
+def _end_setup_job(station: Station, job: dict) -> None:
+    """End one setup run now: its own process tree only (the wrapper launch_outside started, and everything under
+    it), then write the exit file the wrapper could not, so the job reads as ended."""
+    import subprocess
+    pid = job.get("pid")
+    if pid:
+        try:
+            if host.IS_WINDOWS:
+                subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"], capture_output=True, timeout=20,
+                               stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            else:
+                import os as _os
+                import signal as _sig
+                _os.killpg(int(pid), _sig.SIGTERM)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    ended = Path(job["log"] + ".exit")
+    if not ended.exists():
+        try:
+            ended.write_text(json.dumps({"exit_code": -2, "ended": time.time(), "cancelled": True}),
+                             encoding="utf-8")
+        except OSError:
+            pass
 
 
 # ---- launching outside every process tree (rule 1)

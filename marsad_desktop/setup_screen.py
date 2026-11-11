@@ -24,8 +24,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
-                               QToolButton, QVBoxLayout, QWidget)
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from marsad_desktop import theme as T
 from marsad_desktop.scan_start import call
@@ -748,6 +748,170 @@ PAGES = [("add", "add"), ("measure", "range"), ("measure", "warmup"), ("measure"
 TOUCHED = ("done", "needs re-checking", "in progress", "needs attention", "estimate kept")
 
 
+def _clock(sec) -> str:
+    if sec is None:
+        return "?"
+    sec = int(round(max(0.0, float(sec))))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+SPINNER = "◐◓◑◒"
+OUTCOME_LOOK = {"done": ("✓", "open", "Done"), "attention": ("⚠", "anomaly", "Needs attention"),
+                "failed": ("✗", "alert_text", "Failed"), "cancelled": ("■", "muted", "Cancelled")}
+
+
+class RunPanel(QFrame):
+    """Relay 025: one measurement's run, shown the same way for every step.
+
+    While it runs: a progress bar with %, what it is doing now, the time gone and left (and where those figures come
+    from: the run's own clock, the pace so far, or an estimate from the time), Cancel, and the last lines of its log
+    (collapsible) with Open full log. When it ends: one result, done (with the figures), needs attention (what went
+    wrong, why it probably did, what to do) or failed (the error and the log). Updated in place, so the log stays
+    open or closed as left."""
+    cancel = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RunPanel")
+        self.view: dict = {}
+        self._log_open = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(T.SPACE, T.SPACE * 0.75, T.SPACE, T.SPACE * 0.75)
+        lay.setSpacing(T.SPACE * 0.5)
+        self.head = _label("", size=11, bold=True)
+        self.head.setObjectName("RunHead")
+        lay.addWidget(self.head)
+        self.bar = QProgressBar()
+        self.bar.setObjectName("RunProgress")
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(True)
+        lay.addWidget(self.bar)
+        self.activity = _label("")
+        self.activity.setObjectName("RunActivity")
+        lay.addWidget(self.activity)
+        self.times = _label("", muted=True)
+        self.times.setObjectName("RunTimes")
+        lay.addWidget(self.times)
+        self.what = _label("")
+        self.what.setObjectName("RunWhat")
+        lay.addWidget(self.what)
+        self.why = _label("", muted=True)
+        self.why.setObjectName("RunWhy")
+        lay.addWidget(self.why)
+        self.todo = _label("")
+        self.todo.setObjectName("RunAdvice")
+        self.todo.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(self.todo)
+        row = QHBoxLayout()
+        self.b_cancel = _button("Cancel this run")
+        self.b_cancel.setObjectName("RunCancel")
+        self.b_cancel.clicked.connect(self.cancel.emit)
+        self.b_log = QToolButton()
+        self.b_log.setObjectName("RunLogToggle")
+        self.b_log.clicked.connect(self._toggle_log)
+        self.b_full = _button("Open full log")
+        self.b_full.setObjectName("RunOpenLog")
+        self.b_full.clicked.connect(self.open_log)
+        row.addWidget(self.b_cancel)
+        row.addStretch(1)
+        row.addWidget(self.b_log)
+        row.addWidget(self.b_full)
+        lay.addLayout(row)
+        self.log = QPlainTextEdit()
+        self.log.setObjectName("RunLog")
+        self.log.setReadOnly(True)
+        self.log.setFont(T.mono_font(8.5))
+        self.log.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log.setFixedHeight(130)
+        lay.addWidget(self.log)
+        self._log_shown()
+
+    def _toggle_log(self):
+        self._log_open = not self._log_open
+        self._log_shown()
+
+    def _log_shown(self):
+        self.log.setVisible(self._log_open)
+        self.b_log.setText("Hide log ▴" if self._log_open else "Show log ▾")
+
+    def open_log(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        p = self.view.get("log")
+        if p and Path(p).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+
+    def show_view(self, v: dict | None, spin: str = ""):
+        self.view = v or {}
+        self.setVisible(bool(v))
+        if not v:
+            return
+        kind = "short test" if v.get("short") else "measurement"
+        running = v.get("state") in ("running", "cancelling")
+        for w in (self.bar, self.activity, self.times, self.b_cancel):
+            w.setVisible(running)
+        for w in (self.what, self.why, self.todo):
+            w.setVisible(not running)
+        lines = v.get("lines") or v.get("error_lines") or []
+        if self.log.toPlainText() != "\n".join(lines):
+            self.log.setPlainText("\n".join(lines))
+            self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+        self.b_log.setVisible(bool(lines))
+        self.b_full.setEnabled(bool(v.get("log")) and Path(v.get("log") or "").exists())
+        if running:
+            p = v.get("progress") or {}
+            pct = p.get("pct")
+            est = p.get("basis") == "estimated from the time"
+            if v["state"] == "cancelling":
+                self.head.setText(f"{spin} Cancelling this {kind}: stopping it cleanly…")
+            else:
+                self.head.setText(f"{spin} Running: {kind}")
+            if pct is None:
+                self.bar.setRange(0, 0)                          # busy, no figure yet
+            else:
+                self.bar.setRange(0, 1000)
+                self.bar.setValue(int(pct * 10))
+                self.bar.setFormat(f"{pct:.0f}%" + (" (estimated)" if est else ""))
+            self.activity.setText("Now: " + (p.get("activity") or "working"))
+            left = p.get("remaining_s")
+            basis = p.get("basis")
+            self.times.setText(f"{_clock(p.get('elapsed_s'))} gone"
+                               + (f" · about {_clock(left)} left" if left is not None else " · time left not known yet")
+                               + (f" ({basis})" if basis else "")
+                               + ". It keeps running if you close this guide or the window.")
+            self.b_cancel.setEnabled(v["state"] == "running")
+            return
+        icon, colour, word = OUTCOME_LOOK.get(v.get("outcome"), ("•", "muted", "Ended"))
+        col = T.C.get(colour, T.C["muted"])
+        self.head.setText(f"<span style='color:{col}'>{icon}</span>&nbsp; {word}: last {kind}"
+                          + (f" ({str(v.get('at'))[:16].replace('T', ' ')})" if v.get("at") else ""))
+        self.what.setText(v.get("what") or "")
+        self.why.setText(("Why: " + v["why"]) if v.get("why") else "")
+        self.why.setVisible(bool(v.get("why")))
+        adv = v.get("advice") or []
+        self.todo.setText(("<b>What to do:</b><ul style='margin:0'>" + "".join(f"<li>{a}</li>" for a in adv) + "</ul>")
+                          if adv else "")
+        self.todo.setVisible(bool(adv))
+
+
+def _steps_key(r: dict | None):
+    """The steps as far as the page's layout is concerned: a run's progress changes every poll and is updated in
+    place, so only whether a run is going and how it ended rebuild the page."""
+    if not r:
+        return None
+    out = []
+    for st in r.get("steps") or []:
+        sub = []
+        for x in st.get("sub") or []:
+            run = x.get("run") or {}
+            sub.append({k: v for k, v in x.items() if k != "run"}
+                       | {"run": (run.get("job"), run.get("state"), run.get("outcome"))})
+        out.append({k: v for k, v in st.items() if k != "sub"} | {"sub": sub})
+    return out
+
+
 class SetupDialog(QDialog):
     """Set up this station, as a step-by-step guide (relay 022; relay 021 made it a checklist).
 
@@ -842,6 +1006,13 @@ class SetupDialog(QDialog):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(2500)
+        self.run_panel = RunPanel()                 # relay 025: kept across refreshes, moved onto each step's page
+        self.run_panel.hide()
+        self.run_panel.cancel.connect(self.cancel_run)
+        self._spin_i = 0
+        self.spin_timer = QTimer(self)
+        self.spin_timer.timeout.connect(self._spin)
+        self.spin_timer.start(160)
         self._busy = False
         self._key = None
         self.refresh()
@@ -983,14 +1154,17 @@ class SetupDialog(QDialog):
         if self.page is None:
             self.page = self._restore_page() if r is not None else "add"
             self._remember_page()
-        key = repr((self.radio, self.page, r and r.get("steps"), r and r.get("facts"), r and r.get("entry"),
-                    self.d.get("jobs")))
+        key = repr((self.radio, self.page, _steps_key(r), r and r.get("facts"), r and r.get("entry"),
+                    [(j.get("id"), j.get("cancel_requested")) for j in self.d.get("jobs") or []]))
         if key == self._key:
+            self._update_run()
             return
         self._key = key
         self.body.setUpdatesEnabled(False)
         try:
             self._fill_list()
+            self.run_panel.hide()
+            self.run_panel.setParent(None)          # out of the page before it is cleared, so it survives
             self._empty(self.steps)
             if r is None:
                 self.summary.setText("")
@@ -1008,6 +1182,7 @@ class SetupDialog(QDialog):
             self._nav()
         finally:
             self.body.setUpdatesEnabled(True)
+        self._update_run()
 
     def _fill_list(self):
         self.steps_list.blockSignals(True)
@@ -1029,10 +1204,12 @@ class SetupDialog(QDialog):
             name = (f"{n}. {STEP_TITLES[key]}" if key in ("add", "draw", "confirm")
                     else f"     {STEPS_TEXT[key]['title'].split(' (')[0]}")
             open_ = self.reachable(key) if self._radio() is not None else key == "add"
-            mark = STATE_MARK.get(state, "○") if open_ else "\U0001F512"
-            it = QListWidgetItem(f"{mark}  {name}" + ("   ◀" if key == self.page else ""))
+            mark = self._mark(key, state) if open_ else "\U0001F512"
+            tail = name + ("   ◀" if key == self.page else "")
+            it = QListWidgetItem(f"{mark}  {tail}")
             it.setData(Qt.ItemDataRole.UserRole, key)
             it.setData(Qt.ItemDataRole.UserRole + 1, state)
+            it.setData(Qt.ItemDataRole.UserRole + 2, tail if open_ and state == "in progress" else None)
             it.setForeground(T.color(STATE_COLOUR.get(state, "muted")) if open_ else T.color("faint"))
             it.setToolTip(f"{state}" if open_ else f"Locked: finish {self.blocker(key)} first")
             if key == self.page:
@@ -1066,7 +1243,9 @@ class SetupDialog(QDialog):
         elif state == "needs re-checking":
             text = "Still needed: run it again (what changed is said above)."
         elif state == "needs attention":
-            text = "Still needed: a run that succeeds. The last one did not: " + (detail or "see its result.")
+            text = ("Still needed: a run that succeeds. The last one did not: what went wrong and what to do are "
+                    "shown above." if (self._sub(self.page).get("run") or {}).get("state") == "ended" else
+                    "Still needed: a run that succeeds. The last one did not: " + (detail or "see its result."))
         else:
             text = "Still needed: " + {
                 "add": "add the radio.",
@@ -1090,16 +1269,16 @@ class SetupDialog(QDialog):
             elif it.layout() is not None:
                 SetupDialog._empty(it.layout())
 
-    def _page_box(self, key, title, state, detail, actions, actions_last=False):
+    def _page_box(self, key, title, state, detail, actions, actions_last=False, mark=None):
         f = QFrame()
         f.setObjectName("TextPanel")
         lay = QVBoxLayout(f)
         lay.setContentsMargins(T.SPACE * 1.5, T.SPACE, T.SPACE * 1.5, T.SPACE)
         h = QHBoxLayout()
         col = T.C[STATE_COLOUR.get(state, "muted")]
-        h.addWidget(_label(f"<span style='color:{col}'>{STATE_MARK.get(state, '○')}</span>&nbsp; {title}",
+        h.addWidget(_label(f"<span style='color:{col}'>{mark or STATE_MARK.get(state, '○')}</span>&nbsp; {title}",
                            size=11.5, bold=True, wrap=False))
-        st = _label(state, wrap=False)
+        st = _label("failed" if mark == "✗" else state, wrap=False)       # relay 025: the word follows the mark
         st.setStyleSheet(f"color: {col};")
         st.setObjectName("StepState")
         h.addWidget(st)
@@ -1164,7 +1343,10 @@ class SetupDialog(QDialog):
                  not running and not locked)]
         if key == "range" and state != "done":
             acts.append(("Keep the estimate instead…", self.accept_typical, not running and not locked))
-        box = self._page_box(key, f"Step {n}. {s.get('title', key)}", state, detail, acts, actions_last=True)
+        ended = (self._sub(key).get("run") or {}).get("state") in ("running", "cancelling", "ended")
+        box = self._page_box(key, f"Step {n}. {s.get('title', key)}", state,
+                             "" if ended and state in ("needs attention", "in progress") else detail, acts,
+                             actions_last=True, mark=None if state == "in progress" else self._mark(key, state))
         g = QGridLayout()
         g.setColumnStretch(1, 1)
         g.setHorizontalSpacing(T.SPACE * 2)
@@ -1181,7 +1363,61 @@ class SetupDialog(QDialog):
         if locked:
             box.layout().addWidget(_label(f"Locked until {locked} is done.", muted=True))
         box.layout().addLayout(self._actions(acts))         # the buttons after the explanation
+        box.layout().addWidget(self.run_panel)              # relay 025: this step's run, running or ended
         self.steps.addWidget(box)
+
+    def _sub(self, key: str) -> dict:
+        r = self._radio() or {}
+        return next((x for st in r.get("steps") or [] for x in st.get("sub") or [] if x["step"] == key), {})
+
+    def _mark(self, key: str, state: str) -> str:
+        """Relay 025: a spinner while a step runs; ✓, ⚠ or ✗ by how its last full run ended."""
+        if state == "in progress":
+            return SPINNER[self._spin_i % len(SPINNER)]
+        run = self._sub(key).get("run") or {}
+        if state == "needs attention":
+            return "✗" if run.get("outcome") == "failed" and not run.get("short") else "⚠"
+        return STATE_MARK.get(state, "○")
+
+    def _spin(self):
+        self._spin_i += 1
+        ch = SPINNER[self._spin_i % len(SPINNER)]
+        for i in range(self.steps_list.count()):
+            it = self.steps_list.item(i)
+            tail = it.data(Qt.ItemDataRole.UserRole + 2)
+            if tail:
+                it.setText(f"{ch}  {tail}")
+        v = self.run_panel.view
+        if self.run_panel.isVisible() and v.get("state") in ("running", "cancelling"):
+            self.run_panel.show_view(v, ch)
+
+    def _update_run(self):
+        """Fill the run panel for the page shown, and poll faster while anything runs."""
+        r = self._radio()
+        running = any(x.get("state") == "in progress" for st in (r or {}).get("steps") or []
+                      for x in st.get("sub") or [])
+        want = 1000 if running else 2500
+        if self.timer.interval() != want:
+            self.timer.setInterval(want)
+        if self.run_panel.parent() is None:
+            return
+        self.run_panel.show_view(self._sub(self.page).get("run"), SPINNER[self._spin_i % len(SPINNER)])
+
+    def cancel_run(self):
+        step = self.page
+        if QMessageBox.question(self, "Cancel this run?", "Stop this measurement now?\n\nOnly this run stops: any "
+                                "other scan or recording carries on. Nothing it found so far is kept, and the step "
+                                "stays as it was before.") != QMessageBox.StandardButton.Yes:
+            return
+        self.run_panel.b_cancel.setEnabled(False)
+
+        def got(d, err):
+            if err:
+                QMessageBox.information(self, "Not cancelled", err)
+                self.run_panel.b_cancel.setEnabled(True)
+                return
+            self.show_status(d)
+        call(lambda: self.svc.setup_post("cancel", {"radio": self.radio, "step": step}), got)
 
     def _radio_running(self, r: dict) -> bool:
         return any(sub["state"] == "in progress" for s in r.get("steps") or [] for sub in s.get("sub") or [])
@@ -1249,7 +1485,9 @@ class SetupDialog(QDialog):
             if err:
                 QMessageBox.information(self, "Not started", err)
                 return
-            self.foot.setText(f"Started: {d.get('line', '')}. Its log: {(d.get('job') or {}).get('log', '')}")
+            self.foot.setText(("Started the short test" if short else "Started the full measurement")
+                              + ": its progress shows on this page. Its log: "
+                              + Path((d.get("job") or {}).get("log", "") or "").name)
             if d.get("status"):
                 self.show_status(d["status"])
         call(lambda: self.svc.setup_post("run", {"radio": self.radio, "step": step, "short": short}), got)
