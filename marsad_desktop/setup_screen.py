@@ -357,7 +357,7 @@ def pick_existing_station(parent=None, start: str | None = None) -> str | None:
 class FirstRunDialog(QDialog):
     """The first time the window has no station at all."""
 
-    def __init__(self, parent=None, home: str | None = None):
+    def __init__(self, parent=None, home: str | None = None, note: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Welcome to Marsad")
         self.setObjectName("FirstRunDialog")
@@ -366,17 +366,24 @@ class FirstRunDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(T.SPACE * 3, T.SPACE * 3, T.SPACE * 3, T.SPACE * 2)
         v.addWidget(_label("Welcome to Marsad", size=14, bold=True))
+        if note:                                      # relay 028: after Close Station
+            n = _label(note)
+            n.setObjectName("ClosedNote")
+            v.addWidget(n)
         v.addWidget(_label("There is no station open yet. A station is a folder holding its radios, rigs, surveys and "
                            "recordings. Make a new one, or open one you already have" + (f" (such as {home})" if home
                                                                                         else "") + ".", muted=True))
         row = QHBoxLayout()
         b1 = _button("New Station…", primary=True)
         b2 = _button("Open an existing station…")
+        b4 = _button("Stations…")                     # relay 028: the known list, with missing ones and Remove from list
+        b4.setObjectName("KnownStations")
         b3 = _button("Quit")
         b1.clicked.connect(self._new)
         b2.clicked.connect(lambda: self._open(home))
+        b4.clicked.connect(self._known)
         b3.clicked.connect(self.reject)
-        for b in (b1, b2):
+        for b in (b1, b2, b4):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(b3)
@@ -393,6 +400,14 @@ class FirstRunDialog(QDialog):
         f = pick_existing_station(self, home)
         if f:
             self.choice, self.folder = "open", f
+            self.accept()
+
+    def _known(self):
+        from marsad_desktop.stations_dialog import StationsDialog
+        d = StationsDialog(self)
+        self._stations_dlg = d
+        if d.exec() and d.open_folder:
+            self.choice, self.folder = "open", d.open_folder
             self.accept()
 
 

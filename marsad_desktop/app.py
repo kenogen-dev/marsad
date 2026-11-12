@@ -565,12 +565,20 @@ class Window(QMainWindow):
         here = self.station_folder
         for e in ST.registry().get("stations") or []:
             cur = bool(here) and ST._same(e["folder"], here)
-            b = sub.addAction(f"{e['name']}   \u00b7   {e['folder']}" + ("   (open now)" if cur else ""))
+            gone = not cur and ST.is_missing(e["folder"])        # relay 028: shown, never re-created
+            b = sub.addAction(f"{e['name']}   \u00b7   {e['folder']}" + ("   (open now)" if cur else "")
+                              + (f"   ({ST.MISSING})" if gone else ""))
             b.setEnabled(not cur)
             b.triggered.connect(lambda _=False, f=e["folder"]: self.open_station(f))
         if not sub.actions():
             b = sub.addAction("No other station yet")
             b.setEnabled(False)
+        a = m.addAction("Stations\u2026")                 # relay 028: the list, Show in Explorer, Remove from list
+        a.setObjectName("StationsAction")
+        a.triggered.connect(lambda *_: self.open_stations())
+        a = m.addAction("Close Station")
+        a.setObjectName("CloseStationAction")
+        a.triggered.connect(lambda *_: self.close_station())
         m.addSeparator()
         a = m.addAction("Set up this station\u2026")
         a.triggered.connect(lambda *_: self.open_setup())
@@ -592,6 +600,9 @@ class Window(QMainWindow):
         closes; nothing in the station being left changes."""
         from marsad_desktop import stations as ST
         from marsad_desktop.scan_start import call
+        if ST.is_missing(folder):                 # relay 028: shown as missing, with Remove from list; never re-created
+            self.missing_station(folder)
+            return
         if not self.chain.can_close():
             return
         self.statusBar().showMessage(f"Opening the station at {folder}\u2026", 15000)
@@ -599,6 +610,9 @@ class Window(QMainWindow):
         def got(st, err):
             if err:
                 from PySide6.QtWidgets import QMessageBox
+                if ST.is_missing(folder):
+                    self.missing_station(folder)
+                    return
                 QMessageBox.information(self, "Station not opened", err)
                 return
             ST.remember(folder, name)
@@ -608,6 +622,71 @@ class Window(QMainWindow):
             self.switched_to = w
             self.close()
         call(lambda: ST.ensure_service_ex(folder), got)      # relay 027: an older service is updated on the way
+
+    # -- relay 028: stations the owner can delete in Explorer
+    def missing_station(self, folder: str):
+        """A listed station whose folder has gone: say so, and offer Remove from list (no file is touched)."""
+        from PySide6.QtWidgets import QMessageBox
+        from marsad_desktop import stations as ST
+        box = QMessageBox(self)
+        box.setObjectName("MissingStationBox")
+        box.setWindowTitle("Station missing")
+        box.setText(f"{ST.MISSING.capitalize()}: {folder}")
+        box.setInformativeText("Marsad does not re-create a station's folder. If you deleted it, remove it from the "
+                               "list; if you moved it, use Open Station… on its new place.")
+        forget = box.addButton("Remove from list", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Keep it listed", QMessageBox.ButtonRole.RejectRole)
+        self._missing_box = box
+        box.exec()
+        if box.clickedButton() is forget:
+            ST.forget(folder)
+            self.statusBar().showMessage("Removed from the list. No file was touched.", 8000)
+
+    def open_stations(self):
+        from marsad_desktop.stations_dialog import StationsDialog
+        d = StationsDialog(self, current=self.station_folder)
+        self._stations_dlg = d
+        if not d.exec():
+            return
+        if d.close_current:
+            self.close_station()
+        elif d.open_folder:
+            self.open_station(d.open_folder)
+
+    def release_now(self, wait_s: float = 15.0) -> dict:
+        """Stop this station's own service so nothing holds its folder (only when nothing runs on it, rule 1)."""
+        from marsad_desktop import stations as ST
+        if getattr(self, "_released", None) is not None or not self.station_folder:
+            return getattr(self, "_released", None) or {"released": False, "text": ""}
+        self._released = ST.release_station(getattr(self.svc, "base", None), self.station_folder, wait_s)
+        return self._released
+
+    def close_station(self):
+        """Station > Close Station: leave the station, release everything that holds its folder, and show the welcome
+        dialog. A scan or measurement that is running carries on (rule 1); the window says the folder stays in use."""
+        from marsad_desktop import stations as ST
+        from marsad_desktop.scan_start import call
+        if not self.chain.can_close():
+            return
+        self.statusBar().showMessage("Closing the station…", 15000)
+        self.live.shutdown()
+        self.timer.stop()
+        self.stale_timer.stop()
+        self.setup_timer.stop()
+        folder = self.station_folder
+
+        def got(r, err):
+            r = r or {"released": False, "text": err or ""}
+            self._released = r
+            d = ST.registry()
+            if d.get("last") and folder and ST._same(d["last"], folder):
+                ST.forget_last()
+            app = QApplication.instance()
+            app.setQuitOnLastWindowClosed(False)
+            geometry = self.saveGeometry()
+            self.close()
+            reopen_after_close(geometry, r.get("text") or "")
+        call(lambda: ST.release_station(getattr(self.svc, "base", None), folder), got)
 
     def open_theme(self):
         """Relay 022: View > Theme…. Apply makes the theme the window's palette, remembers it, and rebuilds the window
@@ -642,12 +721,62 @@ class Window(QMainWindow):
         if self.chain.can_close():
             remember_place(self)
             self.live.shutdown()
+            # relay 028: leaving this station (quitting, or switching to another): its own service stops now, so
+            # nothing holds the folder. A theme change keeps the station and its service.
+            rebuilt = getattr(self, "rebuilt_as", None)
+            switched = getattr(self, "switched_to", None)
+            stays = rebuilt is not None or (switched is not None and self.station_folder
+                                             and getattr(switched, "station_folder", None)
+                                             and _same_folder(switched.station_folder, self.station_folder))
+            # never release a station another open window still shows
+            stays = stays or any(isinstance(o, Window) and o is not self and o.isVisible()
+                                 and getattr(o, "station_folder", None) and self.station_folder
+                                 and _same_folder(o.station_folder, self.station_folder)
+                                 for o in QApplication.topLevelWidgets())
+            if not stays:
+                try:
+                    self.release_now(wait_s=8.0)
+                except Exception:             # never let releasing stop a close
+                    pass
             ev.accept()
         else:
             ev.ignore()
 
 
 _OPEN: list = []                    # windows opened by a station switch or a theme change, kept alive
+
+
+def _same_folder(a, b) -> bool:
+    from marsad_desktop import stations as ST
+    return ST._same(a, b)
+
+
+def reopen_after_close(geometry, said: str = "") -> None:
+    """Relay 028: after Close Station, the welcome dialog; a station chosen there opens in a new window, Quit ends."""
+    from marsad_desktop import stations as ST
+    from marsad_desktop.setup_screen import FirstRunDialog
+    app = QApplication.instance()
+    home = ST.home_station()
+    note = "Station closed. " + (said if said else "") + " To delete a station's files, delete its folder in Explorer."
+    d = FirstRunDialog(home=str(home) if home else None, note=note.replace("  ", " "))
+    _OPEN.append(d)
+    while True:
+        if not d.exec() or not d.folder:
+            app.setQuitOnLastWindowClosed(True)
+            app.quit()
+            return
+        try:
+            st = ST.ensure_service_ex(d.folder)
+            break
+        except RuntimeError as exc:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(d, "Station not opened", str(exc))
+            d.folder = None
+    ST.remember(d.folder)
+    w = Window(Service(st["base"]), start="Live Scan", station_folder=str(d.folder), service_state=st)
+    _OPEN.append(w)
+    show_in_place(w, geometry)
+    app.setQuitOnLastWindowClosed(True)
 
 # Relay 026: the window never changes its own size, place or maximised state. A station switch and a theme change
 # build a new window; it used to copy only size() (the inside) and pos() (the frame's corner) and was shown normal, so

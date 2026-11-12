@@ -5,7 +5,10 @@ The tuner's synthesiser either locks on a frequency or it does not, and the driv
 asks `rtl_sdr` to tune and read a few thousand samples at one frequency at a time, and reads what the driver said:
 
   lock      tuned, nothing said against it
-  unlock    "PLL not locked" / "No valid PLL values", or the driver refused the frequency
+  unlock    "PLL not locked", said after the tune
+  refused   the driver has no synthesiser setting for the frequency ("No valid PLL values", "set_freq: failed") and
+            refuses it; the R820T driver then drops back into HF direct sampling, which is not the radio being in
+            direct sampling at that frequency (relay 028)
   direct    the driver is in HF direct sampling instead of using the tuner (the RTL-SDR Blog driver does this below
             about 24 MHz on an R820T): not a tuner frequency at all, and never counted as tuner range
   error     the radio could not be opened or stopped answering (unplugged, another program has it, the USB lead)
@@ -48,6 +51,11 @@ from pathlib import Path
 from .config import Station
 
 LOCK, UNLOCK, DIRECT, ERROR = "lock", "unlock", "direct", "error"
+# Relay 028: the driver has no synthesiser setting for the frequency ("No valid PLL values", "r82xx_set_freq: failed")
+# and refuses the tune. The R820T driver then falls back into HF direct sampling, which an earlier reading took for
+# "direct sampling inside the range". A refusal is never lock and never direct sampling: the tuner cannot go there.
+REFUSED = "refused"
+_REFUSE = ("no valid pll values", "set_freq: failed", "failed to set center freq")
 TOP_LIMIT_MHZ = 3000.0              # rtl_sdr takes Hz as a 32-bit number; no RTL-SDR tuner locks near this
 BOTTOM_LIMIT_MHZ = 1.0
 EXIT_CANCELLED = 4
@@ -72,6 +80,9 @@ def classify(stderr: str, returncode: int | None = 0) -> str:
     t = (stderr or "").lower()
     if any(w in t for w in _OPEN_FAIL) or any(w in t for w in _USB_FAIL):
         return ERROR
+    s = t.rfind("sampling at")
+    if any(w in t[max(s, 0):] for w in _REFUSE):         # relay 028: refused, whatever direct sampling did after
+        return REFUSED
     on, off = t.rfind("enabled direct sampling"), t.rfind("disabled direct sampling")
     if on >= 0 and on > off:
         return DIRECT
@@ -81,7 +92,7 @@ def classify(stderr: str, returncode: int | None = 0) -> str:
         after_off = nl if nl >= 0 else len(t)
     k = max(t.rfind("sampling at"), after_off)
     tune = t[k:] if k >= 0 else t
-    if "pll not locked" in tune or "no valid pll" in tune or "failed to set center freq" in tune:
+    if "pll not locked" in tune:
         return UNLOCK
     return LOCK
 
@@ -186,8 +197,18 @@ def sweep(probe, lo_mhz: float, hi_mhz: float, step_mhz: float, precision_mhz: f
             return fail(f, s)
         states.append(s)
     extended = []
-    # the high edge must be found: carry on upward while the last point still locks
-    while states[-1] == LOCK and pts[-1] < top_limit:
+
+    def refused_from():
+        """Relay 028: the lowest frequency, above the first lock, that the driver refuses outright. On an R820T past
+        about 1766 MHz its answers alternate refused / not locked / locked every few MHz (the owner's v5, 2026-11-11):
+        not how a tuner's lock range behaves, so nothing from there up counts as range."""
+        first = next((i for i, s in enumerate(states) if s == LOCK), None)
+        if first is None:
+            return None
+        return next((pts[i] for i in range(first, len(pts)) if states[i] == REFUSED), None)
+
+    # the high edge must be found: carry on upward while the last point still locks (not past a refusal)
+    while states[-1] == LOCK and pts[-1] < top_limit and refused_from() is None:
         plan["phase"] = "looking for the high edge above the sweep"
         f = round(min(top_limit, pts[-1] + step_mhz), 4)
         plan["total"] += 1
@@ -220,6 +241,14 @@ def sweep(probe, lo_mhz: float, hi_mhz: float, step_mhz: float, precision_mhz: f
             if again == LOCK:
                 seen[pts[i]] = states[i] = LOCK
                 ok[i] = True
+    cut = refused_from()
+    islands = []
+    if cut is not None:                          # past the first refusal, a "locked" answer is not trusted
+        for i, f in enumerate(pts):
+            if f >= cut:
+                if ok[i]:
+                    islands.append(f)
+                ok[i] = False
     changes = [i for i in range(1, len(pts)) if ok[i] != ok[i - 1]]
     plan["total"] = tunes[0] + len(changes) * halvings
     edges = []                                   # (MHz, rising, what lies on the not-locking side)
@@ -256,12 +285,14 @@ def sweep(probe, lo_mhz: float, hi_mhz: float, step_mhz: float, precision_mhz: f
     direct = sorted(f for f, s in seen.items() if s == DIRECT)
     out = {"segments": segments, "tunes": tunes[0], "error": None, "points": _points(seen),
            "swept": [pts[0], pts[-1]], "extended": sorted(set(extended)),
-           "direct_below": None, "direct_above_range": []}
+           "direct_below": None, "direct_above_range": [], "refused_from": cut, "untrusted_locks": islands}
     if segments:
         out["low"], out["high"] = segments[0][0], segments[-1][1]
         out["gaps"] = [[segments[i][1], segments[i + 1][0]] for i in range(len(segments) - 1)]
         out["low_kind"] = {DIRECT: "direct", UNLOCK: "unlock"}.get(kinds[0][0], kinds[0][0])
         out["high_kind"] = {DIRECT: "direct", UNLOCK: "unlock"}.get(kinds[-1][1], kinds[-1][1])
+        if cut is not None and out["high"] < cut <= out["high"] + 2 * step_mhz:
+            out["high_kind"] = REFUSED           # what lies above the edge is the driver refusing the frequency
         out["edge_at_start"] = ok[0]            # still locked at the lowest point it could reach
         out["edge_at_end"] = ok[-1]             # still locked at the highest point it could reach
         if out["low_kind"] == "direct":
@@ -291,13 +322,22 @@ def report_lines(res: dict, step: float, precision: float | None) -> list:
                      "(below it the radio does not use its tuner), not a lock limit")
     elif res.get("low_kind") == "unlock":
         lines.append(f"tuner-sweep: low edge {res['low']:.1f} MHz: the tuner stops locking below it")
-    if res.get("high_kind") in ("unlock", "direct"):
+    if res.get("high_kind") == REFUSED:
+        lines.append(f"tuner-sweep: high edge {res['high']:.1f} MHz: above it the driver refuses the frequency "
+                     "(it has no synthesiser setting for it)")
+    elif res.get("high_kind") in ("unlock", "direct"):
         lines.append(f"tuner-sweep: high edge {res['high']:.1f} MHz: the tuner stops locking above it")
     lines += [f"tuner-sweep: gap {a:.1f} to {b:.1f} MHz" for a, b in res["gaps"]] or ["tuner-sweep: no gaps"]
     if res.get("direct_above_range"):
         lines.append("tuner-sweep: UNEXPECTED: the driver reported HF direct sampling at "
                      + ", ".join(f"{f:g}" for f in res["direct_above_range"][:5])
                      + " MHz, inside or above the tuner's range: the driver's words for those points are in this log")
+    if res.get("untrusted_locks"):
+        lines.append(f"tuner-sweep: NOTE: from {res['refused_from']:g} MHz up the driver refuses most frequencies "
+                     "outright, yet reports lock at a few scattered ones ("
+                     + ", ".join(f"{f:g}" for f in res["untrusted_locks"][:6])
+                     + " MHz). This driver doesn't report lock reliably there, so those points are not counted as "
+                       "range")
     if res.get("edge_at_start"):
         lines.append(f"tuner-sweep: it locked at the lowest point it could reach ({res['swept'][0]:g} MHz): "
                      "the true low edge is lower")
@@ -316,7 +356,8 @@ def report_lines(res: dict, step: float, precision: float | None) -> list:
     return lines
 
 
-STATE_WORD = {LOCK: "locked", UNLOCK: "not locked", DIRECT: "direct sampling (not the tuner)", ERROR: "no answer"}
+STATE_WORD = {LOCK: "locked", UNLOCK: "not locked", DIRECT: "direct sampling (not the tuner)", ERROR: "no answer",
+              REFUSED: "refused by the driver (no synthesiser setting for it)"}
 
 
 def progress_line(ev: dict) -> str | None:

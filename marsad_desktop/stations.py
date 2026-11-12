@@ -136,13 +136,94 @@ def _port_of(base: str) -> int | None:
         return None
 
 
+MISSING = "missing (folder not found)"
+
+
+class MissingStation(RuntimeError):
+    """Relay 028: a listed station whose folder (or its station.json) has gone. It is never re-created."""
+
+
+def is_missing(folder) -> bool:
+    return not (Path(folder) / "station.json").is_file()
+
+
+def missing_text(folder) -> str:
+    return (f"This station's folder was not found ({folder}). Marsad does not re-create it. If you deleted it, use "
+            "Remove from list; if you moved it, open it from its new place.")
+
+
+def forget(folder) -> bool:
+    """Relay 028: Remove from list. Forgets the station in the window's settings and touches no files. True when it was
+    listed."""
+    d = registry()
+    keep = [s for s in d["stations"] if not _same(s["folder"], folder)]
+    if len(keep) == len(d["stations"]):
+        return False
+    d["stations"] = keep
+    if d.get("last") and _same(d["last"], folder):
+        d["last"] = None
+    tmp = _file().with_suffix(".json.part")
+    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    os.replace(tmp, _file())
+    return True
+
+
+def forget_last() -> None:
+    """After Close Station: the next start opens the welcome dialog, not the station just closed."""
+    d = registry()
+    d["last"] = None
+    tmp = _file().with_suffix(".json.part")
+    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    os.replace(tmp, _file())
+
+
+def show_in_explorer(folder) -> str:
+    """Open the station's folder in File Explorer (a missing one: the nearest folder above it that exists)."""
+    p = Path(folder)
+    target = p if p.exists() else next((q for q in p.parents if q.exists()), Path.home())
+    if os.name == "nt":
+        subprocess.Popen(["explorer", str(target)], creationflags=NO_WINDOW)
+    return str(target)
+
+
 def _start_own(folder, port: int) -> None:
+    if is_missing(folder):                       # relay 028: never create a station's folder by opening it
+        raise MissingStation(missing_text(folder))
     logs = Path(folder) / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    log = open(logs / f"window_service_{port}_{dt.datetime.now():%Y%m%d-%H%M%S}.log", "w", encoding="utf-8")
-    subprocess.Popen([engine_python(), "-m", "marsad", "--station", str(folder), "live", "--port", str(port),
-                      "--exit-after-idle", "5"], cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
-                     stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+    logs.mkdir(exist_ok=True)
+    with open(logs / f"window_service_{port}_{dt.datetime.now():%Y%m%d-%H%M%S}.log", "w", encoding="utf-8") as log:
+        subprocess.Popen([engine_python(), "-m", "marsad", "--station", str(folder), "live", "--port", str(port),
+                          "--exit-after-idle", "5"], cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+
+
+def release_station(base: str | None, folder, wait_s: float = 15.0) -> dict:
+    """Relay 028: the window is leaving this station (Close Station, a switch, quitting): stop the station's own
+    service so nothing holds its folder. Only a service the window starts (8750-8759) that serves this folder, and only
+    when nothing runs on the station (rule 1). The home station's app on 8731 and anything else are left alone.
+    {"released", "text", "busy"}."""
+    port = _port_of(base) if base else None
+    if port not in OWN_PORTS:
+        return {"released": False, "busy": [],
+                "text": "Its service is not one this window started, so it is left running."}
+    d = ping(port, 2.0)
+    if not d:
+        return {"released": True, "busy": [], "text": "Nothing holds the station's folder."}
+    if d.get("station") and not _same(d["station"], folder):
+        return {"released": False, "busy": [], "text": "That service serves another station; left alone."}
+    if not any((Path(folder) / "logs").glob(f"window_service_{port}_*.log")):
+        # started by something other than a window (a check, a person): not the window's to stop
+        return {"released": False, "busy": [], "text": "Its service was not started by a Marsad window, so it is left "
+                                                       "running."}
+    busy = station_busy(folder, port, d) if not is_missing(folder) else []
+    if busy:
+        return {"released": False, "busy": busy,
+                "text": "Still running on this station: " + "; ".join(busy) + ". Its service stays until that ends "
+                        "and closes 5 minutes after; until then Windows says the folder is in use."}
+    ok = stop_listener(port, wait_s)
+    return {"released": ok, "busy": [],
+            "text": "Nothing holds its folder now." if ok else
+                    f"The station's service on {port} did not stop; its folder may still be in use."}
 
 
 def _wait_answer(folder, port: int, wait_s: float, build: str | None = None) -> str:
@@ -257,7 +338,10 @@ def ensure_service_ex(folder, wait_s: float = 60.0) -> dict:
     {"base", "note", "stale", "home", "busy"}. Relay 027: a found service on older code is restarted at once when it
     is one of the window's own (8750-8759) and nothing runs on its station ("Station service updated"); while a run is
     on, or for the home station on 8731, it is kept and `stale` says so (the window shows why, and Restart now for the
-    home station). Raises RuntimeError in words."""
+    home station). Raises RuntimeError in words; MissingStation (relay 028) for a folder that has gone, which is never
+    re-created."""
+    if is_missing(folder):
+        raise MissingStation(missing_text(folder))
     found = serving(folder)
     if found:
         st = check_service(found, folder)

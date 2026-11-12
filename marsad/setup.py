@@ -527,6 +527,7 @@ def _result_of(station: Station, job: dict, status: dict) -> dict:
         res["low_edge_kind"] = "direct sampling switch" if low_direct else "lock limit"
         odd = "UNEXPECTED: the driver reported HF direct sampling" in full
         far = _far_from_typical(station, job.get("radio"), lo, hi)       # relay 025: the 12-to-24 MHz kind of answer
+        untrusted = re.search(r"NOTE: from ([\d.]+) MHz up the driver refuses", full)      # relay 028
         res["ok"] = 1 <= lo < hi <= 3000 and not edge_open and not odd and not far
         res["note"] = (f"locks {lo:g} to {hi:g} MHz" + ("".join(f", blind spot {a:g} to {b:g} MHz" for a, b in gaps)
                                                          if gaps else ", no blind spots")
@@ -535,7 +536,11 @@ def _result_of(station: Station, job: dict, status: dict) -> dict:
                        + ("" if not edge_open else ": an edge lay outside the sweep")
                        + ("" if not odd else ": the driver reported direct sampling inside the range")
                        + ("" if not far else f": {far}")
+                       + (f"; above {float(untrusted.group(1)):g} MHz this radio's driver doesn't report lock reliably, "
+                          "so nothing there is counted" if untrusted else "")
                        + (" (short test: a coarse pass, edges within about 100 MHz)" if job.get("short") else ""))
+        if untrusted:
+            res["untrusted_from_mhz"] = float(untrusted.group(1))
         return res
     if step == "range":
         m, g = _RANGE.search(full), _GAP.search(full)

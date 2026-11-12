@@ -19,7 +19,8 @@ from marsad.config import Station
     ("Found 1 device(s):\nSampling at 1024000 S/s.\nTuned to 100000000 Hz.\n", TS.LOCK),
     ("Sampling at 1024000 S/s.\n[R82XX] PLL not locked!\nTuned to 1900000000 Hz.\n", TS.UNLOCK),
     ("Sampling at 1024000 S/s.\n[E4K] PLL not locked for 1150000000 Hz!\nTuned to 1150000000 Hz.\n", TS.UNLOCK),
-    ("Sampling at 1024000 S/s.\nWARNING: Failed to set center freq.\n", TS.UNLOCK),
+    # relay 028: the driver refusing the frequency is its own state (still never counted as range)
+    ("Sampling at 1024000 S/s.\nWARNING: Failed to set center freq.\n", TS.REFUSED),
     # the R820T's harmless announcement while the sample rate is set (tuned to 0 Hz first), then a real tune
     ("Enabled direct sampling mode, input 2\nSampling at 1024000 S/s.\nDisabled direct sampling mode\n"
      "Tuned to 100000000 Hz.\n", TS.LOCK),
