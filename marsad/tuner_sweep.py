@@ -338,6 +338,9 @@ def main(argv: list[str] | None = None, station: Station | None = None, prog: st
     ap.add_argument("--precision", type=float, default=0.5, help="narrow each edge to this many MHz (default 0.5)")
     ap.add_argument("--json", help="also write the result to this file")
     ap.add_argument("--stop-file", type=Path, help="stop cleanly between tunings once this file exists")
+    ap.add_argument("--ledger", action="store_true",
+                    help="note this run in the station's setup ledger (logs/setup_processes.json), so an rtl_sdr it "
+                         "leaves behind if killed is known as Marsad's own; the setup guide passes it")
     a = ap.parse_args(argv)
     station = station or Station.load()
     if a.receiver not in station.receivers:
@@ -360,6 +363,13 @@ def main(argv: list[str] | None = None, station: Station | None = None, prog: st
     if exe is None:
         print("  rtl_sdr was not found in rtl-sdr/ or on PATH.", file=sys.stderr)
         return 2
+    # relay 027: written to the station's setup ledger, so an rtl_sdr this sweep leaves behind if it is killed is
+    # recognised as Marsad's own leftover (and only then offered for stopping); while this process lives, it is not
+    if a.ledger:
+        import os as _os
+        from .radio_holders import note_started
+        note_started(station, _os.getpid(), f"tuner sweep on {a.receiver}", until_s=1800, radio=a.receiver,
+                     step="range")
     lo, hi = expected(station, a.receiver)
     step = a.step or (100.0 if a.short else 20.0)
     precision = None if a.short else a.precision

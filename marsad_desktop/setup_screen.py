@@ -398,6 +398,61 @@ class FirstRunDialog(QDialog):
 
 # ---------------------------------------------------------------- Add Radio
 
+class HoldersBox(QFrame):
+    """Relay 027: why Detect (or a measurement) could not finish, in plain words, with what to do. When Marsad's own
+    setup measurement has been left behind holding a radio, "Stop the leftover measurement…" stops that one process
+    after a confirmation; scans, recorders, SDR++ and other programs are only named, never touched (rule 1)."""
+
+    def __init__(self, svc, parent=None):
+        super().__init__(parent)
+        self.svc = svc
+        self.setObjectName("HoldersBox")
+        self.setProperty("panel", True)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(T.SPACE, T.SPACE // 2, T.SPACE, T.SPACE // 2)
+        self.text = _label("", wrap=True)
+        self.text.setObjectName("HoldersText")
+        v.addWidget(self.text)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.b_stop = _button("Stop the leftover measurement…")
+        self.b_stop.setObjectName("StopLeftover")
+        self.b_stop.clicked.connect(self.stop)
+        row.addWidget(self.b_stop)
+        v.addLayout(row)
+        self.leftovers: list = []
+        self.hide()
+
+    def show_answer(self, d: dict | None):
+        d = d or {}
+        if not d.get("problem"):
+            self.hide()
+            return
+        self.leftovers = [h for h in d.get("holders") or [] if h.get("stoppable")]
+        self.text.setText(d["problem"] + (f"\n\n{d['by_hand']}" if d.get("by_hand") else ""))
+        self.b_stop.setVisible(bool(self.leftovers))
+        self.show()
+
+    def stop(self):
+        if not self.leftovers:
+            return
+        h = self.leftovers[0]
+        if QMessageBox.question(self, "Stop the leftover measurement?",
+                                f"This stops {h['program']} (process {h['pid']}), which Marsad started for "
+                                f"{h.get('purpose') or 'a setup measurement'} and which has outlived it. Nothing is "
+                                "recording through it. Scans, recorders and other programs are never stopped.\n\n"
+                                "Stop it?") != QMessageBox.StandardButton.Yes:
+            return
+        self.b_stop.setEnabled(False)
+
+        def got(d, err):
+            self.b_stop.setEnabled(True)
+            self.leftovers = [x for x in (d or {}).get("holders") or [] if x.get("stoppable")]
+            self.b_stop.setVisible(bool(self.leftovers))
+            self.text.setText((err or (d or {}).get("text") or "") + ("\nThen try Detect again." if not err else ""))
+        call(lambda: self.svc.setup_post("stop_leftover", {"pid": h["pid"], "confirmed": True}), got)
+
+
 class AddRadioDialog(QDialog):
     """Add Radio. Relay 024: only what is known is shown as a value, and every value says where it came from:
     read from the radio (serial, product and maker strings, the detected tuner), fixed by the tuner type (the
@@ -435,6 +490,7 @@ class AddRadioDialog(QDialog):
         self.list = QListWidget()
         self.list.setObjectName("RadioList")
         self.list.setMaximumHeight(120)
+        self.list.setMinimumHeight(64)          # relay 027: never squeezed to half a line when Detect explains itself
         v.addWidget(self.list)
         det = QHBoxLayout()
         self.b_detect = _button("Detect the radios…")
@@ -446,6 +502,8 @@ class AddRadioDialog(QDialog):
         self.det_note = _label("", muted=True)
         det.addWidget(self.det_note, 1)
         v.addLayout(det)
+        self.holders = HoldersBox(svc, self)          # relay 027: why Detect could not finish, and what to do
+        v.addWidget(self.holders)
         # relay 026: after a radio is added, the next detected one is offered here, never in a box that traps
         self.next_box = QFrame()
         self.next_box.setObjectName("NextRadio")
@@ -690,8 +748,9 @@ class AddRadioDialog(QDialog):
         else:
             self.src["maker"].setText("not read yet: Detect reads it" if not self.maker.text() else "typed")
         self.src["tuner"].setText({"detected": "detected: read from the radio",
-                                   "chosen": "chosen by you"}.get(self.tuner_from or "", "not detected yet: Detect "
-                                                                                          "reads it"))
+                                   "chosen": "chosen by you: tuner not confirmed by Detect"}.get(
+            self.tuner_from or "", "not detected yet: Detect reads it, or pick it from the list (then it is "
+                                   "\"tuner not confirmed by Detect\")"))
         label = t["tuner_label"]
         val, how = self.k_rows["gains"]
         val.setText(", ".join(f"{g:g}" for g in t["gains"]) + " dB")
@@ -718,12 +777,18 @@ class AddRadioDialog(QDialog):
                                 "is running.\n\nGo ahead?") != QMessageBox.StandardButton.Yes:
             return
         self.b_detect.setEnabled(False)
-        self.det_note.setText("asking each radio…")
+        self.det_note.setText("asking each radio (up to 15 s)…")
+        self.holders.show_answer(None)
 
         def got(d, err):
             self.b_detect.setEnabled(True)
             if err:
                 self.det_note.setText(f"Not detected: {err}")
+                return
+            if d.get("problem"):                         # relay 027: timed out, or a radio is held: why, in words
+                self.det_note.setText("Not detected: see why below. The radio can still be added by hand.")
+                self.holders.show_answer(d)
+                self._typical()
                 return
             self.detected = {str(f.get("serial")): f for f in d.get("found") or []}
             words = [f"index {f['device']}: serial {f.get('serial')}, {f.get('tuner') or 'tuner not said'}"
@@ -750,7 +815,9 @@ class AddRadioDialog(QDialog):
             body, route = {"id": o["archived"]["id"], "nickname": self.nick.text().strip()}, "radio_restore"
         else:
             body = {"serial": s, "nickname": self.nick.text().strip(), "tuner": self.tuner.currentData(),
-                    "maker": self.maker.text().strip(), "product": self.product.text().strip()}
+                    "maker": self.maker.text().strip(), "product": self.product.text().strip(),
+                    # relay 027: read from the radio by Detect, or picked by hand ("tuner not confirmed by Detect")
+                    "tuner_confirmed": self.tuner_from == "detected"}
             route = "radio"
 
         def got(d, err):
@@ -890,6 +957,12 @@ class EditRadioDialog(QDialog):
         v.addLayout(g)
         self.det_note = _label("", muted=True)
         v.addWidget(self.det_note)
+        self.holders = HoldersBox(svc, self)          # relay 027
+        v.addWidget(self.holders)
+        self.tuner_was = e.get("tuner")
+        self.detected_key = None                      # the tuner Detect read from this radio, once it has
+        if radio.get("tuner_confirmed") is False:
+            self.det_note.setText("Tuner not confirmed by Detect (it was picked by hand). Re-detect confirms it.")
         self.why = _label("", muted=True)
         self.why.setObjectName("EditRadioWhy")
         v.addWidget(self.why)
@@ -925,12 +998,17 @@ class EditRadioDialog(QDialog):
                                 "is running.\n\nGo ahead?") != QMessageBox.StandardButton.Yes:
             return
         self.b_redetect.setEnabled(False)
-        self.det_note.setText("asking each radio…")
+        self.det_note.setText("asking each radio (up to 15 s)…")
+        self.holders.show_answer(None)
 
         def got(d, err):
             self.b_redetect.setEnabled(True)
             if err:
                 self.det_note.setText(f"Not detected: {err}")
+                return
+            if d.get("problem"):                         # relay 027
+                self.det_note.setText("Not detected: see why below. Nothing was changed.")
+                self.holders.show_answer(dict(d, by_hand=""))
                 return
             f = next((x for x in (d or {}).get("found") or [] if str(x.get("serial")) == self.serial.text().strip()),
                      None)
@@ -943,6 +1021,7 @@ class EditRadioDialog(QDialog):
             self.maker.setText((f.get("manufacturer") or "").strip())
             if f.get("tuner_key"):
                 self.tuner.setCurrentIndex(self.tuner.findData(f["tuner_key"]))
+                self.detected_key = f["tuner_key"]
             self.det_note.setText(f"Read from the radio: {f.get('product') or 'no product name'}, "
                                   f"{(f.get('manufacturer') or '').strip() or 'no maker name'}, "
                                   f"{f.get('tuner') or 'tuner not said'}. Save changes keeps them.")
@@ -966,6 +1045,11 @@ class EditRadioDialog(QDialog):
                 "product": self.product.text().strip()}
         if self.nickname.isEnabled() and self.nickname.text().strip() != self.nick:
             body["nickname"] = self.nickname.text().strip()
+        # relay 027: Detect read the tuner (confirmed), or it was changed by hand (not confirmed by Detect)
+        if self.detected_key:
+            body["tuner_confirmed"] = self.tuner.currentData() == self.detected_key
+        elif self.tuner.currentData() != self.tuner_was:
+            body["tuner_confirmed"] = False
         self.ok.setEnabled(False)
 
         def got(d, err):
@@ -1659,6 +1743,8 @@ class SetupDialog(QDialog):
                      "range " + "–".join(f"{x:g}" for x in e.get("range_mhz") or []) + " MHz"
                      + (", blind spots " + ", ".join(f"{a:g}–{b:g}" for a, b in e.get("gaps_mhz") or [])
                         if e.get("gaps_mhz") else "")]
+            if r.get("tuner_confirmed") is False:          # relay 027: added by hand when Detect could not finish
+                lines.append("tuner not confirmed by Detect (Edit this radio, then Re-detect, confirms it)")
             busy = self._radio_running(r)
             box = self._page_box("add", f"Step 1. {STEP_TITLES['add']}: {self.radio}", state, "; ".join(lines),
                                  [("Edit this radio…", self.edit_radio, not busy),
@@ -1887,7 +1973,7 @@ class SetupDialog(QDialog):
 
         def got(d, err):
             if err:
-                QMessageBox.information(self, "Not started", err)
+                self._not_started(err)
                 return
             self.foot.setText(("Started the short test" if short else "Started the full measurement")
                               + ": its progress shows on this page. Its log: "
@@ -1895,6 +1981,24 @@ class SetupDialog(QDialog):
             if d.get("status"):
                 self.show_status(d["status"])
         call(lambda: self.svc.setup_post("run", {"radio": self.radio, "step": step, "short": short}), got)
+
+    def _not_started(self, err: str):
+        """Relay 027: a measurement refused because a radio is held. When Marsad's own leftover setup process is what
+        holds it, offer to stop that one (asked first); anything else is only named."""
+        def got(d, e2):
+            left = [h for h in (d or {}).get("leftovers") or []]
+            if e2 or not left:
+                QMessageBox.information(self, "Not started", err)
+                return
+            h = left[0]
+            if QMessageBox.question(self, "Not started",
+                                    f"{err}\n\nWhat holds the radio is Marsad's own leftover: {h['text']}\n\nStop the "
+                                    "leftover measurement? Scans, recorders and other programs are never stopped.") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            call(lambda: self.svc.setup_post("stop_leftover", {"pid": h["pid"], "confirmed": True}),
+                 lambda r, e3: self.foot.setText(e3 or (r or {}).get("text") or ""))
+        call(lambda: self.svc.setup_post("holders", {}), got)
 
     def done(self, r):
         self._remember_page()

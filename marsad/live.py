@@ -1036,6 +1036,23 @@ TAILERS: dict = {}
 TAIL_LOCK = threading.Lock()
 LAST_REQUEST = [time.time()]      # any HTTP hit defers the idle shutdown
 
+
+def idle_exit_due(station: Station, tail, idle_s: float, probe_running: bool, now: float | None = None) -> bool:
+    """--exit-after-idle: shut down once nobody has asked anything and nothing has grown for `idle_s`.
+
+    Relay 027: it used to wait for a survey with rows, so the service of a station with no recordings (every new
+    station during setup) never shut down, outlived the window and the code it was started with, and answered the
+    next window with "unknown route". Now a station with no survey counts requests alone. Never while a Probe-tab run
+    records (a child of this service) or a setup measurement has not ended (the window will want its result)."""
+    now = time.time() if now is None else now
+    quiet = now - LAST_REQUEST[0]
+    if tail is not None and getattr(tail, "rows", None):
+        quiet = min(quiet, now - tail.last_growth)
+    if quiet <= idle_s or probe_running:
+        return False
+    from .service_info import setup_jobs_running
+    return not setup_jobs_running(station)
+
 # ---------------------------------------------------------------- the desktop window's chain drawings
 # chain_layout.json sits beside chain.json and holds only drawings: where parts sit, the
 # wires, splitters. chain.json stays the old format, so the web page keeps reading it;
@@ -1781,8 +1798,11 @@ def scan_plan(station: Station, form: dict) -> dict:
 
 def detect_receivers(station: Station) -> dict:
     """The dongles plugged in, by rtl_eeprom (probe.detect_receivers). A module-level name so
-    the tests replace it: no test ever opens a radio."""
-    return probe.detect_receivers(station)
+    the tests replace it: no test ever opens a radio.
+
+    Relay 027: with a time limit for the whole question (probe.DETECT_TIMEOUT_S), and each rtl_eeprom written to the
+    station's setup ledger, so one left behind is recognised as Marsad's own."""
+    return probe.detect_receivers(station, purpose="radio check (rtl_eeprom)")
 
 
 def radio_in_use(station: Station, rx: str | None = None) -> dict:
@@ -1974,6 +1994,10 @@ def setup_collect(station: Station) -> None:
                 _end_setup_job(station, job)
                 st = launch_status(station, job["log"])
             if st["exit_code"] is None:
+                t0 = S._started_ts(job)                 # relay 027: a run past its time limit is ended, with why
+                if not asked and t0 and time.time() - t0 > step_timeout_s(job.get("step") or "", bool(job.get("short"))):
+                    _time_out_setup_job(station, job)
+                    changed = True
                 continue
         cancelled = bool(job.get("cancel_requested"))
         if not cancelled:                               # a cancelled run keeps no result
@@ -2021,15 +2045,38 @@ def _setup_status(station: Station) -> dict:
             "archived": S.archived_radios(station)}                                 # relay 026: removed radios
 
 
+BY_HAND_WORDS = ("You can still add the radio by hand: pick its serial in the list (Windows lists it without opening "
+                 "it) and choose its tuner. It is marked \"tuner not confirmed by Detect\" until Detect confirms it.")
+
+
+def radio_holders(station: Station) -> list:
+    """Every radio program running now, named (relay 027). A module-level name so the tests replace it."""
+    from . import radio_holders as RH
+    try:
+        return RH.holders(station)
+    except Exception:  # noqa: BLE001 - naming the holders must never turn a plain answer into an error
+        return []
+
+
 def setup_detect(station: Station) -> dict:
     """Ask each plugged-in radio its serial and tuner (rtl_eeprom opens it for a moment): refused while any radio
     program runs (rule 7), which would also make the answer wrong."""
+    from . import radio_holders as RH
     from . import setup as S
     busy = host.running_sdr_programs()
     if busy:
-        raise ValueError("A radio program is running (" + ", ".join(busy) + "). Detecting opens each radio for a "
-                         "moment, so it waits until nothing is using one.")
+        # relay 027: which program holds a radio, by name (rule 7), and Marsad's own leftover offered for stopping;
+        # an answer, not an error, so the window gets the list
+        hs = radio_holders(station)
+        return {"found": [], "problem": RH.busy_words("Detect", hs) if hs else (
+                    "A radio program is running (" + ", ".join(busy) + "). Detecting opens each radio for a moment, so "
+                    "it waits until nothing is using one."), "kind": "busy", "holders": hs,
+                "by_hand": BY_HAND_WORDS}
     got = detect_receivers(station)
+    if got.get("timed_out"):
+        hs = radio_holders(station)
+        return {"found": [], "problem": RH.timeout_words("Detect", float(got.get("timeout_s") or 15), hs),
+                "kind": "timeout", "holders": hs, "by_hand": BY_HAND_WORDS}
     found = []
     mine = {str(v): k for k, v in ((station.data.get("recorder") or {}).get("serials") or {}).items()}
     for f in got.get("found") or []:
@@ -2055,9 +2102,18 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
     if path == "/setup/radio":
         out = S.add_radio(station, form.get("serial"), form.get("nickname"), form.get("tuner"),
                           form.get("range_mhz"), form.get("gaps_mhz"), form.get("label") or "",
-                          form.get("maker") or "", form.get("product") or "", bool(form.get("fresh")))
+                          form.get("maker") or "", form.get("product") or "", bool(form.get("fresh")),
+                          None if form.get("tuner_confirmed") is None else bool(form.get("tuner_confirmed")))
         _reload_station(station)
         return dict(out, status=setup_status(station))
+    if path == "/setup/holders":                 # relay 027: which program holds a radio, by name
+        hs = radio_holders(station)
+        return {"holders": hs, "leftovers": [h for h in hs if h.get("stoppable")]}
+    if path == "/setup/stop_leftover":           # relay 027: Marsad's own leftover only, after the owner confirmed
+        from . import radio_holders as RH
+        if not form.get("confirmed"):
+            raise ValueError("Stopping a leftover measurement needs your confirmation first.")
+        return RH.stop_leftover(station, int(form.get("pid") or 0))
     if path == "/setup/radio_restore":           # relay 026: a removed radio back, with its history
         out = S.restore_radio(station, str(form.get("id") or ""), str(form.get("nickname") or ""))
         _reload_station(station)
@@ -2099,7 +2155,8 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
             S.rename_radio(station, nick, new_nick)
             nick = new_nick
         out = S.update_radio(station, nick, None, form.get("tuner"), form.get("range_mhz"),
-                             form.get("gaps_mhz"), form.get("maker"), form.get("product"))
+                             form.get("gaps_mhz"), form.get("maker"), form.get("product"),
+                             None if form.get("tuner_confirmed") is None else bool(form.get("tuner_confirmed")))
         _reload_station(station)
         return dict(out, status=setup_status(station))
     if path == "/setup/confirm_rig":
@@ -2134,6 +2191,10 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
         else:
             argv = marsad_argv(station, cmd["args"])
         got = launch_outside(station, argv, f"setup_{step}_{nick}" + ("_short" if short else ""))
+        if got.get("pid"):                        # relay 027: so a process it leaves behind is known as Marsad's own
+            from .radio_holders import note_started
+            note_started(station, int(got["pid"]), f"{S.STEPS[step]['title'].lower()} on {nick}",
+                         until_s=step_timeout_s(step, short), job=jid, radio=nick, step=step)
         doc = S.load(station)
         job = {"id": jid, "radio": nick, "step": step, "short": short, "log": got["log"],
                "started": S.now(), "argv": [str(a) for a in argv],
@@ -2155,6 +2216,46 @@ def _setup_post(station: Station, path: str, form: dict) -> dict:
 # Relay 025: a cancelled setup run that has a stop file gets this long to stop by itself (the sweep stops between
 # tunings, `marsad run` asks rtl_power to finish and then analyses); after that it is ended with its process tree.
 CANCEL_GRACE_S = 25
+
+# Relay 027: the longest each setup step may run (seconds: full, short test) before it is ended as stuck. Each is its
+# stated duration with room to spare: the full tuner sweep took 6 min on the owner's R820T against "1 to 2 minutes".
+STEP_TIMEOUT_S = {"range": (1200, 300), "retune": (360, 180), "warmup": (4800, 900), "floor": (1500, 600),
+                  "adsb": (300, 180), "baseline": (1500, 600)}
+
+
+def step_timeout_s(step: str, short: bool) -> float:
+    full, quick = STEP_TIMEOUT_S.get(step, (1800, 600))
+    return float(quick if short else full)
+
+
+def _time_out_setup_job(station: Station, job: dict) -> None:
+    """A setup run past its time limit: say why in plain words (which program holds the radio, or that it did not
+    answer), end its own process tree, and keep a failed result. Other programs are only named (rule 1)."""
+    from . import radio_holders as RH
+    from . import setup as S
+    limit = step_timeout_s(job.get("step") or "", bool(job.get("short")))
+    hs = [h for h in radio_holders(station)              # not its own processes: those end with it
+          if not (h["kind"].startswith("setup-") and (str(h.get("job") or "") == str(job.get("id")) or (
+                  not h.get("job") and h.get("radio") == job.get("radio") and h.get("step") == job.get("step"))))]
+    _end_setup_job(station, job)
+    words = RH.timeout_words("The measurement", limit, hs)
+    res = {"at": S.now(), "step": job["step"], "short": bool(job.get("short")), "by": S.STEPS[job["step"]]["title"],
+           "log": job.get("log"), "exit_code": -3, "ok": False, "job": job.get("id"), "timed_out": True,
+           "outcome": "failed", "what": f"The measurement didn't finish within {limit / 60:g} min, so it was stopped.",
+           "why": words.split("\n", 1)[1] if "\n" in words else words.split(": ", 1)[-1],
+           "advice": (["Stop the leftover measurement (Detect's box offers it), then run it again"]
+                      if any(h.get("stoppable") for h in hs) else
+                      ["Close the program named above, or wait for it, then run it again"] if hs else
+                      ["Unplug the radio, wait 5 seconds, plug it back in", "Run it again"]),
+           "holders": [h["text"] for h in hs]}
+    if job.get("basis") is not None:
+        res["basis"] = job["basis"]
+    S.record(station, job["radio"], res)
+    fresh = S.load(station)
+    for j in fresh["jobs"]:
+        if j.get("id") == job["id"]:
+            j.update(done=True, ended=S.now(), timed_out=True)
+    S._save(station.root, fresh)
 
 
 def _end_setup_job(station: Station, job: dict) -> None:
@@ -3449,8 +3550,11 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
                 # interpreter), so this is what says the app is up while it loads.
                 t = live["tail"]
                 busy = t is not None and not t.loaded
+                # relay 027: the code this service runs, so the window can tell an older service from its own
+                from .service_info import build_stamp
                 body = json.dumps({"app": "marsad", "follow": follow, "station": str(station.root),
-                                   "loading": t.path.name if busy else None}).encode()
+                                   "loading": t.path.name if busy else None, "build": build_stamp(),
+                                   "probe_running": bool(runner.running())}).encode()
             elif u.path == "/data":
                 since = int(q.get("since", ["0"])[0])
                 name = (q.get("file") or [None])[0]
@@ -3720,11 +3824,10 @@ def main(argv=None, station: Station | None = None, prog: str = "marsad live",
             tail = live["tail"]
             if tail is not None:
                 tail.poll()
-                quiet = min(time.time() - tail.last_growth, time.time() - LAST_REQUEST[0])
-                if idle and tail.rows and quiet > idle and not runner.running():
-                    print(f"  no new data for {args.exit_after_idle:g} min - shutting down")
-                    srv.shutdown()
-                    return
+            if idle and idle_exit_due(station, tail, idle, runner.running()):
+                print(f"  nothing asked and no new data for {args.exit_after_idle:g} min - shutting down", flush=True)
+                srv.shutdown()
+                return
             # A hunt tile writes a sweep a second and the page turns it into sound, so
             # while a run started from the page is recording the file is read twice a
             # second. Otherwise every 2 s is plenty: rtl_power flushes in 4 KB bursts.

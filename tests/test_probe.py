@@ -314,11 +314,16 @@ def test_detect_receivers_with_only_the_xtr_plugged_in(monkeypatch):
            "Product:\t\tGeneric E4000\nSerial number:\t\t00000101\n")
     calls = []
 
-    def fake_run(cmd, **kw):
-        calls.append(cmd)
-        return type("R", (), {"stdout": e4000, "stderr": ""})()
+    class FakePopen:                      # relay 027: each rtl_eeprom is a Popen with a time limit
+        pid = 4242
+
+        def __init__(self, cmd, **kw):
+            calls.append(cmd)
+
+        def communicate(self, timeout=None):
+            return e4000, ""
     monkeypatch.setattr(probe, "find_tool", lambda *a, **k: "rtl_eeprom")
-    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    monkeypatch.setattr(probe.subprocess, "Popen", FakePopen)
     out = probe.detect_receivers(st)
     assert out["error"] is None
     assert [(f["device"], f["receiver"]) for f in out["found"]] == [(0, "e4000")]

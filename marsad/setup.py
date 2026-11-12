@@ -321,8 +321,13 @@ DUP_HELP = ("Two radios report the same serial (many are sold as 00000001), so m
 
 
 def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mhz=None, gaps_mhz=None,
-              label: str = "", maker: str = "", product: str = "", fresh: bool = False) -> dict:
-    """Add Radio: a receiver in station.json, in the format the engine reads, matched by serial (rule 8)."""
+              label: str = "", maker: str = "", product: str = "", fresh: bool = False,
+              tuner_confirmed: bool | None = None) -> dict:
+    """Add Radio: a receiver in station.json, in the format the engine reads, matched by serial (rule 8).
+
+    Relay 027: `tuner_confirmed` False when the radio was added by hand because Detect could not finish (the tuner
+    picked from the list, not read from the radio): kept, shown as "tuner not confirmed by Detect" on step 1 until a
+    later Detect reads the same tuner (update_radio with tuner_confirmed True). None: not said (older callers)."""
     nick = (nickname or "").strip()
     serial = str(serial or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,23}", nick):
@@ -375,6 +380,8 @@ def add_radio(station: Station, serial: str, nickname: str, tuner: str, range_mh
                                                   "entered", "source": "not measured yet" if gaps_mhz is None else
                                                   "entered by the owner"}},
                            "results": {}}
+    if tuner_confirmed is not None:
+        doc["radios"][nick]["tuner_confirmed"] = bool(tuner_confirmed)
     _save(station.root, doc)
     return {"radio": nick, "entry": entry}
 
@@ -404,6 +411,8 @@ def step_command(station: Station, nick: str, step: str, short: bool, device: in
     cmd = _step_command(station, nick, step, short, device, rig_chain)
     if stop_file and step in STOP_FILE_STEPS and cmd.get("kind") == "marsad":
         cmd["args"] = cmd["args"] + ["--stop-file", str(stop_file)]
+        if step == "range":                        # relay 027: started by the guide, so it notes itself in the ledger
+            cmd["args"].append("--ledger")
     return cmd
 
 
@@ -660,9 +669,10 @@ def changed_since(step: str, res: dict, now_basis: dict) -> list:
 
 
 def update_radio(station: Station, nick: str, serial=None, tuner=None, range_mhz=None, gaps_mhz=None, maker=None,
-                 product=None) -> dict:
+                 product=None, tuner_confirmed: bool | None = None) -> dict:
     """Relay 022: reopen step 1 and correct the radio (serial, tuner, range, gaps, maker, product). Its later steps
-    that rest on what changed then read "needs re-checking"."""
+    that rest on what changed then read "needs re-checking". Relay 027: `tuner_confirmed` True once Detect has read
+    the tuner from the radio (Re-detect in Edit), False when it was picked by hand."""
     raw = _raw(station)
     recs = raw.get("receivers") if isinstance(raw.get("receivers"), dict) else {}
     if nick not in recs:
@@ -704,6 +714,8 @@ def update_radio(station: Station, nick: str, serial=None, tuner=None, range_mhz
             usb["maker"] = maker
         if product is not None:
             usb["product"] = product
+    if tuner_confirmed is not None:
+        r["tuner_confirmed"] = bool(tuner_confirmed)
     station.file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     _save(station.root, doc)
     return {"radio": nick, "entry": e}
@@ -1014,8 +1026,10 @@ def checklist(station: Station, nick: str, chain_text: str, running: set) -> dic
         steps.append({"step": key, "title": STEP_TITLES[key], "state": state, "detail": detail, "sub": sub or []})
 
     have = nick in station.receivers and bool(serials.get(nick))
+    unconfirmed = r.get("tuner_confirmed") is False          # relay 027: added by hand when Detect could not finish
     add("add", "done" if have else "not started",
-        f"serial {serials.get(nick)}" if have else "Add the radio first.")
+        (f"serial {serials.get(nick)}" + ("; tuner not confirmed by Detect" if unconfirmed else "")) if have else
+        "Add the radio first.")
     sub = []
     for m in MEASURES:
         st, detail = _sub_state(station, nick, r, m, running, now_basis)
@@ -1043,6 +1057,7 @@ def checklist(station: Station, nick: str, chain_text: str, running: set) -> dic
     add("paths", _agg(states), f"{states.count('done')} of {len(PATHS)} passed", sub)
     missing = next((s for s in steps if s["state"] != "done"), None)
     return {"radio": nick, "steps": steps, "ready": missing is None, "facts": r.get("facts") or {},
+            "tuner_confirmed": not unconfirmed,
             "missing": None if missing is None else {"step": missing["step"], "number": STEP_ORDER.index(missing["step"]) + 1,
                                                      "title": missing["title"], "detail": missing["detail"]}}
 

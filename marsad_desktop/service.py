@@ -16,13 +16,50 @@ DEFAULT = "http://127.0.0.1:8731"
 
 
 class ServiceError(Exception):
-    """The service refused (its own words) or did not answer."""
+    """The service refused (its own words) or did not answer. `stale`: it did not know the request because it runs
+    older code than this window (relay 027)."""
+
+    def __init__(self, msg: str = "", stale: bool = False):
+        super().__init__(msg)
+        self.stale = stale
+
+
+def own_build() -> str | None:
+    """The engine code this window was started with (the same stamp a service reports on /ping)."""
+    try:
+        from marsad.service_info import build_stamp
+        return build_stamp()
+    except Exception:  # noqa: BLE001 - a window without the engine beside it just cannot compare
+        return None
+
+
+def stale_words() -> str:
+    return "This feature needs the station service to restart (it's from an older version)."
+
+
+def unknown_words(path: str) -> str:
+    """A request the service does not offer although it runs the same code: a fault in Marsad, said plainly."""
+    return (f"The station service doesn't offer this ({path.split('?')[0]}). That's a fault in Marsad, not in your "
+            "station: tell Claude Code what you pressed.")
 
 
 class Service:
     def __init__(self, base: str | None = None, timeout: float = 5.0):
         self.base = (base or os.environ.get("MARSAD_SERVICE") or DEFAULT).rstrip("/")
         self.timeout = timeout
+        self.stale_seen = False          # relay 027: set when the service did not know a request; the window checks it
+
+    def service_build(self) -> str | None:
+        """The build the service reports on /ping; None from a service older than relay 027 (it reports none)."""
+        try:
+            with urllib.request.urlopen(self.base + "/ping", timeout=2.0) as r:
+                return json.loads(r.read().decode("utf-8") or "{}").get("build")
+        except (OSError, ValueError):
+            return None
+
+    def _is_stale(self) -> bool:
+        mine = own_build()
+        return bool(mine) and self.service_build() != mine
 
     def _call(self, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
         from marsad_desktop import trace
@@ -47,10 +84,23 @@ class Service:
                 msg = json.loads(exc.read().decode("utf-8")).get("error")
             except Exception:  # noqa: BLE001
                 msg = None
+            # relay 027: a request the service does not know ("unknown route ...", or a bare 404) from a service older
+            # than this window is said in plain words, and the window offers the restart
+            if str(msg or "").startswith("unknown route") or (msg is None and exc.code == 404):
+                if self._is_stale():
+                    self.stale_seen = True
+                    raise ServiceError(stale_words(), stale=True) from None
+                if msg:
+                    raise ServiceError(unknown_words(path)) from None
             raise ServiceError(msg or f"the service answered {exc.code}") from None
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             raise ServiceError(f"the service at {self.base} is not answering ({exc})") from None
         if isinstance(out, dict) and out.get("error"):
+            if str(out["error"]).startswith("unknown route"):
+                if self._is_stale():
+                    self.stale_seen = True
+                    raise ServiceError(stale_words(), stale=True)
+                raise ServiceError(unknown_words(path))
             raise ServiceError(str(out["error"]))
         return out
 

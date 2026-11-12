@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections import Counter
@@ -322,26 +323,60 @@ def match_receiver(station: Station, product: str, tuner_text: str) -> str | Non
     return None
 
 
-def detect_receivers(station: Station, max_index: int = 4) -> dict:
+DETECT_TIMEOUT_S = 15.0      # relay 027: the whole question, every radio; ~1.5 s each when they answer
+
+
+def _eeprom_argv(station: Station) -> list | None:
+    """rtl_eeprom, or (MARSAD_TEST_EEPROM, for the checks) a stand-in script run by this Python."""
+    fake = os.environ.get("MARSAD_TEST_EEPROM")
+    if fake:
+        return [sys.executable, fake]
+    exe = find_tool("rtl_eeprom", station.tool_dirs())
+    return [str(exe)] if exe else None
+
+
+def detect_receivers(station: Station, max_index: int = 4, timeout_s: float = DETECT_TIMEOUT_S,
+                     purpose: str | None = None) -> dict:
     """Ask each USB index what dongle it holds. Read-only; ~1.5 s per device.
 
     Must not run while a recording holds the SDR: the open would fail and be
     reported as "no device", which is the wrong answer.
+
+    Relay 027: `timeout_s` is for the whole question. A radio that does not answer in time is stopped (only that
+    rtl_eeprom, which this function started) and the answer says `timed_out`, with the index that hung. With
+    `purpose`, each rtl_eeprom is written to the station's setup ledger, so one left behind by a crash is
+    recognised as Marsad's own (radio_holders).
     """
-    eeprom = find_tool("rtl_eeprom", station.tool_dirs())
-    if eeprom is None:
+    argv = _eeprom_argv(station)
+    if argv is None:
         return {"found": [], "error": "rtl_eeprom not found in rtl-sdr/ or on PATH"}
     found = []
     count = None
+    end = time.monotonic() + float(timeout_s)
     for d in range(max_index):
         if count is not None and d >= count:
             break
+        left = end - time.monotonic()
+        if left <= 0:
+            return {"found": found, "error": "timed out", "timed_out": True, "index": d, "timeout_s": timeout_s}
         try:
-            r = subprocess.run([str(eeprom), "-d", str(d)], capture_output=True, text=True,
-                               timeout=30)
-        except (OSError, subprocess.SubprocessError) as exc:
+            p = subprocess.Popen([*argv, "-d", str(d)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as exc:
             return {"found": found, "error": f"could not run rtl_eeprom: {exc}"}
-        info = parse_eeprom((r.stdout or "") + (r.stderr or ""))
+        if purpose:
+            from . import radio_holders
+            radio_holders.note_started(station, p.pid, purpose, until_s=timeout_s + 5)
+        try:
+            out, err = p.communicate(timeout=left)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            try:
+                p.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return {"found": found, "error": "timed out", "timed_out": True, "index": d, "timeout_s": timeout_s}
+        info = parse_eeprom((out or "") + (err or ""))
         if count is None:
             count = info["count"]
         if info["error"]:

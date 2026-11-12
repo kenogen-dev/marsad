@@ -185,8 +185,10 @@ def test_detecting_the_tuner_waits_while_a_radio_program_runs(tmp_path, monkeypa
     opened = []
     monkeypatch.setattr(live, "detect_receivers", lambda st_: opened.append(1) or {"found": [], "error": None})
     monkeypatch.setattr(live.host, "running_sdr_programs", lambda: ["SDRPlusPlus.exe"])
-    with pytest.raises(ValueError, match="radio program is running"):
-        live.setup_post(st, "/setup/detect", {})
+    monkeypatch.setattr(live, "radio_holders", lambda st_: [])
+    # relay 027: an answer that names the program (so the window can show it), not an error
+    busy = live.setup_post(st, "/setup/detect", {})
+    assert busy["kind"] == "busy" and "radio program is running" in busy["problem"] and busy["found"] == []
     assert not opened                                           # rule 7: nothing was opened
     monkeypatch.setattr(live.host, "running_sdr_programs", lambda: [])
     got = live.setup_post(st, "/setup/detect", {})

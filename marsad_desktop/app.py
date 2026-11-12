@@ -172,9 +172,11 @@ class SettingsDialog(QDialog):
 
 
 class Window(QMainWindow):
-    def __init__(self, service: Service, start: str = "Live Scan", station_folder: str | None = None):
+    def __init__(self, service: Service, start: str = "Live Scan", station_folder: str | None = None,
+                 service_state: dict | None = None):
         super().__init__()
         self.svc = service
+        self._first_state = service_state or {}      # relay 027: what opening the station found about its service
         self.station_folder = station_folder          # relay 021: the station open here (None: the service's own)
         self.station = {}                             # /station/info
         self.setup = {}
@@ -266,6 +268,28 @@ class Window(QMainWindow):
             band.setStyleSheet(f"background: {T.rgba('anomaly', 0.18)}; color: {T.C['anomaly']}; "
                                f"font-size: 8.5pt; border-bottom: 1px solid {T.rgba('anomaly', 0.45)};")
             root.addWidget(band)
+        # relay 027: the station's service runs older code than this window (it was started before an update)
+        self.stale_bar = QFrame()
+        self.stale_bar.setObjectName("StaleServiceBar")
+        self.stale_bar.setStyleSheet(f"#StaleServiceBar {{ background: {T.rgba('anomaly', 0.16)}; "
+                                     f"border-bottom: 1px solid {T.rgba('anomaly', 0.45)}; }}")
+        sb = QHBoxLayout(self.stale_bar)
+        sb.setContentsMargins(20, 4, 16, 4)
+        self.stale_text = QLabel()
+        self.stale_text.setObjectName("StaleServiceText")
+        self.stale_text.setWordWrap(True)
+        sb.addWidget(self.stale_text, 1)
+        self.stale_restart = QPushButton("Restart now")
+        self.stale_restart.setObjectName("StaleRestart")
+        self.stale_restart.setAutoDefault(False)
+        self.stale_restart.setToolTip("Restarts this station's service on the window's code (marsad web restart). "
+                                      "Refused while a Probe recording or another run is active; a scan started "
+                                      "outside the service is never touched.")
+        self.stale_restart.clicked.connect(lambda *_: self.restart_service_now())
+        sb.addWidget(self.stale_restart)
+        self.stale_bar.hide()
+        self.service_state: dict = {}
+        root.addWidget(self.stale_bar)
         root.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
@@ -322,6 +346,10 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._ping)
         self.timer.start(30000)
+        # relay 027: a request the service did not know (an older service) is checked at once, not at the next ping
+        self.stale_timer = QTimer(self)
+        self.stale_timer.timeout.connect(lambda: self.svc.stale_seen and self.check_service_version())
+        self.stale_timer.start(2000)
         self._radio_data = None
         self._ok = None
         QTimer.singleShot(0, self._first_load)
@@ -365,6 +393,8 @@ class Window(QMainWindow):
         box.exec()
 
     def _first_load(self):
+        if self._first_state:
+            self.show_service_state(self._first_state)
         self._ping()
         self._radios()
         self._ask_station()
@@ -386,7 +416,84 @@ class Window(QMainWindow):
             self.conn.setText(f"<span style='color:{dot}'>●</span> service {self.svc.base.replace('http://', '')}"
                               + ("" if ok else " not answering"))
             self._summary()
+            if ok:
+                self.check_service_version()
         call(self.svc.ping, got)
+
+    # -- relay 027: "new window, old service"
+    def check_service_version(self):
+        """Compare the service's code with this window's. An older service of a station this window serves
+        (8750-8759) is restarted as soon as nothing runs on it; while a run is on it waits (rule 1); the home station's
+        is never restarted by itself: the bar offers Restart now."""
+        from marsad_desktop import stations as ST
+        from marsad_desktop.scan_start import call
+        if getattr(self, "_checking_version", False) or not self.station_folder:
+            return
+        self._checking_version = True
+        self.svc.stale_seen = False
+        folder = self.station_folder
+
+        def work():
+            st = ST.check_service(self.svc.base, folder)
+            if st["stale"] and st["own_port"] and not st["busy"]:
+                r = ST.restart_service(self.svc.base, folder)
+                st = dict(ST.check_service(self.svc.base, folder), note=r["text"] if r["ok"] else "",
+                          failed=None if r["ok"] else r["text"])
+            return st
+
+        def got(st, err):
+            self._checking_version = False
+            if err or not st:
+                return
+            self.show_service_state(st)
+        call(work, got)
+
+    def show_service_state(self, st: dict):
+        self.service_state = dict(st)
+        if st.get("note"):
+            self.statusBar().showMessage(st["note"], 10000)
+            self._ask_setup()
+        if not st.get("stale"):
+            self.stale_bar.hide()
+            return
+        busy = st.get("busy") or []
+        if st.get("home"):
+            text = ("This station's service is from an older version: some features won't work until it restarts. "
+                    "Restart now when nothing is recording."
+                    + (f" Running now: {'; '.join(busy)}." if busy else ""))
+            self.stale_restart.setVisible(True)
+            self.stale_restart.setEnabled(not busy)
+        else:
+            text = ("This station's service is from an older version: some features won't work until it restarts. "
+                    + (f"It will restart when the current run ends ({'; '.join(busy)})." if busy else
+                       st.get("failed") or "It restarts by itself as soon as nothing runs on it."))
+            self.stale_restart.setVisible(False)
+        self.stale_text.setText(text)
+        self.stale_bar.show()
+
+    def restart_service_now(self):
+        """Restart now, for the home station's service (8731): marsad web restart, refused while anything runs."""
+        from PySide6.QtWidgets import QMessageBox
+        from marsad_desktop import stations as ST
+        from marsad_desktop.scan_start import call
+        if QMessageBox.question(self, "Restart the station's service?",
+                                "This restarts the station's service on the window's code (as marsad web restart "
+                                "does). It is refused while a Probe recording or another run is active. A scan or "
+                                "recorder started outside the service is never touched.\n\nRestart now?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        self.stale_restart.setEnabled(False)
+        folder = self.station_folder
+
+        def got(r, err):
+            self.stale_restart.setEnabled(True)
+            text = err or (r or {}).get("text") or ""
+            self.statusBar().showMessage(text, 12000)
+            if r and r.get("ok"):
+                self.check_service_version()
+            else:
+                self.stale_text.setText(self.stale_text.text().split(" Not restarted:")[0] + " " + text)
+        call(lambda: ST.restart_service(self.svc.base, folder, force_home=True), got)
 
     def _radios(self):
         self.radio_state.refresh()
@@ -489,18 +596,18 @@ class Window(QMainWindow):
             return
         self.statusBar().showMessage(f"Opening the station at {folder}\u2026", 15000)
 
-        def got(base, err):
+        def got(st, err):
             if err:
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "Station not opened", err)
                 return
             ST.remember(folder, name)
-            w = Window(Service(base), start="Live Scan", station_folder=str(folder))
+            w = Window(Service(st["base"]), start="Live Scan", station_folder=str(folder), service_state=st)
             take_place(w, self)
             _OPEN.append(w)
             self.switched_to = w
             self.close()
-        call(lambda: ST.ensure_service(folder), got)
+        call(lambda: ST.ensure_service_ex(folder), got)      # relay 027: an older service is updated on the way
 
     def open_theme(self):
         """Relay 022: View > Theme…. Apply makes the theme the window's palette, remembers it, and rebuilds the window
@@ -593,6 +700,9 @@ def apply_theme(name: str) -> str:
     return used
 
 
+FIRST_STATE: dict = {}                  # relay 027: what opening the first station found about its service
+
+
 def choose_station():
     """Relay 021: the station to open. With MARSAD_SERVICE (the launchers and the checks) that service's station; else
     the one opened last; else, the first time, New Station or Open an existing station. Returns (Service, folder), or
@@ -614,13 +724,14 @@ def choose_station():
             return None, None
         folder = d.folder
     try:
-        base = ST.ensure_service(folder)
+        st = ST.ensure_service_ex(folder)               # relay 027: an older service is updated on the way
     except RuntimeError as exc:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.information(None, "Station not opened", str(exc))
         return None, None
     ST.remember(folder)
-    return Service(base), folder
+    FIRST_STATE.update(st)
+    return Service(st["base"]), folder
 
 
 def main(argv=None) -> int:
@@ -634,7 +745,8 @@ def main(argv=None) -> int:
     svc, folder = choose_station()
     if svc is None:
         return 0
-    w = Window(svc, start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"), station_folder=folder)
+    w = Window(svc, start=os.environ.get("MARSAD_START_SCREEN", "Live Scan"), station_folder=folder,
+               service_state=dict(FIRST_STATE))
     show_in_place(w, saved_place())              # relay 026: where it was last time, maximised if it was
     return app.exec()
 
