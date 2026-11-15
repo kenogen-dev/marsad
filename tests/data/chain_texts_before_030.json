@@ -1,0 +1,19 @@
+{
+ "one": [
+  "Antenna > Coax > radio-a > PC"
+ ],
+ "one_radio": [
+  "Antenna > Coax > radio-a > PC"
+ ],
+ "lna_radio": [
+  "Antenna > LNA > Coax > radio-a > PC"
+ ],
+ "two_radios": [
+  "Antenna > Splitter (out 1) > radio-a",
+  "Antenna > Splitter (out 2) > radio-b"
+ ],
+ "split": [
+  "Antenna > Coax (made-up RG316) > FM notch > LNA > Splitter (out 1) > SMA DC block > made-up radio A > USB hub > PC",
+  "Antenna > Coax (made-up RG316) > FM notch > LNA > Splitter (out 2) > SMA adapter > made-up radio B"
+ ]
+}

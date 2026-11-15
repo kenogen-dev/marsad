@@ -38,9 +38,13 @@ SPLITTER = "splitter"
 # Relay 015: a USB hub, also drawing-only as a type. In a path it is written as a custom part named
 # "USB hub", as the splitter is, because the old app rejects part types it does not know.
 HUB = "usb_hub"
+# Relay 030: a bias-tee injector sits in the signal path (DC+RF toward the antenna, RF toward the radio) and is
+# written into the recorded text as a custom part, like the splitter and the hub. Its power pins are drawing only.
+INJECTOR = "biastee_injector"
 PART_TYPES = {**copy.deepcopy(engine_chain.PART_TYPES),
               SPLITTER: {"group": "RF", "label": "Splitter", "fields": ["ports"]},
-              HUB: {"group": "USB", "label": "USB hub", "fields": []}}
+              HUB: {"group": "USB", "label": "USB hub", "fields": []},
+              INJECTOR: {"group": "RF", "label": "Bias-tee injector", "fields": []}}
 # Relay 015: end devices that take several inputs - both radios plug into one PC, several radios into one hub.
 # A free input appears whenever all are used. Every other part has one input.
 MULTI_IN_TYPES = ("pc", HUB)
@@ -65,7 +69,8 @@ ENC_MAX = 4000
 # (paths(), which reads only "nodes" and "wires") can never follow one into a text.
 POWER = "power"
 POWER_KINDS = {"biastee": "Bias-tee (from the radio)", "usbc": "USB-C lead", "usb": "USB lead",
-               "injector": "Power injector", "battery": "Battery"}
+               "injector": "Power injector", "battery": "Battery",
+               "dc_supply": "DC linear power supply"}      # relay 030: V+ and GND- outputs, + and GND leads
 POWER_W, POWER_H = 140, 48
 NEEDS_POWER_BY_TYPE = {"lna"}              # parts that need power unless the owner says otherwise
 # Rig lists that only the drawing reads.
@@ -79,7 +84,7 @@ DIRECTIONS = {"right": "Left → right", "down": "Top → bottom"}
 # an adapter's chosen shape and gender, node["sma"], are written as its detail by
 # adapter_kind_text(); an adapter with none chosen writes exactly what it always did.
 NODE_DRAWING_KEYS = ("x", "y", "w", "h", "z", "ports", "locked", "needs_power", "gain_db", "colour", "sma",
-                     "shape", "antenna", "text_pos")
+                     "shape", "antenna", "text_pos", "needs_v")
 
 # SMA parts (relay 006): their own section in the Parts list, a gender on each port, and
 # direct mating (port to port, no wire drawn), as real adapters screw together.
@@ -96,6 +101,7 @@ def labels_from(part_types: dict | None) -> dict:
     out = copy.deepcopy(part_types or engine_chain.PART_TYPES)
     out.setdefault(SPLITTER, PART_TYPES[SPLITTER])
     out.setdefault(HUB, PART_TYPES[HUB])
+    out.setdefault(INJECTOR, PART_TYPES[INJECTOR])
     return out
 
 
@@ -374,12 +380,14 @@ def path_report(rig: dict, path, labels: dict | None = None) -> dict:
                               else str(c.get("name") or c.get("type")))
             else:
                 lengths += v
-    fed = {w["to"] for w in power_wires(rig)}
-    power = [(_pname(nodes[i]), i in fed) for i in ids if needs_power(nodes[i])]
+    from . import power as PW
+    st = PW.status(rig, needs_power)
+    power = [(_pname(nodes[i]), st[i]["powered"]) for i in ids if i in st]
     ant = next((nodes[i] for i in ids if nodes[i]["part"]["type"] == "antenna"), None)
     return {"parts": [_pname(nodes[i]) for i in ids], "text": engine_chain.chain_text(path_parts(rig, path, labels)),
             "cable_m": round(lengths, 3), "cables": cables, "unread_lengths": unread, "joins": joins,
             "mated": mates, "connectors": 2 * joins, "genders": gender_notes, "power": power,
+            "power_lines": PW.report(rig, ids, needs_power),
             "estimate": estimate(rig, path),
             "antenna_gain": antenna(ant).get("gain_dbi") if ant is not None else None,
             "antenna_lead": lead_text(ant) if ant is not None else "",
@@ -576,8 +584,8 @@ def path_parts(rig: dict, path, labels: dict | None = None) -> list[dict]:
             port_label = str(ports[port]).strip() if port is not None and port < len(ports) else ""
             q = {"type": "custom", "name": str(p.get("name") or "").strip(),
                  "detail": port_label or str(p.get("detail") or "").strip()}
-        elif p["type"] == HUB:              # relay 015: written as a custom part, like the splitter
-            q = {"type": "custom", "name": str(p.get("name") or "").strip() or PART_TYPES[HUB]["label"],
+        elif p["type"] in (HUB, INJECTOR):  # relay 015 / 030: written as a custom part, like the splitter
+            q = {"type": "custom", "name": str(p.get("name") or "").strip() or PART_TYPES[p["type"]]["label"],
                  "detail": str(p.get("detail") or "").strip()}
         else:
             q = {"type": p["type"], "name": str(p.get("name") or "").strip(),
@@ -933,11 +941,16 @@ def new_enclosure(rig: dict, x: float, y: float, w: int = ENC_W, h: int = ENC_H,
     k = 1
     while f"e{k}" in taken:
         k += 1
-    e = {"id": f"e{k}", "name": name, "note": "", "x": snap(x), "y": snap(y), "w": w, "h": h}
+    e = {"id": f"e{k}", "name": name, "note": "", "ip": "", "x": snap(x), "y": snap(y), "w": w, "h": h}
     if _layered(rig):                      # a new box starts behind everything
         e["z"] = min(_z_of(rig).values()) - 1
     rig.setdefault("enclosures", []).append(e)
     return e
+
+
+def ip_text(e: dict) -> str:
+    """Relay 030: an enclosure's IP rating (ingress protection, e.g. IP65), drawing and Output only."""
+    return str(e.get("ip") or "").strip().upper()
 
 
 def remove_enclosure(rig: dict, eid: str) -> None:
@@ -1074,6 +1087,8 @@ def new_power(rig: dict, kind: str, x: float, y: float) -> dict:
         raise ValueError(f"unknown power source {kind!r}")
     p = {"id": _free_id("p", (b["id"] for b in power_boxes(rig))), "kind": kind,
          "name": POWER_KINDS[kind], "note": "", "x": snap(x), "y": snap(y)}
+    if kind == "dc_supply":                # relay 030: mains powered (implied); voltage and current limit typed
+        p.update(volts="", amps="")
     if _layered(rig):
         p["z"] = max(_z_of(rig).values()) + 1
     rig.setdefault("power", []).append(p)
@@ -1100,6 +1115,12 @@ def connect_power(rig: dict, src: str, dst: str) -> str | None:
         return "a power wire starts at a power source"
     if dst not in nodes:
         return "a power wire ends at a part"
+    if boxes[src].get("kind") == "dc_supply":   # relay 030: a supply joins with + and GND leads (an injector too)
+        from . import power as PW
+        if not PW.can_take_leads(nodes[dst], needs_power):
+            return (f"{nodes[dst]['part'].get('name') or 'that part'} has no power input (a bias-tee injector, or a "
+                    "part with \"Needs power\" ticked, takes + and GND leads)")
+        return PW.connect_pair(rig, src, dst)
     if not needs_power(nodes[dst]):
         return (f"{nodes[dst]['part'].get('name') or 'that part'} does not need power "
                 "(tick \"Needs power\" on its card first)")
@@ -1320,10 +1341,8 @@ def checks(rig: dict, removed: dict | None = None) -> list[dict]:
                                 "station, Removed radios) or take it out of this path"})
     for nid in sorted(loose, key=lambda i: (nodes[i]["y"], nodes[i]["x"])):
         out.append({"kind": "loose", "ids": [nid], "text": f"{_pname(nodes[nid])} is on its own, connected to nothing"})
-    fed = {w["to"] for w in power_wires(rig)}
-    for n in rig["nodes"]:
-        if needs_power(n) and n["id"] not in fed:
-            out.append({"kind": "power", "ids": [n["id"]], "text": f"{_pname(n)} has no power feed"})
+    from . import power as PW                       # relay 030: injectors, supplies, + and GND leads
+    out += PW.checks(rig, needs_power)
     feeding = {w["from"] for w in power_wires(rig)}
     for b in power_boxes(rig):
         if b["id"] not in feeding:
@@ -1392,7 +1411,7 @@ def estimate_text(e: dict | None) -> str:
 # in the private backup, like the drawings). Dropping an entry copies it: a rig keeps its copy
 # whatever later happens to the entry, so nothing in a saved rig changes silently.
 LIB_PART_KEYS = ("type", "name", "detail") + FIELDS
-LIB_NODE_KEYS = ("w", "h", "ports", "needs_power", "gain_db", "colour", "sma", "shape", "antenna", "text_pos",
+LIB_NODE_KEYS = ("w", "h", "ports", "needs_power", "needs_v", "gain_db", "colour", "sma", "shape", "antenna", "text_pos",
                  "font_size", "bold")                        # relay 018: the format bar's font, kept in My parts
 
 
@@ -1568,6 +1587,8 @@ def check_layout(data) -> dict:
                 raise ValueError(f"rig {name!r} has an enclosure without an id, place or size")
             if not (ENC_MIN_W <= e["w"] <= ENC_MAX and ENC_MIN_H <= e["h"] <= ENC_MAX):
                 raise ValueError(f"rig {name!r} has an enclosure of impossible size")
+            if "ip" in e and (not isinstance(e["ip"], str) or len(e["ip"]) > 16):
+                raise ValueError(f"rig {name!r} has an enclosure whose IP rating is not a short text such as IP65")
         pows = r.get("power") or []
         if not isinstance(pows, list):
             raise ValueError(f"rig {name!r} has power sources that are not a list")
@@ -1583,9 +1604,15 @@ def check_layout(data) -> dict:
         for w in pw:
             if not isinstance(w, dict) or w.get("from") not in pids or w.get("to") not in ids:
                 raise ValueError(f"rig {name!r} has a power wire to a part or source that is not there")
-            if w["to"] in fed:
+            lead = "pin" in w or "to_pin" in w            # relay 030: a + or GND lead, one per input pin
+            if lead and (w.get("pin") not in ("+", "gnd") or w.get("to_pin") not in ("vcc", "gnd")):
+                raise ValueError(f"rig {name!r} has a power lead on a pin that does not exist")
+            key = (w["to"], w.get("to_pin")) if lead else w["to"]
+            mixed = (lead and w["to"] in fed) or (not lead and any(isinstance(k, tuple) and k[0] == w["to"]
+                                                                   for k in fed))
+            if key in fed or mixed:
                 raise ValueError(f"rig {name!r} has a part with two power feeds")
-            fed.add(w["to"])
+            fed.add(key)
         for n in r["nodes"]:
             _check_number(n.get("gain_db"), f"rig {name!r} has a gain or loss that is not a number")
             for k in ("needs_power", "locked"):
@@ -1908,6 +1935,8 @@ def check_level(c: dict) -> str:
     no radio, two radios the same), a warning (no power feed, two males or two females, nothing wired in) or a note
     (an unused output, a part or power source on its own)."""
     kind, text = c.get("kind"), str(c.get("text") or "")
+    if c.get("level") in CHECK_LEVELS:              # relay 030: a check that knows its own level
+        return c["level"]
     if kind == "radio":
         return "problem"
     if kind == "power":
@@ -2026,14 +2055,6 @@ def compare_words(diff: list[dict]) -> list[str]:
             lines.append(f"{'Wording only' if d['wording_only'] else 'Changed'}: {d['was']}  →  {d['now']}")
     return lines
 
-
-def text_of_radio(texts: dict[str, str], chains: dict[str, list], rx: str) -> str | None:
-    """The recorded text of the rig's path that ends at the radio set to receiver rx."""
-    for name, parts in chains.items():
-        r = radio_of(parts)
-        if r is not None and str(r.get("rx") or "") == str(rx):
-            return texts.get(name)
-    return None
 
 
 def check_against_runs(rig_name: str, rig: dict, runs: dict, labels: dict | None = None) -> list[dict]:

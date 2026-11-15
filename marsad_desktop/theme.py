@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import colorsys
 import itertools
+import re
 from functools import lru_cache
 
 # The palette itself is plain Python, so its arithmetic (and the contrast tests) need no Qt;
@@ -584,3 +585,33 @@ def stylesheet(p: dict | None = None) -> str:
     #Banner QLabel {{ background: transparent; }}
     #StationSummary {{ color: {C['text2']}; padding-left: {s}px; }}
     """
+
+
+# ---- relay 030 (known issue 14): a theme applied in place, without rebuilding the window
+
+_HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
+_RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,")
+
+
+def colour_swap(old: dict, new: dict) -> tuple[dict, dict]:
+    """Old palette value -> new palette value, by token name: {hex: hex} and {(r, g, b): (r, g, b)}. Where two tokens
+    shared an old value, the first token (in palette order) decides."""
+    hexes, rgbs = {}, {}
+    for k, v in old.items():
+        if k in new and is_hex(v) and is_hex(new[k]):
+            hexes.setdefault(v.lower(), new[k])
+            rgbs.setdefault(_rgb(v), _rgb(new[k]))
+    return hexes, rgbs
+
+
+def swap_sheet(sheet: str, swap: tuple[dict, dict]) -> str:
+    """A widget's own style sheet with every old palette colour (hex or rgba) changed to the new theme's."""
+    if not sheet:
+        return sheet
+    hexes, rgbs = swap
+    out = _HEX.sub(lambda m: hexes.get(m.group(0).lower(), m.group(0)), sheet)
+
+    def rgba(m):
+        got = rgbs.get((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        return m.group(0) if got is None else f"rgba({got[0]},{got[1]},{got[2]},"
+    return _RGBA.sub(rgba, out)

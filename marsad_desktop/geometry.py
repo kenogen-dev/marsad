@@ -881,7 +881,7 @@ def power_points(rig: dict) -> tuple[dict, dict]:
     inputs, outputs = {}, {}
     down = direction(rig) == "down"
     for nid, n in nodes.items():
-        if not (R.needs_power(n) or nid in feed):
+        if not (R.needs_power(n) or nid in feed or n["part"]["type"] == R.INJECTOR):    # relay 030: VCC+ / GND-
             continue
         w, h = size(n)
         if down:            # relay 016: top to bottom, RF runs through the top and bottom, so power is on a side

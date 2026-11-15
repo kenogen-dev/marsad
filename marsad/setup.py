@@ -602,8 +602,8 @@ def _result_of(station: Station, job: dict, status: dict) -> dict:
         res["marked_terminated"] = marked
         res["note"] = (f"floor {d['mean_db']:+.2f} dB (relative, rtl_power's scale), "
                        + ("marked terminated in the archive" if marked else
-                          "not in the archive yet, so not marked terminated: `marsad archive mark <run> --terminated` "
-                          "does it once the run is archived")
+                          "not archived yet (it has no report): it is flagged terminated by itself when archived, "
+                          "because its conditions say \"50 ohm load\"")
                        if d.get("mean_db") is not None else "no settled floor could be read")
     elif step == "baseline":
         res["ok"] = (d.get("sweeps") or 0) >= 2
@@ -621,9 +621,17 @@ def _mark_terminated(station: Station, recording: str) -> bool:
     """`marsad archive mark <run> --terminated`, so /internal can match later runs against it. False when the archive
     does not hold the run (yet); the measured floor stands either way."""
     from . import archive
+    stem = Path(recording).stem
     try:
         with redirect_stdout(io.StringIO()):
-            return archive.main(["mark", Path(recording).stem, "--terminated"], station) == 0
+            if archive.main(["mark", stem, "--terminated"], station) == 0:
+                return True
+            # relay 030 (known issue 11): not archived yet. When its report is there, archive it now and mark it,
+            # instead of leaving the mark for later by hand.
+            rep = station.reports / stem
+            if (rep / "peaks.csv").exists() and archive.main(["add", str(rep)], station) == 0:
+                return archive.main(["mark", stem, "--terminated"], station) == 0
+            return False
     except (SystemExit, Exception):  # noqa: BLE001
         return False
 

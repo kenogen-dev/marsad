@@ -31,12 +31,13 @@ from marsad_desktop import theme as T
 from marsad_desktop.scan_start import call
 
 from marsad.setup import STEP_ORDER, STEP_TITLES, STEPS as STEPS_TEXT                         # noqa: E402
+from marsad_desktop.setup_words import (PAGES, PASSED, TOUCHED, BTN_SHORT, BTN_FULL, BTN_ESTIMATE,  # noqa: E402
+                                        page_group, finish_words)
 
 STATE_COLOUR = {"done": "open", "in progress": "survey_light", "needs attention": "alert_text",
                 "needs re-checking": "anomaly", "estimate kept": "anomaly", "to redo": "anomaly", "not started": "muted"}
 STATE_MARK = {"done": "✓", "in progress": "…", "needs attention": "!", "needs re-checking": "↻", "estimate kept": "≈",
               "to redo": "↺", "not started": "○"}
-PASSED = ("done", "estimate kept")      # relay 024: an estimate lets the guide go on; it never unlocks scanning
 
 
 def _label(text, muted=False, size=None, bold=False, wrap=True):
@@ -1173,12 +1174,6 @@ def _serial_of(radio: dict) -> str:
     return detail.replace("serial ", "", 1) if detail.startswith("serial ") else ""
 
 
-# The guide's pages, in order: (checklist step, page key). Measure and Path checks have one page per part.
-PAGES = [("add", "add"), ("measure", "range"), ("measure", "warmup"), ("measure", "retune"), ("measure", "floor"),
-         ("draw", "draw"), ("confirm", "confirm"), ("paths", "adsb"), ("paths", "baseline")]
-TOUCHED = ("done", "needs re-checking", "in progress", "needs attention", "estimate kept", "to redo")
-
-
 def _clock(sec) -> str:
     if sec is None:
         return "?"
@@ -1316,8 +1311,13 @@ class RunPanel(QFrame):
             return
         icon, colour, word = OUTCOME_LOOK.get(v.get("outcome"), ("•", "muted", "Ended"))
         col = T.C.get(colour, T.C["muted"])
-        self.head.setText(f"<span style='color:{col}'>{icon}</span>&nbsp; {word}: last {kind}"
-                          + (f" ({str(v.get('at'))[:16].replace('T', ' ')})" if v.get("at") else ""))
+        at = f" ({str(v.get('at'))[:16].replace('T', ' ')})" if v.get("at") else ""
+        if v.get("short"):           # relay 029: a short test is a check, never the step's result
+            word = "Short test OK" if v.get("outcome") == "done" else f"Short test: {word.lower()}"
+            self.head.setText(f"<span style='color:{col}'>{icon}</span>&nbsp; {word}{at}. It is a check only and "
+                              "doesn't finish the step.")
+        else:
+            self.head.setText(f"<span style='color:{col}'>{icon}</span>&nbsp; {word}: last {kind}{at}")
         self.what.setText(v.get("what") or "")
         self.why.setText(("Why: " + v["why"]) if v.get("why") else "")
         self.why.setVisible(bool(v.get("why")))
@@ -1680,27 +1680,26 @@ class SetupDialog(QDialog):
         elif state == "in progress":
             text = ("Still needed: this run to finish. It keeps running in the background if you go Back or close "
                     "the guide.")
-        elif state == "needs re-checking":
-            text = "Still needed: run it again (what changed is said above)."
-        elif state == "to redo":
-            text = ("Still needed: run it again. This radio's setup is being redone; the earlier result is kept in its "
-                    "history.")
-        elif state == "needs attention":
-            text = ("Still needed: a run that succeeds. The last one did not: what went wrong and what to do are "
-                    "shown above." if (self._sub(self.page).get("run") or {}).get("state") == "ended" else
-                    "Still needed: a run that succeeds. The last one did not: " + (detail or "see its result."))
         else:
-            text = "Still needed: " + {
-                "add": "add the radio.",
-                "draw": "draw the rig on the Chain screen and use it for runs.",
-                "confirm": "check the rig against the drawing, then confirm it.",
-                "range": "run the tuner sweep (a short test does not count).",
-            }.get(self.page, "run the full measurement (a short test does not count).")
+            words = finish_words(self.page, state, self._sub(self.page).get("run"))
+            if state == "needs re-checking":
+                text = (("Still needed: do it again" if self.page in ("add", "draw", "confirm") else
+                         "Still needed: run it again") + " (what changed is said above). "
+                        + words["finish"].replace("To finish this step: ", "To finish it: "))
+            elif state == "to redo":
+                text = ("Still needed: run it again. This radio's setup is being redone; the earlier result is kept "
+                        "in its history.")
+            elif state == "needs attention" and (self._sub(self.page).get("run") or {}).get("state") != "ended" \
+                    and detail and self.page not in ("add", "draw", "confirm"):
+                text = words["needed"] + " " + detail
+            else:
+                text = words["needed"]
             b = self.blocker(self.page)
-            if b:
+            if b and state not in TOUCHED:
                 text = f"Locked: finish {b} first."
         self.needed.setText(text)
         self.needed.setProperty("state", state)
+        self.b_next.setToolTip("" if self.b_next.isEnabled() else text)   # relay 029: the same words as the line
 
     @staticmethod
     def _empty(lay):
@@ -1777,25 +1776,24 @@ class SetupDialog(QDialog):
                                           muted=True))
             self.steps.addWidget(box)
             return
-        if key == "draw":
-            self.steps.addWidget(self._page_box("draw", f"Step 3. {STEP_TITLES['draw']}", state, detail,
-                                                [("Open Chain", self._open_chain, True)]))
-            self.steps.addWidget(_label("Draw the rig on the Chain screen and press Use for runs. This page turns done "
-                                        "when the rig used for runs has a path to this radio.", muted=True))
-            return
-        if key == "confirm":
-            self.steps.addWidget(self._page_box(
-                "confirm", f"Step 4. {STEP_TITLES['confirm']}", state, detail,
-                [("It's built as drawn…", self.confirm_rig, self.page_state("draw")[0] == "done")]))
+        if key in ("draw", "confirm"):
+            acts = ([("Open Chain", self._open_chain, True)] if key == "draw" else
+                    [("It's built as drawn…", self.confirm_rig, self.page_state("draw")[0] == "done")])
+            box = self._page_box(key, f"Step {3 if key == 'draw' else 4}. {STEP_TITLES[key]}", state, detail, acts,
+                                 actions_last=True)
+            if state != "done":
+                box.layout().addWidget(self._finish_label(key, state))
+            box.layout().addLayout(self._actions(acts))
+            self.steps.addWidget(box)
             return
         s = (r.get("texts") or {}).get(key) or STEPS_TEXT.get(key) or {}     # relay 024: for this radio's tuner
         n = STEP_ORDER.index(next(st for st, k in PAGES if k == key)) + 1
-        acts = [("Run short test" if key == "range" else "Short test", lambda *_, k=key: self.run_step(k, True),
-                 not running and not locked),
-                ("Run full measurement…" if key == "range" else "Run…", lambda *_, k=key: self.run_step(k, False),
+        group = page_group(key)
+        acts = [(BTN_SHORT, lambda *_, k=key: self.run_step(k, True), not running and not locked),
+                (BTN_FULL.get(group, BTN_FULL["measure"]), lambda *_, k=key: self.run_step(k, False),
                  not running and not locked)]
         if key == "range" and state != "done":
-            acts.append(("Keep the estimate instead…", self.accept_typical, not running and not locked))
+            acts.append((BTN_ESTIMATE, self.accept_typical, not running and not locked))
         ended = (self._sub(key).get("run") or {}).get("state") in ("running", "cancelling", "ended")
         box = self._page_box(key, f"Step {n}. {s.get('title', key)}", state,
                              "" if ended and state in ("needs attention", "in progress") else detail, acts,
@@ -1815,9 +1813,15 @@ class SetupDialog(QDialog):
                                       "No result yet.", muted=True))
         if locked:
             box.layout().addWidget(_label(f"Locked until {locked} is done.", muted=True))
+        box.layout().addWidget(self._finish_label(key, state))      # relay 029: right above the buttons
         box.layout().addLayout(self._actions(acts))         # the buttons after the explanation
         box.layout().addWidget(self.run_panel)              # relay 025: this step's run, running or ended
         self.steps.addWidget(box)
+
+    def _finish_label(self, key: str, state: str):
+        w = _label(finish_words(key, state, self._sub(key).get("run"))["finish"])
+        w.setObjectName("StepFinish")
+        return w
 
     def _sub(self, key: str) -> dict:
         r = self._radio() or {}

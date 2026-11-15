@@ -463,6 +463,11 @@ class Window(QMainWindow):
                     + (f" Running now: {'; '.join(busy)}." if busy else ""))
             self.stale_restart.setVisible(True)
             self.stale_restart.setEnabled(not busy)
+        elif st.get("own_port") is False:     # relay 030: a test service (8740-8749), started by a launcher, not the window
+            text = ("This station's service is from an older version: some features won't work until it restarts. "
+                    "Close this window and open it again from its launcher: the launcher starts a fresh service"
+                    + (f" (wait until the current run ends: {'; '.join(busy)})." if busy else "."))
+            self.stale_restart.setVisible(False)
         else:
             text = ("This station's service is from an older version: some features won't work until it restarts. "
                     + (f"It will restart when the current run ends ({'; '.join(busy)})." if busy else
@@ -696,15 +701,9 @@ class Window(QMainWindow):
         self._theme_dlg = d
         if not d.exec() or not d.chosen or d.chosen == T.current():
             return
-        if not self.chain.can_close():
-            return
-        apply_theme(d.chosen)
+        restyle_in_place(d.chosen)          # relay 030 (known issue 14): the same window, nothing rebuilt
         TP.remember(d.chosen)
-        w = Window(self.svc, start=SCREENS[self.stack.currentIndex()], station_folder=self.station_folder)
-        take_place(w, self)
-        _OPEN.append(w)
-        self.rebuilt_as = w
-        self.close()
+        self.statusBar().showMessage(f"Theme: {d.chosen}", 4000)
 
     def open_setup(self):
         from marsad_desktop.setup_screen import SetupDialog
@@ -826,6 +825,40 @@ def apply_theme(name: str) -> str:
         app.setStyleSheet(T.stylesheet())
     from marsad_desktop import live_screen
     live_screen.apply_plot_theme()
+    return used
+
+
+def restyle_in_place(name: str) -> str:
+    """Relay 030 (known issue 14): change the theme without rebuilding any window. The palette changes in place
+    (everything painted reads it when it paints), the application's style sheet is set again, each widget's own
+    style sheet has its old palette colours swapped for the new ones, and plots take the new plot colours. Open
+    dialogs, scroll positions, selections and unsaved Chain edits all stay where they are."""
+    old = dict(T.C)
+    used = apply_theme(name)
+    swap = T.colour_swap(old, T.C)
+    import pyqtgraph as pg
+    for top in QApplication.topLevelWidgets():
+        for w in [top] + top.findChildren(QWidget):
+            sheet = w.styleSheet()
+            if sheet:
+                new = T.swap_sheet(sheet, swap)
+                if new != sheet:
+                    w.setStyleSheet(new)
+            if isinstance(w, (pg.PlotWidget, pg.GraphicsLayoutWidget)):
+                w.setBackground(T.C["plot"])
+                items = [w.getPlotItem()] if isinstance(w, pg.PlotWidget) else \
+                    [i for i in w.ci.items if isinstance(i, pg.PlotItem)]
+                for it in items:
+                    for ax in ("left", "bottom", "right", "top"):
+                        a = it.getAxis(ax)
+                        a.setPen(T.C["muted"])
+                        a.setTextPen(T.C["muted"])
+        for hook in ("theme_changed",):     # screens that hold colours of their own redraw them
+            for w in [top] + top.findChildren(QWidget):
+                fn = getattr(w, hook, None)
+                if callable(fn):
+                    fn()
+        top.update()
     return used
 
 

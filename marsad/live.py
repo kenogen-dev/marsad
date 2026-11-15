@@ -2711,6 +2711,9 @@ def watch_plan(station: Station, form: dict, detect: bool = False) -> dict:
     if w["mode"] == "survey":
         sp = scan_plan(station, {"scan": w["scan"], "chain": chains[w["surveyor"]]})
         out["survey"] = {k: sp[k] for k in ("fingerprint", "warnings", "cells", "geometry")}
+        rp = gain_problem(station, w["recorder"], w.get("recorder_gain"))   # relay 030 (known issue 6)
+        if rp:
+            out["survey"]["warnings"] = list(out["survey"]["warnings"]) + [["bad", "Recorder gain", rp]]
     return out
 
 
@@ -2737,6 +2740,10 @@ def watch_start(station: Station, form: dict) -> dict:
         gain_problem(station, w["receiver"], w.get("gain"))
     if gp:
         raise ValueError(("The survey: " if w["mode"] == "survey" else "") + gp + " Nothing was started.")
+    if w["mode"] == "survey":                 # relay 030 (known issue 6): the recording radio's own gain, too
+        rp = gain_problem(station, w.get("recorder"), w.get("recorder_gain"))
+        if rp:
+            raise ValueError("The recorder: " + rp + " Nothing was started.")
     if w["mode"] == "survey":
         _remember_conditions(station, w["scan"])
         if any(x[0] == "bad" for x in plan["survey"]["warnings"]) and not form.get("problems_confirmed"):

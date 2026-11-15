@@ -124,10 +124,6 @@ def engine_python() -> str:
     return str(v) if v.exists() else sys.executable
 
 
-def ensure_service(folder, wait_s: float = 60.0) -> str:
-    """An address serving this station: an answering one, or one started now. Raises RuntimeError in words."""
-    return ensure_service_ex(folder, wait_s)["base"]
-
 
 def _port_of(base: str) -> int | None:
     try:

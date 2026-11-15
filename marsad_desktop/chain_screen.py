@@ -25,9 +25,9 @@ import json
 import math
 from pathlib import Path
 
-from PySide6.QtCore import (QEasingCurve, QLineF, QMimeData, QParallelAnimationGroup, QPoint,
-                            QPointF, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QVariantAnimation,
-                            Signal)
+from PySide6.QtCore import (QEasingCurve, QEvent, QEventLoop, QLineF, QMetaObject, QMimeData, QObject,
+                            QParallelAnimationGroup, QPoint, QPointF, QPropertyAnimation, QRectF, QRunnable,
+                            QSettings, QSize, Qt, QThread, QThreadPool, QTimer, QVariantAnimation, Signal)
 from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QCursor, QDrag, QFont, QFontMetricsF, QIcon,
                            QLinearGradient,
                            QImage, QKeySequence, QTextOption, QTransform,
@@ -46,6 +46,7 @@ from marsad import chain as engine_chain
 
 from . import explain as E
 from . import geometry as G
+from . import power as PW
 from . import rig as R
 from . import theme as T
 from .service import Service, ServiceError
@@ -57,7 +58,7 @@ UNDO_MAX = 200
 DERIVED = ("text", "tail", "receiver", "source", "needs_confirm")
 # The palette's order, as the design lists it; types not named here follow.
 PALETTE_ORDER = ["antenna", "probe", "load", "adapter", "dcblock", "attenuator", "bulkhead_sma",
-                 "coax", "filter", "lna", R.SPLITTER, "sdr", "usb", "bulkhead_usb",
+                 "coax", "filter", "lna", R.INJECTOR, R.SPLITTER, "sdr", "usb", "bulkhead_usb",
                  "isolator", R.HUB, "pc", "custom"]
 LENGTH_TYPES = {"coax", "jumper", "usb"}       # "jumper": only on parts saved before relay 017, never offered
 # Colour coding: what each kind of part does. Custom parts stay neutral. Relay 006: each section
@@ -65,7 +66,7 @@ LENGTH_TYPES = {"coax", "jumper", "usb"}       # "jumper": only on parts saved b
 CATEGORY = {"antenna": "source", "probe": "source", "load": "source",
             "adapter": "sma", "dcblock": "sma", "attenuator": "sma", "bulkhead_sma": "sma",
             "coax": "cable", "jumper": "cable",
-            "filter": "condition", "lna": "condition",
+            "filter": "condition", "lna": "condition", R.INJECTOR: "condition",
             R.SPLITTER: "split", "sdr": "radio", R.ENCLOSURE: "enclosure",
             "usb": "digital", "bulkhead_usb": "digital", "isolator": "digital", "pc": "digital",
             R.HUB: "digital"}
@@ -591,49 +592,6 @@ def wrap_lines(font: QFont, text: str, width: float, max_lines: int) -> tuple[li
     return out
 
 
-class WrapChip(QPushButton):
-    """Relay 016: a Checks chip whose words wrap instead of running off the strip: a button holding its dot and a
-    word-wrapped label, as tall as its words need at the width it is given."""
-
-    def __init__(self, text: str, icon: QIcon):
-        super().__init__()
-        self._text = text
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(T.SPACE, 4, T.SPACE, 4)
-        lay.setSpacing(T.SPACE - 2)
-        dot = QLabel()
-        dot.setPixmap(icon.pixmap(12, 12))
-        dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.lab = QLabel(text)
-        self.lab.setWordWrap(True)
-        self.lab.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        lay.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
-        lay.addWidget(self.lab, 1)
-        sp = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        sp.setHeightForWidth(True)
-        self.setSizePolicy(sp)
-        self.setMaximumWidth(T.SPACE * 58)
-
-    def text(self) -> str:
-        return self._text
-
-    def sizeHint(self):
-        """Its words on one line when they fit the chip's widest; wrapped beyond that."""
-        m = self.layout().contentsMargins()
-        w = (self.lab.fontMetrics().horizontalAdvance(self._text) + 12 + self.layout().spacing()
-             + m.left() + m.right() + 4)
-        w = min(w, self.maximumWidth())
-        return QSize(w, self.heightForWidth(w))
-
-    def minimumSizeHint(self):
-        return QSize(T.SPACE * 16, self.layout().minimumSize().height())
-
-    def hasHeightForWidth(self) -> bool:
-        return True
-
-    def heightForWidth(self, w: int) -> int:
-        return self.layout().heightForWidth(w)
-
 
 class PosPicker(QWidget):
     """Nine small squares, three by three: where a node's words sit (relay 008)."""
@@ -869,6 +827,8 @@ def kind_path(kind: str) -> QPainterPath:
     elif kind == R.HUB:                         # relay 015: one upstream, several downstream
         p.addRoundedRect(QRectF(5, 5, 6, 6), 1.5, 1.5); line((11, 8), (15, 8))
         line((5, 6.5), (1, 3)); line((5, 8), (1, 8)); line((5, 9.5), (1, 13))
+    elif kind == R.INJECTOR:                    # relay 030: a T with a + feeding in from below
+        line((1, 6), (15, 6)); line((8, 6), (8, 11)); line((6, 13), (10, 13)); line((8, 11), (8, 15))
     elif kind == R.ENCLOSURE:
         p.addRoundedRect(QRectF(1.5, 3, 13, 10), 3, 3); line((5, 3), (5, 1.5), (11, 1.5), (11, 3))
     elif kind == R.POWER or kind in R.POWER_KINDS:
@@ -1269,8 +1229,6 @@ class PartItem(QGraphicsObject):
         a = self.screen.anchor_map.get((self.node["id"], kind, port))
         return QPointF(a[0], a[1]) if a else None
 
-    def in_port(self) -> QPointF | None:
-        return self._anchor("in", 0)
 
     def out_port(self, i: int) -> QPointF:
         return self._anchor("out", i) or self.mapToScene(QPointF(self.wh()[0], self.wh()[1] / 2))
@@ -2639,19 +2597,48 @@ class PowerWireItem(QGraphicsPathItem):
         self.hover = False
         self.refresh()
 
+    LEAD_GAP = 9                     # px between a + and a GND lead's ends, so the pair reads as two wires
+
+    def _offset(self, pt, along):
+        """Relay 030: a GND lead's end sits a little beside the + lead's, along the edge it meets."""
+        x, y, side = pt
+        if self.wire.get("to_pin") != "gnd" and self.wire.get("pin") != "gnd":
+            return pt
+        return (x - along, y, side) if side in ("top", "bottom") else (x, y - along, side)
+
     def refresh(self):
         a = self.screen.power_out.get(self.wire["from"])
         b = self.screen.power_map.get(self.wire["to"])
         if a is None or b is None:
             return
+        lead = PW.is_lead(self.wire)
+        if lead:
+            a, b = self._offset(a, self.LEAD_GAP), self._offset(b, self.LEAD_GAP)
         self.prepareGeometryChange()
         self.setPath(wire_path(a, b, self.screen.wire_style, b[2]))
         hot = self.isSelected() or self.hover
+        if lead:                     # relay 030: + red, GND black, as real leads are; solid, not dashed
+            col = T.color("survey") if self.isSelected() else QColor(PW.LEAD_COLOUR[self.wire.get("pin", "+")])
+            pen = QPen(col, (T.WIRE_HOT_W if hot else T.WIRE_W) + 0.5, Qt.PenStyle.SolidLine,
+                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            self.setPen(pen)
+            self.setToolTip(f"{'+' if self.wire.get('pin') == '+' else 'GND'} power lead (drawing only): "
+                            f"{PW.PINS_OUT.get(self.wire.get('pin'), '?')} to {PW.PINS_IN.get(self.wire.get('to_pin'), '?')}"
+                            ". Click it for its card; Delete takes it out")
+            return
         pen = QPen(T.color("survey") if self.isSelected() else T.color("power"),
                    T.WIRE_HOT_W if hot else T.WIRE_W, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap,
                    Qt.PenJoinStyle.RoundJoin)
         pen.setDashPattern([3, 2.5])
         self.setPen(pen)
+
+    def paint(self, qp, opt, widget=None):
+        if PW.is_lead(self.wire) and self.wire.get("pin") == "gnd" and not self.isSelected():
+            halo = QPen(T.qc("text2", 0.55), self.pen().widthF() + 2.0, Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            qp.setPen(halo)                  # a black lead stays visible on a dark grid
+            qp.drawPath(self.path())
+        super().paint(qp, opt, widget)
 
     def shape(self):
         st = QPainterPathStroker()
@@ -3008,7 +2995,7 @@ class PartsList(QListWidget):
 
     # Relay 018: the sections, in the owner's order, each with its own colour (a part keeps its kind's colour).
     SECTIONS = (("ANTENNAS", "source", ("antenna", "probe", "load")),
-                ("RF PARTS", "condition", ("filter", "lna", R.SPLITTER, "custom")),
+                ("RF PARTS", "condition", ("filter", "lna", R.INJECTOR, R.SPLITTER, "custom")),
                 ("RADIOS AND PC", "radio", ("sdr", "bulkhead_usb", "isolator", R.HUB, "pc")))
 
     def set_labels(self, labels: dict):
@@ -3867,13 +3854,23 @@ class EditCard(QFrame):
             self._field("Nominal gain or loss, dB (for the estimate)",
                         self.number_edit(node.get("gain_db"), self._gain,
                                          "e.g. +20 for an LNA, -3.5 for a splitter; blank if not known"))
-        if p["type"] not in ("sdr", "pc", "usb", "bulkhead_usb", "isolator"):
+        if p["type"] == R.INJECTOR:          # relay 030: its own power pins; DC+RF toward the antenna, RF toward the radio
+            self._note("DC+RF (its input, toward the antenna or LNA) carries the DC up the coax; RF (its output, "
+                       "toward the radio) passes the signal and blocks the DC. VCC+ and GND− (the power input) take "
+                       "+ and GND leads from a DC supply: drawing only. The injector itself is in the recorded text.")
+        elif p["type"] not in ("sdr", "pc", "usb", "bulkhead_usb", "isolator"):
             pw = QCheckBox("Needs power")
             pw.setChecked(R.needs_power(node))
             pw.setToolTip("A part that needs power gets a power input (the diamond) and a warning until a "
                           "power wire feeds it. Drawing only.")
             pw.toggled.connect(self._needs_power)
             self.lay.addWidget(pw)
+            if R.needs_power(node):          # relay 030: the voltage it needs, checked against its supply
+                nv = QLineEdit(str(node.get("needs_v") or ""))
+                nv.setPlaceholderText("e.g. 5 or 4.5-5.5 (optional)")
+                E.attach(nv, "needs_v")
+                nv.textEdited.connect(self._needs_v)
+                self._field("Needs V", nv)
         if p["type"] in R.SMA_TYPES:
             self._sma_rows(node)
         if p["type"] == "antenna":
@@ -3899,6 +3896,15 @@ class EditCard(QFrame):
         else:
             self.node["gain_db"] = v
         self.screen.changed(redraw=False, merge=("gain", self.node["id"]))
+
+    def _needs_v(self, v: str):
+        if self.node is None:
+            return
+        if v.strip():
+            self.node["needs_v"] = v.strip()
+        else:
+            self.node.pop("needs_v", None)
+        self.screen.changed(redraw=False, merge=("needs_v", self.node["id"]))
 
     def _needs_power(self, on: bool):
         if self.node is None:
@@ -3931,10 +3937,21 @@ class EditCard(QFrame):
             e = QLineEdit(str(item.box.get(key) or "")) if key == "name" else NoteEdit(str(item.box.get(key) or ""))
             (e.textEdited if key == "name" else e.edited).connect(lambda v, k=key: self._power_set(k, v))
             self._field(label, e)
+        if item.box["kind"] == PW.SUPPLY:           # relay 030: mains powered (implied)
+            for key, label, ph in (("volts", "Voltage (V)", "e.g. 5"), ("amps", "Current limit (A)", "e.g. 0.5")):
+                e = QLineEdit(str(item.box.get(key) if item.box.get(key) is not None else ""))
+                e.setPlaceholderText(ph)
+                E.attach(e, "dc_supply")
+                e.textEdited.connect(lambda v, k=key: self._power_set(k, v.strip()))
+                self._field(label, e)
         names = {n["id"]: n["part"].get("name") or "a part" for n in self.screen.rig["nodes"]}
-        feeds = [names.get(w["to"], "?") for w in R.power_wires(self.screen.rig) if w["from"] == item.box["id"]]
+        feeds = [names.get(w["to"], "?") + (f" ({PW.PINS_OUT.get(w['pin'])} → {PW.PINS_IN.get(w.get('to_pin'))})"
+                                            if PW.is_lead(w) else "")
+                 for w in R.power_wires(self.screen.rig) if w["from"] == item.box["id"]]
         hint = QLabel(("Feeds: " + ", ".join(feeds)) if feeds else
-                      "Feeds nothing yet: drag from its dot to a part that needs power.")
+                      ("Feeds nothing yet: drag from it onto a bias-tee injector's power input, then choose "
+                       "Connect + and GND." if item.box["kind"] == PW.SUPPLY else
+                       "Feeds nothing yet: drag from its dot to a part that needs power."))
         hint.setWordWrap(True)
         hint.setProperty("muted", True)
         hint.setFont(T.ui_font(8.5))
@@ -3978,6 +3995,12 @@ class EditCard(QFrame):
             e = QLineEdit(str(item.enc.get(key) or "")) if key == "name" else NoteEdit(str(item.enc.get(key) or ""))
             (e.textEdited if key == "name" else e.edited).connect(lambda v, k=key: self._enc_set(k, v))
             self._field(label, e)
+        ip = QLineEdit(str(item.enc.get("ip") or ""))   # relay 030: ingress protection, drawing and Output only
+        ip.setPlaceholderText("e.g. IP65")
+        ip.setMaxLength(16)
+        E.attach(ip, "enclosure_ip")
+        ip.textEdited.connect(lambda v: self._enc_set("ip", v.strip()))
+        self._field("IP rating", ip)
         hint = QLabel("Drawing only: an enclosure writes nothing into the recorded text. "
                       "Parts inside it move with it, and so do their groups; drag one out to take it "
                       "out. Right-click it to bring it in front of parts or send it back.")
@@ -4626,13 +4649,86 @@ class ChecksFooter(QFrame):
         m.exec(at)
 
 
+class _Waiter(QRunnable):
+    def __init__(self, fn, box, loop):
+        super().__init__()
+        self.fn, self.box, self.loop = fn, box, loop
+
+    def run(self):
+        try:
+            self.box["out"] = self.fn()
+        except BaseException as exc:  # noqa: BLE001 - handed back to the window's thread and raised there
+            self.box["exc"] = exc
+        QMetaObject.invokeMethod(self.loop, "quit", Qt.ConnectionType.QueuedConnection)
+
+
+class _InputGate(QObject):
+    """While a Chain call waits, mouse and key input to the Chain screen is set aside, so a second Save cannot start
+    inside the first. The rest of the window (Live Scan, the menus) keeps working."""
+    BLOCK = {QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
+             QEvent.Type.KeyPress, QEvent.Type.KeyRelease, QEvent.Type.Wheel, QEvent.Type.Shortcut,
+             QEvent.Type.ShortcutOverride, QEvent.Type.DragEnter, QEvent.Type.Drop}
+
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in self.BLOCK and isinstance(obj, QWidget) and (obj is self.owner or self.owner.isAncestorOf(obj)):
+            return True
+        return False
+
+
+class OffThreadService:
+    """Known issue 2 (relay 030): Chain's Save, Use for runs and opening a rig called the service on the window's
+    thread, so a busy service (a big survey being opened) could hold the whole window. These calls now run on a
+    worker thread while the window keeps drawing; the caller still waits for the answer, so the order (save, then
+    use, then reload) and every return value and error are exactly as before. Everything else passes straight
+    through."""
+    WAITED = ("save", "use", "use_rig", "chains", "station_json", "last_runs")
+
+    def __init__(self, svc, owner: QWidget):
+        self._svc, self._owner = svc, owner
+
+    def __getattr__(self, name):
+        attr = getattr(self._svc, name)
+        if name not in self.WAITED or not callable(attr):
+            return attr
+
+        def waited(*a, **kw):
+            app = QApplication.instance()
+            if app is None or QThread.currentThread() is not app.thread():
+                return attr(*a, **kw)                  # already off the window's thread
+            box: dict = {}
+            loop = QEventLoop()
+            gate = _InputGate(self._owner)
+            app.installEventFilter(gate)
+            slow = QTimer()
+            slow.setSingleShot(True)
+            slow.timeout.connect(lambda: QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor))
+            slow.start(150)
+            try:
+                QThreadPool.globalInstance().start(_Waiter(lambda: attr(*a, **kw), box, loop))
+                if "out" not in box and "exc" not in box:
+                    loop.exec()
+            finally:
+                app.removeEventFilter(gate)
+                if not slow.isActive():
+                    QApplication.restoreOverrideCursor()
+                slow.stop()
+            if "exc" in box:
+                raise box["exc"]
+            return box.get("out")
+        return waited
+
+
 class ChainScreen(QWidget):
     status = Signal(str)
     used = Signal()               # relay 020: the rig runs record changed; the header and the radios refresh at once
 
     def __init__(self, service: Service):
         super().__init__()
-        self.svc = service
+        self.svc = OffThreadService(service, self)
         self.summary, self.layout_doc = {"chains": {}, "current": None}, R.empty_layout()
         self.labels = R.labels_from(None)
         self.receivers, self.serials, self.roles = [], {}, {}
@@ -6362,38 +6458,19 @@ class ChainScreen(QWidget):
         a = m.addAction("Take out of rig\tDelete")
         a.triggered.connect(self.take_out_selected)
 
-    def _sma_menu(self, m: QMenu, node: dict):
-        """Adapter shape, gender and turn, the same choices as the part's card."""
-        nid = node["id"]
-        s = R.sma(node)
-        if node["part"]["type"] == "adapter":
-            sub = Menu(m)
-            sub.setTitle("Adapter shape")
-            for key, label in [("", "Not chosen")] + [(k, {"straight": "Straight (barrel)", "90": "90\u00b0 right angle",
-                                                               "T": "T (three ports)", "180": "180\u00b0 (U)"}[k])
-                                                        for k in R.ADAPTER_SHAPES]:
-                a = sub.addAction(label)
-                a.setCheckable(True)
-                a.setChecked(s.get("shape", "") == key)
-                a.triggered.connect(lambda _=False, k=key: self.set_sma(nid, shape=k))
-            m.addMenu(sub)
-        sub = Menu(m)
-        sub.setTitle("Gender")
-        for key, label in [("", "Not chosen")] + list(R.GENDERS.items()):
-            a = sub.addAction(label)
-            a.setCheckable(True)
-            a.setChecked(s.get("gender", "") == key)
-            a.triggered.connect(lambda _=False, k=key: self.set_sma(nid, gender=k))
-        m.addMenu(sub)
-        if node["part"]["type"] == "adapter":
-            a = m.addAction("Turn 90\u00b0")
-            a.setEnabled(bool(s.get("shape")))
-            a.setToolTip("" if s.get("shape") else "Choose a shape first")
-            a.triggered.connect(lambda: self.turn_adapter(nid))
 
     def fill_wire_menu(self, m: QMenu, item):
         """The right-click menu on a wire, a mating or a power wire."""
-        if isinstance(item, PowerWireItem):
+        if isinstance(item, PowerWireItem) and PW.is_lead(item.wire):      # relay 030
+            w = item.wire
+            a = m.addAction(f"At the supply: move to {PW.PINS_OUT['gnd' if w['pin'] == '+' else '+']}")
+            a.setToolTip("Draw the lead as it really is on the bench; a reversed lead is flagged as a problem")
+            a.triggered.connect(lambda _=False, w=w: self._swap_lead(w, "pin"))
+            a = m.addAction(f"At the part: move to {PW.PINS_IN['gnd' if w['to_pin'] == 'vcc' else 'vcc']}")
+            a.triggered.connect(lambda _=False, w=w: self._swap_lead(w, "to_pin"))
+            m.addSeparator()
+            a = m.addAction("Take power lead out\tDelete")
+        elif isinstance(item, PowerWireItem):
             a = m.addAction("Take power wire out\tDelete")
         elif R.mated(item.wire):
             a = m.addAction("Separate\tDelete")
@@ -6877,6 +6954,15 @@ class ChainScreen(QWidget):
         return label
 
     # -- drawing
+    def theme_changed(self):
+        """Relay 030 (known issue 14): a theme applied in place. The scene's parts, wires and grid paint from the palette
+        each time they are drawn, so drawing them again is all it needs; unsaved edits and the selection stay."""
+        sel = [it for it in self.scene.selectedItems()]
+        self.redraw()
+        for it in sel:
+            if it.scene() is self.scene:
+                it.setSelected(True)
+
     def redraw(self):
         sel = [i.node["id"] for i in self.scene.selectedItems() if isinstance(i, PartItem)]
         sel_w = [(i.wire["from"], i.wire["port"]) for i in self.scene.selectedItems() if isinstance(i, WireItem)]
@@ -7504,6 +7590,9 @@ class ChainScreen(QWidget):
             if box is None:
                 self.items_by_id[src[1]].update()
                 return
+            if box.box.get("kind") == PW.SUPPLY:          # relay 030: + and GND leads, asked which
+                self._connect_supply(box.box["id"], src[1])
+                return
             old = R.power_feed(self.rig, src[1])
             R.disconnect_power(self.rig, src[1])
             why = R.connect_power(self.rig, box.box["id"], src[1])
@@ -7520,6 +7609,9 @@ class ChainScreen(QWidget):
             for it in self.items_by_id.values():
                 it.update()
             return
+        if (R.box(self.rig, src) or {}).get("kind") == PW.SUPPLY:   # relay 030: + and GND leads, asked which
+            self._connect_supply(src, target.node["id"])
+            return
         old = R.power_feed(self.rig, target.node["id"])
         if old is not None and old["from"] != src:
             R.disconnect_power(self.rig, target.node["id"])      # dragging a new feed onto a part replaces it
@@ -7530,6 +7622,52 @@ class ChainScreen(QWidget):
             self.show_notice(f"No power wire: {why}.")
             for it in self.items_by_id.values():
                 it.update()
+            return
+        self.show_notice(None)
+        self.changed()
+
+    def _swap_lead(self, w: dict, end: str):
+        """Relay 030: move one end of a + or GND lead to the other pin (refused when that pin is taken)."""
+        other = {"pin": {"+": "gnd", "gnd": "+"}, "to_pin": {"vcc": "gnd", "gnd": "vcc"}}[end][w[end]]
+        if end == "to_pin" and any(x is not w and x.get("to_pin") == other for x in PW.leads_into(self.rig, w["to"])):
+            self.show_notice(f"Not moved: {PW.PINS_IN[other]} already has a lead.")
+            return
+        w[end] = other
+        self.changed()
+
+    def _connect_supply(self, sup: str, nid: str):
+        """Relay 030: a DC supply dropped on a part's power input offers both leads at once, or one of them."""
+        node = next((n for n in self.rig["nodes"] if n["id"] == nid), None)
+        if node is None or not PW.can_take_leads(node, R.needs_power):
+            self.show_notice("No power lead: " + (R.connect_power(self.rig, sup, nid) or "that part has no power input")
+                             + ".")
+            for it in self.items_by_id.values():
+                it.update()
+            return
+        m = Menu(self)
+        m.add_heading("Power leads")
+        both = m.addAction("Connect + and GND")
+        plus = m.addAction("+ lead only (V+ to VCC+)")
+        gnd = m.addAction("GND lead only (GND− to GND−)")
+        picked = []
+        for a in (both, plus, gnd):
+            a.triggered.connect(lambda _=False, a=a: picked.append(a))
+        m.exec(QCursor.pos())
+        got = picked[0] if picked else None
+        for it in self.items_by_id.values():
+            it.update()
+        if got is None:
+            return
+        old = [w for w in R.power_wires(self.rig) if w["to"] == nid and not PW.is_lead(w)]
+        for w in old:                                     # a new feed replaces an older single feed, as before
+            self.rig["power_wires"].remove(w)
+        why = (PW.connect_pair(self.rig, sup, nid) if got is both else
+               PW.connect_lead(self.rig, sup, "+" if got is plus else "gnd", nid, "vcc" if got is plus else "gnd"))
+        if why:
+            self.rig.setdefault("power_wires", []).extend(old)
+            if not self.rig["power_wires"]:
+                self.rig.pop("power_wires")
+            self.show_notice(f"No power lead: {why}.")
             return
         self.show_notice(None)
         self.changed()
@@ -8289,6 +8427,8 @@ class ChainScreen(QWidget):
                 R.remove_enclosure(self.rig, it.enc["id"])
             elif isinstance(it, PowerItem):
                 R.remove_power(self.rig, it.box["id"])
+            elif isinstance(it, PowerWireItem) and PW.is_lead(it.wire):     # relay 030: this lead only
+                R._drop_power_wires(self.rig, lambda w, x=it.wire: w is x)
             elif isinstance(it, PowerWireItem):
                 R.disconnect_power(self.rig, it.wire["to"])
         self.changed()
@@ -8676,11 +8816,16 @@ class ChainScreen(QWidget):
                 rows = [("Kind", R.POWER_KINDS.get(it.box["kind"], it.box["kind"])), ("Name", it.box.get("name") or ""),
                         ("Feeds", ", ".join(feeds) or "nothing yet"), ("Shape", R.SHAPES.get(it.shape_name(), "")),
                         ("Recorded text", "never: drawing only")]
+                if it.box["kind"] == PW.SUPPLY:          # relay 030
+                    rows[2:2] = [("Voltage", f"{it.box.get('volts')} V" if it.box.get("volts") not in (None, "") else "not typed"),
+                                 ("Current limit", f"{it.box.get('amps')} A" if it.box.get("amps") not in (None, "") else "not typed"),
+                                 ("Supply", "mains powered")]
                 self.output.show_sections(it.box.get("name") or "power source", [("Power source", rows)])
             else:
                 inside = [R._pname(R.box(self.rig, b)) for b in G.inside_any(self.rig, it.enc)
                           if R.kind_of(self.rig, b) == "part"]
-                rows = [("Name", it.enc.get("name") or ""), ("Holds", ", ".join(inside) or "nothing"),
+                rows = [("Name", it.enc.get("name") or ""), ("IP rating", R.ip_text(it.enc) or "not given"),
+                        ("Holds", ", ".join(inside) or "nothing"),
                         ("Size", f"{it.enc['w']} × {it.enc['h']} px"), ("Recorded text", "never: drawing only")]
                 self.output.show_sections(it.enc.get("name") or "enclosure", [("Enclosure", rows)])
         else:
@@ -8709,10 +8854,17 @@ class ChainScreen(QWidget):
             ports.append(f"{'in' if k == 'in' else 'out ' + str(port + 1) if R.out_ports(node) > 1 else 'out'}"
                          f" {side}" + (f", {R.GENDER_WORD[g]}" if g else ""))
         rows.append(("Ports", "; ".join(ports) or "none"))
-        if R.needs_power(node):
-            feed = R.power_feed(self.rig, node["id"])
-            src = R.box(self.rig, feed["from"]) if feed else None
-            rows.append(("Power", f"fed by {src.get('name') or 'a power source'}" if src else "needs power: not fed"))
+        if R.needs_power(node):                  # relay 030: the way its power comes (own feed, leads or injector)
+            st = PW.status(self.rig, R.needs_power).get(node["id"]) or {}
+            v = f", {st['volts']:g} V" if st.get("volts") is not None else ""
+            rows.append(("Power", (f"powered: {st['how']}{v}" if st.get("powered") else
+                                   f"needs power: NOT powered, {st.get('problem') or st.get('how') or 'no feed'}")))
+            if node.get("needs_v"):
+                rows.append(("Needs V", str(node["needs_v"])))
+        elif node["part"]["type"] == R.INJECTOR:
+            plus, gnd, sup = PW._has_pair(self.rig, node["id"])
+            rows.append(("Power in", f"+ and GND from {(sup or {}).get('name') or 'a supply'}" if plus and gnd else
+                         "VCC+ " + ("joined" if plus else "free") + ", GND− " + ("joined" if gnd else "free")))
         else:
             rows.append(("Power", "does not need power"))
         g = R.figure(node, p)
@@ -8740,7 +8892,7 @@ class ChainScreen(QWidget):
                 ("Connections", f"{rep_['joins']} joins, {rep_['connectors']} connectors"
                                 + (f" ({rep_['mated']} mated directly)" if rep_["mated"] else "")),
                 ("Genders", "; ".join(rep_["genders"]) or "no mated pair has both genders set"),
-                ("Power", "; ".join(f"{n}: {'fed' if ok else 'NOT fed'}" for n, ok in rep_["power"]) or "nothing needs power"),
+                ("Power", "; ".join(rep_.get("power_lines") or []) or "nothing needs power"),     # relay 030: the way
                 ("Estimate", est)]
         if rep_["antenna_gain"] not in (None, ""):
             rows.append(("Antenna gain", f"{rep_['antenna_gain']:g} dBi (not in the estimate)"))
@@ -9298,5 +9450,3 @@ class ChainScreen(QWidget):
     def can_close(self) -> bool:
         return self._ask_unsaved()
 
-    def debug_state(self) -> str:
-        return json.dumps({"rig": self.rig_name, "dirty": self.dirty, "rig_doc": self.rig})

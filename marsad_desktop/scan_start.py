@@ -36,7 +36,6 @@ FFT_BINS = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 LEVEL_COLOUR = {"bad": "alert", "warn": "anomaly", "ok": "open"}
 NO_CONDITIONS = ["bad", "Conditions", "Nothing typed, so the run would record no conditions. Fill in at least one "
                                       "(the weather is measured on its own; this is what the room was doing)."]
-LEVEL_WORD = {"bad": "Problem", "warn": "Warning", "ok": "Note"}
 FREE_KEYS = ("tag", "durVal", "unit", "rx", "analyze", "useskip", "skipmin", "thresh", "floorwin")
 COND_KEYS = ("temp", "humid", "where", "sky", "notes")
 NEW_SET_TEXT = ("This starts a new comparison set: runs with the old settings can't be compared with it.")
@@ -46,6 +45,21 @@ NEW_SET_TEXT = ("This starts a new comparison set: runs with the old settings ca
 
 class _Done(QObject):
     done = Signal(object, object)
+
+
+def plain_error(exc: BaseException) -> str:
+    """Relay 030: an unexpected error in plain words for the owner; the technical detail goes to the trace log."""
+    try:
+        from marsad_desktop import trace
+        trace.log("note", f"error {type(exc).__name__}: {exc}")
+    except Exception:  # noqa: BLE001
+        pass
+    if isinstance(exc, (TimeoutError, ConnectionError)) or "timed out" in str(exc).lower():
+        return "The station service did not answer in time. Try again in a moment."
+    if isinstance(exc, OSError):
+        return "A file or the station service could not be reached. Try again; if it keeps happening, restart the window."
+    return ("Something went wrong inside Marsad (not in your station). Try again; if it keeps happening, tell Claude "
+            "Code what you pressed. With Settings > Diagnostics on, the detail is kept in the timing trace.")
 
 
 class _Job(QRunnable):
@@ -59,7 +73,7 @@ class _Job(QRunnable):
         except ServiceError as exc:
             out, err = None, str(exc)
         except Exception as exc:  # noqa: BLE001 - shown to the owner, never a crash
-            out, err = None, f"{type(exc).__name__}: {exc}"
+            out, err = None, plain_error(exc)
         try:
             self.sig.done.emit(out, err)
         except RuntimeError:            # relay 022: the window that asked was closed (a theme change, a station

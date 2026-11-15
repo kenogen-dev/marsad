@@ -13,6 +13,7 @@ for the smoke test and for the result table.
 """
 from __future__ import annotations
 
+import atexit
 import os
 import threading
 import time
@@ -23,6 +24,7 @@ _FILE: list = [None]
 _LOCK = threading.Lock()
 EVENTS: list = []                  # (kind, name, ms, thread) kept in memory while on, for stats()
 STALL_MS = 33.0
+ROTATE_BYTES = 5 * 1024 * 1024        # relay 030: the trace file starts afresh past this (the last one kept as .old.log)
 
 
 def on() -> bool:
@@ -51,7 +53,10 @@ def _apply(flag: bool) -> None:
         _ON[0] = flag
         if flag and _FILE[0] is None:
             try:
-                _FILE[0] = open(path(), "a", encoding="utf-8", buffering=1)
+                p = path()
+                if p.exists() and p.stat().st_size > ROTATE_BYTES:   # relay 030: bounded; one older file kept
+                    p.replace(p.with_suffix(".old.log"))
+                _FILE[0] = open(p, "a", encoding="utf-8", buffering=1)
                 _FILE[0].write(f"# trace started {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             except OSError:
                 _FILE[0] = None
@@ -77,8 +82,26 @@ def log(kind: str, name: str, ms: float | None = None) -> None:
             try:
                 f.write(f"{time.strftime('%H:%M:%S')} {kind:5} {th:4} "
                         f"{'' if ms is None else f'{ms:8.1f} ms'}  {name}\n")
+                if f.tell() > ROTATE_BYTES:          # relay 030: bounded during a long session too
+                    f.close()
+                    p = path()
+                    p.replace(p.with_suffix(".old.log"))
+                    _FILE[0] = open(p, "a", encoding="utf-8", buffering=1)
             except OSError:
                 pass
+
+
+def _close_at_exit() -> None:
+    with _LOCK:
+        if _FILE[0] is not None:
+            try:
+                _FILE[0].close()
+            except OSError:
+                pass
+            _FILE[0] = None
+
+
+atexit.register(_close_at_exit)             # relay 030: the trace file is closed when the window quits
 
 
 def stats(kind: str, top: int = 10) -> list:

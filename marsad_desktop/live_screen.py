@@ -51,6 +51,8 @@ HOLD_MAX_S = 5.0                     # never hold arriving sweeps back longer th
 HISTORY_SHOWN = 160                  # rows on screen at 1 px per sweep before the box is measured
 SWEEP_HEIGHTS = ["fit", 1, 2, 4, 8, 16]
 MARK_COLOURS = {"signal": "#4fcf96", "spur": "#e8b14f", "artefact": "#8599a8"}
+MAXHOLD = QColor(MARK_COLOURS["spur"])   # relay 030: one amber for max-hold, spur marks and the read-out (data colours)
+MAXHOLD.setAlpha(150)
 SELECTED = "#c58bff"                 # the sweep clicked in the waterfall, as on the page
 MARK_DEFAULTS = {"signal": True, "spur": True, "artefact": True, "grid": False, "hops": False}
 OTHER_KEEP = 120                     # sweeps of the other recording held, as on the page
@@ -450,17 +452,6 @@ class RecorderCard(QFrame):
         self.events.setVisible(False)
         self.seen_btn.setVisible(view == "silent")
 
-    def _feed(self, evs):
-        self.events.clear()
-        for e in reversed(evs):
-            t = dt.datetime.fromtimestamp(float(e.get("at") or 0)).strftime("%H:%M:%S")
-            badge = "PRIVATE" if e.get("private") else ("IQ" if str(e.get("iq", "")).startswith("written") else "")
-            it = QListWidgetItem(f"{t}  {float(e.get('mhz') or 0):9.4f} MHz  {float(e.get('snr_db') or 0):+5.1f} dB  {badge}")
-            if e.get("private"):
-                it.setForeground(QBrush(T.color("private")))
-                it.setToolTip("PRIVATE band: only its fingerprint was kept. Nothing plays or exports it (rule 2).")
-            self.events.addItem(it)
-
 
 class RecorderList(QFrame):
     """Relay 019: the recorder's events as a concise quick reference that leads into Captures. Only the session
@@ -791,7 +782,7 @@ class RecorderPanel(QFrame):
         self.other_plot.getPlotItem().getAxis("bottom").setStyle(tickFont=T.ui_font(7))
         self.other_plot.setToolTip("The other recording: latest sweep (blue), median of the sweeps held (grey), "
                                    "max-hold (amber). Its own scale and fingerprint, not this run's.")
-        self.o_max = self.other_plot.plot(pen=pg.mkPen(QColor(232, 177, 79, 150), width=1))
+        self.o_max = self.other_plot.plot(pen=pg.mkPen(MAXHOLD, width=1))
         self.o_med = self.other_plot.plot(pen=pg.mkPen(T.color("muted"), width=1))
         self.o_latest = self.other_plot.plot(pen=pg.mkPen(T.color("survey"), width=1.4))
         outer.addWidget(self.other_plot)
@@ -1164,7 +1155,7 @@ class LiveScreen(QWidget):
             p.getAxis("left").setWidth(96)              # room for "#1234  14:02" on the waterfall
             for side in ("left", "bottom"):
                 p.getAxis(side).setStyle(tickFont=T.ui_font(8))   # labels wider than the axis are dropped
-        self.c_max = self.p_spec.plot(pen=pg.mkPen(QColor(232, 177, 79, 150), width=1), name="max-hold")
+        self.c_max = self.p_spec.plot(pen=pg.mkPen(MAXHOLD, width=1), name="max-hold")
         self.c_latest = self.p_spec.plot(pen=pg.mkPen(T.color("survey"), width=1), name="latest")
         self.c_partial = self.p_spec.plot(pen=pg.mkPen(T.color("survey", 0.45), width=1))
         self.c_sel = self.p_spec.plot(pen=pg.mkPen(SELECTED, width=1.2))
@@ -1186,9 +1177,9 @@ class LiveScreen(QWidget):
             ln.setPen(pg.mkPen(SELECTED, width=1))
             ln.setHoverPen(pg.mkPen(SELECTED, width=1))
         self.sel_box.hide()
-        self.marks_sig = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush("#4fcf96"), pen=None)
-        self.marks_spur = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush("#e8b14f"), pen=None)
-        self.marks_art = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush("#8599a8"), pen=None)
+        self.marks_sig = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush(MARK_COLOURS["signal"]), pen=None)
+        self.marks_spur = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush(MARK_COLOURS["spur"]), pen=None)
+        self.marks_art = pg.ScatterPlotItem(symbol="t1", size=9, brush=pg.mkBrush(MARK_COLOURS["artefact"]), pen=None)
         self.ticks_hop = pg.PlotDataItem(pen=pg.mkPen(QColor(133, 153, 168, 180)), connect="pairs")
         for it in (self.marks_sig, self.marks_spur, self.marks_art, self.ticks_hop):
             self.p_spec.addItem(it)
@@ -2097,10 +2088,10 @@ class LiveScreen(QWidget):
                 except Exception:  # noqa: BLE001
                     pass
         self.refused_items = []
-        brush = QBrush(QColor(232, 120, 120, 140), Qt.BrushStyle.BDiagPattern)
+        brush = QBrush(T.color("alert", 0.55), Qt.BrushStyle.BDiagPattern)
         for lo, hi in self.refused:
             for p in (self.p_spec, self.p_wf):
-                r = pg.LinearRegionItem((lo, hi), movable=False, brush=brush, pen=pg.mkPen(QColor(232, 120, 120, 150)))
+                r = pg.LinearRegionItem((lo, hi), movable=False, brush=brush, pen=pg.mkPen(T.color("alert", 0.6)))
                 r.setToolTip("hop the tuner refused (PLL would not lock): no data there")
                 p.addItem(r)
                 self.refused_items.append(r)
@@ -2262,7 +2253,7 @@ class LiveScreen(QWidget):
             cols = self.rows.shape[1]
             c = S.jsround((mhz - self.lo) / (self.hi - self.lo) * (cols - 1))
             cur, hold = self.rows[-1][c], (self.maxhold[c] if self.maxhold is not None else np.nan)
-            ink, amber = T.C["text"], "#e8b14f"
+            ink, amber = T.C["text"], MARK_COLOURS["spur"]
             html = f"<b style='color:{ink}'>{mhz:.3f} MHz</b>"
             if np.isfinite(cur):
                 html += f"&nbsp; latest <b style='color:{ink}'>{cur:.1f}</b> dB"

@@ -113,3 +113,25 @@ def test_a_run_still_starting_holds_its_own_radio_only(station):
     assert b["ok"] is True                           # it used to refuse both: "cannot tell which radio it holds"
     late = radio_use.check(station, "radio-b", programs=progs, now=now + radio_use.STARTING_S + 5)
     assert late["ok"] is False                       # past the starting window, an unexplained program blocks again
+
+
+def test_a_recorders_own_gain_is_checked_against_its_tuner(station, monkeypatch):
+    """Relay 030 (known issue 6): survey + record checked the survey's gain only; the recording radio's
+    --recorder-gain went to the engine unchecked."""
+    launched = []
+    monkeypatch.setattr(live, "launch_outside", lambda st_, argv, label: launched.append(argv) or {"pid": 1, "log": "x"})
+    monkeypatch.setattr(live, "find_radio", lambda st_, rx: {"found": True, "device": 0, "rx": rx, "text": "found"})
+    monkeypatch.setattr(live.host, "sdr_program_counts", lambda extra=(): {})
+    monkeypatch.setattr(live.host, "running_sdr_programs", lambda: [])
+    form = {"watch": {"mode": "survey", "surveyor": "radio-a", "recorder": "radio-b", "recorder_gain": 29,
+                      "scan": {"preset": "band1", "durVal": 10, "unit": "m"}},
+            "chains": {"radio-a": "made-up > radio-a", "radio-b": "made-up > radio-b"},
+            "chain_confirmed": True, "problems_confirmed": True}
+    plan = live.watch_plan(station, form)
+    assert not any(w[1] == "Gain" for w in plan["survey"]["warnings"])           # the survey's gain is fine
+    assert any(w[0] == "bad" and w[1] == "Recorder gain" for w in plan["survey"]["warnings"])
+    with pytest.raises(ValueError, match="The recorder: 29 dB is not a gain step"):
+        live.watch_start(station, form)
+    assert not launched
+    form["watch"]["recorder_gain"] = 29.7                                         # an R820T step: no refusal
+    assert not any(w[1] == "Recorder gain" for w in live.watch_plan(station, form)["survey"]["warnings"])

@@ -955,3 +955,54 @@ locks: n/a
 
 A frequency counts as new when the captures catalogue holds no event from before this session within
 half the signal's width (at least 25 kHz) of it.
+
+# Chain: power parts (relay 030)
+
+## biastee_injector
+tip: A bias-tee injector adds DC power onto the coax, so a powered LNA at the antenna end can run without its own lead.
+locks: n/a
+
+It has four connections. **DC+RF** faces the antenna or the LNA: it sends the RF on and carries the DC up the
+coax. **RF** faces the radio: the RF passes, the DC is blocked, so the radio never sees it. **VCC+** and **GND−** are
+where the power comes in, from a supply.
+
+The injector is part of the signal path, so a run through it records it in its chain text, by its name and note.
+Its power pins and the leads into them are drawing only and never enter the text.
+
+## dc_supply
+tip: A mains-powered DC supply, with a V+ and a GND− output. Drawing only.
+locks: n/a
+
+Type its **voltage** and **current limit** so the checks can compare them with what a part needs. Drag from it onto
+a bias-tee injector (or onto a part that needs power) and choose **Connect + and GND** to draw both leads at once.
+
+## power_leads
+tip: + leads are red and GND leads black, as real ones are. Drawing only: they never enter the recorded text.
+locks: n/a
+
+A lead joins one supply output to one power pin. Right-click a lead to move either end to the other pin, so the
+drawing can show what is really on the bench, a reversed lead included.
+
+## power_checks
+tip: Reversed polarity and a DC block in the injector's way are problems; a missing + or GND, or the wrong voltage, is a warning.
+locks: n/a
+
+- **Reversed polarity**: + reaches GND−, or GND reaches VCC+. That can damage a part: a problem.
+- **Missing + or GND**: one lead without the other powers nothing: a warning.
+- **Voltage**: a part's "Needs V" (for example 5, or 4.5-5.5) against its supply's voltage: a warning when outside.
+- **DC block**: an LNA counts as powered when its RF side reaches an injector's DC+RF connection through cables and
+  parts that pass DC (adapters, bulkheads, the FM notch). A DC block between them stops the power: a problem. A
+  splitter or attenuator in the way is a problem too, because neither carries the bias voltage reliably.
+
+The Output panel shows each powered part and the way its power comes.
+
+## needs_v
+tip: The voltage this part needs, e.g. 5 or 4.5-5.5. Optional; drawing only. The checks compare it with its supply.
+locks: n/a
+
+## enclosure_ip
+tip: The enclosure's IP rating (ingress protection against dust and water), e.g. IP65. Drawing and Output only.
+locks: n/a
+
+The first digit is protection against solids and dust (6 is dust-tight), the second against water (5 is water jets,
+7 is brief immersion). It never enters the recorded text.
